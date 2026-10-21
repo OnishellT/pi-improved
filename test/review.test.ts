@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { buildBrief, parseVerdict, reviewDiff, subagentCost } from "../src/review.ts";
 import type { Task } from "../src/task-state.ts";
+import { isSubagent } from "./helpers.ts";
 
 const task: Task = {
   id: "t1",
@@ -38,7 +39,7 @@ test("approved verdict; brief has plan and diff; read-only spawn; run is stopped
   const r = await reviewDiff(f.exec, "/repo", task, "anthropic/claude-opus-4");
   assert.equal(r.status, "approved");
   const spawn = f.calls.find((c) => c.args[0] === "spawn")!;
-  assert.equal(spawn.cmd, "subagent");
+  assert.ok(isSubagent(spawn.cmd));
   assert.deepEqual(spawn.args.slice(spawn.args.indexOf("--provider"), spawn.args.indexOf("--provider") + 4), ["--provider", "anthropic", "--model", "claude-opus-4"]);
   assert.equal(spawn.args[spawn.args.indexOf("--tools") + 1], "read,grep,find,ls");
   assert.match(f.brief(), /Add login[\s\S]*Login form summary[\s\S]*step one[\s\S]*src\/login\.ts[\s\S]*argon2[\s\S]*new\.ts[\s\S]*\+const x = 1;/);

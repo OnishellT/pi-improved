@@ -5,6 +5,7 @@ import { Type } from "typebox";
 import { writeAdr } from "./adr.ts";
 import { relatedTasks } from "./learn.ts";
 import { usePhaseModel } from "./models.ts";
+import { skillsBlock } from "./skills.ts";
 import { readManifest, type Manifest } from "./manifest.ts";
 import { readTask, updateTask, writeTask, type Decision, type Task } from "./task-state.ts";
 import { QUESTION_NUDGE, TASK_NUDGE, taskPrompt } from "./task-prompt.ts";
@@ -52,7 +53,7 @@ export function registerTask(pi: ExtensionAPI) {
         if (choice === "Continuarla" && active.status === "planning") {
           nudges = 0;
           await usePhaseModel(pi, ctx, "implement");
-          pi.sendUserMessage(taskPrompt(active.title, active.ticket, tracker(manifest), await relatedTasks(root, active.title)));
+          pi.sendUserMessage(taskPrompt(active.title, active.ticket, tracker(manifest), await relatedTasks(root, active.title), await skillsBlock(root, "plan")));
           return ctx.waitForIdle();
         }
         if (choice !== "Reemplazarla") return;
@@ -63,7 +64,7 @@ export function registerTask(pi: ExtensionAPI) {
       await writeTask(root, task);
       nudges = 0;
       await usePhaseModel(pi, ctx, "implement");
-      pi.sendUserMessage(taskPrompt(arg, ticket, tracker(manifest), await relatedTasks(root, arg)));
+      pi.sendUserMessage(taskPrompt(arg, ticket, tracker(manifest), await relatedTasks(root, arg), await skillsBlock(root, "plan")));
       await ctx.waitForIdle();
     },
   });

@@ -107,9 +107,10 @@ test("nudge is bounded, resets per user message, and skips setup", async () => {
 
 test("prompt lists similar past tasks and the tracker", async () => {
   const { taskPrompt } = await import("../src/task-prompt.ts");
-  const text = taskPrompt("PAY-1", "PAY-1", "jira", ["PAY-0: added fees"]);
+  const text = taskPrompt("PAY-1", "PAY-1", "jira", ["PAY-0: added fees"], "## Skill: x");
   assert.match(text, /Similar past tasks:\n- PAY-0: added fees/);
   assert.match(text, /jira tools/);
+  assert.ok(text.startsWith("## Skill: x"));
 });
 
 test("a plain-text question while implementing is routed to ask_user; a statement is not", async () => {

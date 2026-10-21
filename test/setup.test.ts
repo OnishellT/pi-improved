@@ -8,7 +8,7 @@ import { checkOutputs, registerSetup } from "../src/setup.ts";
 import { fakePi, fakeUI, tempProject } from "./helpers.ts";
 
 const SKILL = "---\nname: domain-billing\ndescription: Billing rules\n---\n# Billing\n";
-const documented = { "AGENTS.md": "# App\n", ".pi/skills/domain-billing/SKILL.md": SKILL, "package.json": "{}" };
+const documented = { "AGENTS.md": "# App\n", "GLOSSARY.md": "# G\n", ".pi/skills/domain-billing/SKILL.md": SKILL, "package.json": "{}" };
 
 function ctxFor(root: string, answers: unknown[]) {
   const ui = fakeUI(answers);
@@ -18,7 +18,7 @@ function ctxFor(root: string, answers: unknown[]) {
 test("checkOutputs reports every missing piece", async () => {
   const root = await tempProject({ "AGENTS.md": "x\n".repeat(200), ".pi/skills/bad/SKILL.md": "# no frontmatter" });
   const problems = await checkOutputs(root, []);
-  assert.equal(problems.length, 4);
+  assert.equal(problems.length, 5);
   assert.deepEqual(await checkOutputs(await tempProject(documented), ["true"]), []);
 });
 

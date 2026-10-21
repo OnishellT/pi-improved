@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { resolveBin } from "./bin.ts";
 import type { Task } from "./task-state.ts";
 import type { Exec } from "./verify.ts";
 
@@ -116,7 +117,7 @@ async function runReview(exec: Exec, root: string, task: Task, model: string, si
     await fs.writeFile(brief, buildBrief(task, diff));
 
     const spawn = await exec(
-      "subagent",
+      resolveBin("subagent"),
       ["spawn", "--name", "review", "--provider", provider, "--model", id, "--thinking", "medium", "--tools", "read,grep,find,ls", "--cwd", root, "--file", brief, "--prompt", "Review the diff in the attached brief. End with VERDICT: APPROVED or VERDICT: CHANGES and a numbered findings list."],
       { cwd: root, timeout: 60_000 },
     );
@@ -125,7 +126,7 @@ async function runReview(exec: Exec, root: string, task: Task, model: string, si
     if (!handle) return skipped("No se pudo leer el identificador del subagente.");
     if (signal?.aborted) return cancelled();
 
-    const wait = await exec("subagent", ["wait", handle, "--timeout", String(WAIT_SECONDS)], { cwd: root, timeout: (WAIT_SECONDS + 30) * 1000, signal });
+    const wait = await exec(resolveBin("subagent"), ["wait", handle, "--timeout", String(WAIT_SECONDS)], { cwd: root, timeout: (WAIT_SECONDS + 30) * 1000, signal });
     if (signal?.aborted) return cancelled();
     if (wait.code !== 0 || wait.killed) return skipped(`La revisión falló: ${(wait.stderr || wait.stdout).trim().slice(0, 300) || "sin respuesta"}`);
     return parseVerdict(wait.stdout) ?? skipped("La revisión no incluyó un veredicto.");
@@ -134,7 +135,7 @@ async function runReview(exec: Exec, root: string, task: Task, model: string, si
   } finally {
     if (handle) {
       spent.cost = await subagentCost(handle);
-      await exec("subagent", ["stop", handle], { cwd: root, timeout: 30_000 }).catch(() => {});
+      await exec(resolveBin("subagent"), ["stop", handle], { cwd: root, timeout: 30_000 }).catch(() => {});
     }
     if (dir) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
   }

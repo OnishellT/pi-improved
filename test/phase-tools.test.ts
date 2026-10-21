@@ -45,6 +45,7 @@ test("the extension registers nothing inside a subagent child", () => {
 test("an agentlint config with zero rules does not block setup", async () => {
   const root = await tempProject({
     "AGENTS.md": "# App\n",
+    "GLOSSARY.md": "# G\n",
     ".pi/skills/domain-billing/SKILL.md": "---\nname: domain-billing\ndescription: Billing\n---\n",
     ".agentlint/config.ts": "",
   });
@@ -75,6 +76,7 @@ test("agentlint commands that open the review UI are blocked", async () => {
 test("setup_finish does not add agentlint twice when a package script already runs it", async () => {
   const root = await tempProject({
     "AGENTS.md": "# App\n",
+    "GLOSSARY.md": "# G\n",
     ".pi/skills/domain-billing/SKILL.md": "---\nname: domain-billing\ndescription: Billing\n---\n",
     ".agentlint/config.ts": "",
     "package.json": JSON.stringify({ scripts: { verify: "npm test && npm exec agentlint -- check --all" } }),

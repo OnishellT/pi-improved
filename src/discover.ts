@@ -1,5 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { resolveBin } from "./bin.ts";
 import { detectConnectors, type ConnectorSignal } from "./connectors.ts";
 
 /** Runs a command and returns stdout, or "" when it fails. */
@@ -15,7 +16,13 @@ export interface Discovery {
   agentFiles: string[];
   /** `.agentlint/config.*` already exists. */
   agentlint: boolean;
+  /** The project itself depends on agentlint (or already configured it); otherwise the bundled CLI is used. */
+  agentlintInstalled: boolean;
   connectors: ConnectorSignal[];
+  /** GLOSSARY.md exists at the repo root. */
+  glossary: boolean;
+  /** docs/agents/ exists. */
+  agentDocs: boolean;
 }
 
 const STACK_MARKERS: [string, string][] = [
@@ -87,7 +94,16 @@ async function proposeVerify(root: string, stacks: string[], pm: string | undefi
 }
 
 const AGENTLINT_CMD: Record<string, string> = { npm: "npm exec agentlint --", pnpm: "pnpm agentlint", yarn: "yarn agentlint", bun: "bun run agentlint" };
-export const agentlintCmd = (pm: string | undefined) => AGENTLINT_CMD[pm ?? "npm"] ?? AGENTLINT_CMD.npm;
+export const agentlintCmd = (pm: string | undefined, installed = true) => (installed ? (AGENTLINT_CMD[pm ?? "npm"] ?? AGENTLINT_CMD.npm) : resolveBin("agentlint"));
+
+export async function hasAgentlintDep(root: string) {
+  try {
+    const pkg = JSON.parse(await fs.readFile(path.join(root, "package.json"), "utf8"));
+    return Boolean({ ...pkg.dependencies, ...pkg.devDependencies }["@aurelienbbn/agentlint"]);
+  } catch {
+    return false;
+  }
+}
 export const agentlintCheck = (cmd: string) => `${cmd} check --all`;
 
 export async function hasAgentlintConfig(root: string) {
@@ -121,7 +137,8 @@ export async function discover(root: string, run: Run): Promise<Discovery> {
     docs: docText,
   });
 
-  return { stacks, packageManager, verify: await proposeVerify(root, stacks, packageManager), ci, docs, agentFiles, agentlint: await hasAgentlintConfig(root), connectors };
+  const agentlint = await hasAgentlintConfig(root);
+  return { stacks, packageManager, verify: await proposeVerify(root, stacks, packageManager), ci, docs, agentFiles, agentlint, agentlintInstalled: agentlint || (await hasAgentlintDep(root)), connectors, glossary: await exists(path.join(root, "GLOSSARY.md")), agentDocs: await exists(path.join(root, "docs/agents")) };
 }
 
 /** A directory looks like a project when it is a git repo or has a stack marker. */

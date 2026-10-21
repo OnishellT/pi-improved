@@ -6,6 +6,7 @@ import { CATALOG, connectorById, type ConnectorSignal } from "./connectors.ts";
 import { agentlintCheck, agentlintCmd, discover, hasAgentlintConfig, isProject, type Discovery, type Run } from "./discover.ts";
 import { restoreModel, usePhaseModel } from "./models.ts";
 import { readManifest, updateManifest, type EnabledConnector } from "./manifest.ts";
+import { phaseSkills, skillsBlock } from "./skills.ts";
 import { AGENTS_MAX_LINES, NUDGE, setupPrompt } from "./prompt.ts";
 import { TASK_PATH } from "./task-state.ts";
 import { formatVerify, runVerify } from "./verify.ts";
@@ -31,6 +32,7 @@ export async function checkOutputs(root: string, verify: string[]): Promise<stri
     if (/^---\n[\s\S]*?\bname:\s*\S[\s\S]*?\bdescription:\s*\S[\s\S]*?\n---/.test(text)) valid++;
     else problems.push(`.pi/skills/${dir}/SKILL.md needs frontmatter with name and description.`);
   }
+  if ((await phaseSkills(root, "setup")).includes("domain-modeling") && !(await fs.access(path.join(root, "GLOSSARY.md")).then(() => true, () => false))) problems.push("GLOSSARY.md is missing.");
   if (!valid) problems.push("No domain skill found in .pi/skills/<name>/SKILL.md.");
   if (!verify.length) problems.push("No verify steps. Every project needs at least one check that runs.");
   return problems;
@@ -139,7 +141,7 @@ export function registerSetup(pi: ExtensionAPI) {
         onStart = resolve;
         setTimeout(resolve, START_TIMEOUT).unref();
       });
-      pi.sendUserMessage(setupPrompt(found, manifest, resuming));
+      pi.sendUserMessage(setupPrompt(found, manifest, resuming, await skillsBlock(root, "setup")));
       await started;
       await ctx.waitForIdle();
       await restoreModel(pi, ctx, previous);

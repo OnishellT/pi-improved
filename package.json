@@ -9,11 +9,16 @@
   "pi": {
     "extensions": ["./src/index.ts"]
   },
+  "dependencies": {
+    "@aurelienbbn/agentlint": "^0.9.1",
+    "@earendil-works/pi-subagent": "github:badlogic/pi-subagent"
+  },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "typebox": "*"
   },
   "scripts": {
+    "postinstall": "node scripts/postinstall.mjs",
     "test": "node --test test/*.test.ts"
   }
 }

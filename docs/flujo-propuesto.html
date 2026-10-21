@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Flujo propuesto</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--ink:#1a1d23;--mute:#5f6670;--line:#e2e5ea;--user:#d97706;--luna:#2563eb;--astra:#7c3aed;--code:#059669;--new:#dc2626;--skill:#0e7490;--hl:#fff7e6}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#111317;--card:#1b1e24;--ink:#eceef2;--mute:#9aa2ad;--line:#2b3038;--hl:#2a2410}}
+:root[data-theme=dark]{--bg:#111317;--card:#1b1e24;--ink:#eceef2;--mute:#9aa2ad;--line:#2b3038;--hl:#2a2410}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,sans-serif;padding:16px}
+main{max-width:980px;margin:0 auto}h1{font-size:1.5rem;margin:0 0 4px}.sub{color:var(--mute);margin:0 0 14px}
+.legend{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 14px;font-size:.85rem;align-items:center}.legend span{display:flex;align-items:center;gap:6px}
+.dot{width:12px;height:12px;border-radius:50%;display:inline-block}
+.toggle{margin-left:auto;display:flex;gap:6px;align-items:center;cursor:pointer}
+.idea{background:var(--hl);border:1px solid var(--line);border-radius:12px;padding:10px 14px;margin-bottom:16px;font-size:.95rem}
+section{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:14px}
+h2{font-size:1.05rem;margin:0 0 4px}.why{color:var(--mute);font-size:.85rem;margin:0 0 10px}
+.sk{display:inline-block;font-size:.75rem;background:var(--skill);color:#fff;border-radius:6px;padding:1px 7px;margin-left:6px;vertical-align:middle}
+.flow{display:flex;gap:6px;overflow-x:auto;padding:4px 0 8px;align-items:center}
+.flow button{flex:none;position:relative;border:2px solid var(--c);background:transparent;color:var(--ink);border-radius:999px;padding:6px 12px;font:inherit;font-size:.85rem;cursor:pointer;white-space:nowrap}
+.flow button.on{background:var(--c);color:#fff}.flow i{color:var(--mute);font-style:normal;flex:none}
+.flow button.new::after{content:"nuevo";position:absolute;top:-9px;right:-4px;font-size:.6rem;background:var(--new);color:#fff;border-radius:6px;padding:0 5px}
+.flow button.chg::after{content:"cambia";position:absolute;top:-9px;right:-4px;font-size:.6rem;background:var(--user);color:#fff;border-radius:6px;padding:0 5px}
+body.only .flow button:not(.new):not(.chg){opacity:.3}
+.detail{border-top:1px dashed var(--line);margin-top:6px;padding-top:10px;display:none}.detail.on{display:block}
+.detail ul{margin:6px 0 0;padding-left:18px}.detail li{margin:3px 0}.detail code{font-size:.8rem;background:var(--bg);padding:1px 5px;border-radius:4px}
+.ab{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:8px;font-size:.85rem}.ab div{background:var(--bg);border-radius:8px;padding:8px}.ab b{display:block;font-size:.7rem;text-transform:uppercase;color:var(--mute)}
+@media(max-width:560px){.ab{grid-template-columns:1fr}}
+.tag{font-size:.75rem;color:var(--mute);margin-left:8px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:10px}.grid div{background:var(--bg);border-radius:10px;padding:10px;font-size:.88rem}.grid b{display:block;margin-bottom:3px}
+table{border-collapse:collapse;width:100%;font-size:.85rem}td,th{text-align:left;padding:5px 6px;border-bottom:1px solid var(--line)}th{color:var(--mute);font-weight:600}
+</style>
+</head>
+<body><main>
+<h1>Propuesta: skills por fase</h1>
+<p class="sub">Mismo flujo. Lo que cambia: el <b>código</b> inyecta la skill correcta en cada fase; el modelo barato no tiene que elegirla.</p>
+<div class="legend">
+<span><i class="dot" style="background:var(--user)"></i>Usuario</span>
+<span><i class="dot" style="background:var(--code)"></i>Código</span>
+<span><i class="dot" style="background:var(--luna)"></i>luna</span>
+<span><i class="dot" style="background:var(--astra)"></i>astra</span>
+<span><i class="sk" style="margin:0">skill</i>Matt Pocock / pstack</span>
+<label class="toggle"><input type="checkbox" id="only"> Solo lo que cambia</label>
+</div>
+<div class="idea">💡 Las skills no se instalan «sueltas» (cada una sumaría texto a todos los turnos y luna elegiría mal). Van <b>copiadas dentro del paquete</b> y el código decide cuál entra en el prompt de cada fase.</div>
+<div id="app"></div>
+<section><h2>Cómo se conecta</h2><div class="grid">
+<div><b>vendor/skills/</b>Copias fijas de las skills, con versión y licencia (Matt: MIT). Sin descargas en vivo.</div>
+<div><b>.pi/workflow.json → skills</b>Mapa fase → skills, igual que <code>models</code>. Se edita con <code>/skills</code>.</div>
+<div><b>Inyección al inicio del prompt</b>El <code>SKILL.md</code> va al principio del prompt de la fase: se cachea y no cambia entre turnos.</div>
+<div><b>Respeta el layout de Matt</b>Si ya existen <code>GLOSSARY.md</code> o <code>docs/agents/</code>, el setup los reutiliza; los ADR siguen en <code>docs/adr/</code>.</div>
+</div></section>
+<section><h2>Impacto esperado</h2>
+<table><tr><th>Cambio</th><th>Calidad</th><th>Costo</th><th>Orden</th></tr>
+<tr><td>Interfaz + seams en el plan (tdd)</td><td>⬆⬆ la mayoría de tests fallan por nombres/firmas</td><td>=</td><td>1</td></tr>
+<tr><td>Revisión según riesgo</td><td>=</td><td>⬇⬇ hoy es el 97%</td><td>2</td></tr>
+<tr><td>TDD al implementar</td><td>⬆</td><td>⬇ verify atrapa gratis lo que hoy atrapa astra</td><td>3</td></tr>
+<tr><td>diagnosing-bugs antes de escalar</td><td>=</td><td>⬇</td><td>4</td></tr>
+<tr><td>grill-with-docs + pstack en setup</td><td>⬆ mejor AGENTS.md y glosario</td><td>= (1 vez)</td><td>5</td></tr>
+<tr><td>retro + maintain-verification</td><td>⬆ con el tiempo</td><td>=</td><td>6</td></tr></table></section>
+</main>
+<script>
+const C={user:"var(--user)",code:"var(--code)",luna:"var(--luna)",astra:"var(--astra)"};
+const P=[
+{t:"1 · Setup",w:"astra entrevista mejor y deja verify listo.",n:[
+ {l:"Escanea el repo",w:"code",d:["Igual que hoy","Además: detecta <code>GLOSSARY.md</code>, <code>docs/agents/</code>, skill de verificación existente"],chg:1},
+ {l:"Entrevista",w:"astra",s:"grill-with-docs",d:["Preguntas una por una (grilling) hasta que el dominio esté claro","Escribe <code>GLOSSARY.md</code> y ADRs (domain-modeling)"],a:"Preguntas genéricas de ask_user",b:"Entrevista guiada; glosario como salida",chg:1},
+ {l:"Documenta",w:"astra",s:"pstack-technical-writing",d:["<code>AGENTS.md</code> y skills de dominio con un estándar de escritura claro"],chg:1},
+ {l:"Skill de verificación",w:"astra",s:"pstack-create-verification-skill",d:["Genera cómo probar la app «como usuario»","Su resultado alimenta <code>verify[]</code>"],a:"verify = scripts detectados",b:"verify = scripts + prueba real de la app",nw:1},
+ {l:"setup_finish",w:"code",d:["Igual que hoy: comprueba, verifica, aprobación"]}]},
+{t:"2 · Planear",w:"El paso que más calidad sube: fijar la interfaz antes de escribir.",n:[
+ {l:"/task TICKET",w:"user",d:["Igual que hoy"]},
+ {l:"Lee y planea",w:"luna",s:"tdd (seams)",d:["Lee el ticket, <code>GLOSSARY.md</code> y AGENTS.md","<code>task_plan</code> exige <b>interface</b>: archivos, exports, firmas","Y los <b>seams</b>: dónde van los tests y qué atrapan"],a:"Plan: pasos + archivos + decisiones",b:"Plan: + interfaz + seams",chg:1},
+ {l:"Valida",w:"code",d:["Decisiones con fuente (igual)","Interfaz sin fuente ni ticket → pregunta"],chg:1},
+ {l:"Decide",w:"user",d:["<code>ask_user</code> con opciones de nombres/firmas","Se guarda como ADR"]},
+ {l:"Aprueba",w:"user",d:["Igual que hoy"]}]},
+{t:"3 · Implementar",w:"Primero rojo, después verde. Lo barato atrapa más.",n:[
+ {l:"Tests primero",w:"luna",s:"tdd",d:["Escribe los tests en los seams acordados","Deben fallar antes del código"],nw:1},
+ {l:"Código",w:"luna",d:["Hasta que los tests pasen","Solo archivos del plan"]},
+ {l:"Triggers + guards",w:"code",d:["Igual que hoy"]},
+ {l:"Pregunta suelta",w:"code",d:["Igual que hoy → <code>ask_user</code>"]}]},
+{t:"4 · Gate",w:"Astra solo cuando el riesgo lo justifica.",n:[
+ {l:"Verify",w:"code",d:["Igual que hoy"]},
+ {l:"Diagnóstico",w:"luna",s:"diagnosing-bugs",d:["Tras 2 fallos: luna aplica el método (reproducir, aislar, hipótesis)","Si tampoco → entonces escala"],a:"2 fallos → astra",b:"2 fallos → diagnóstico barato → astra",nw:1},
+ {l:"¿Riesgo?",w:"code",d:["Diff grande, dependencias, migraciones, rutas sensibles (AGENTS.md), decisiones nuevas → revisión","Diff chico + verify verde → cierra sin revisión"],a:"Siempre revisa (~$0.35)",b:"Revisa solo lo riesgoso",nw:1},
+ {l:"Revisión",w:"astra",s:"pstack-blast-radius",d:["Busca lo que se rompe <b>fuera</b> del diff","Lo prueba con código real, no con opinión","1 ronda, solo bloqueante (igual)"],chg:1},
+ {l:"¿Terminó?",w:"user",d:["Igual que hoy"]}]},
+{t:"5 · Aprender",w:"Cada N tareas, una mirada atrás.",n:[
+ {l:"Memoria + métricas",w:"code",d:["Igual que hoy"]},
+ {l:"Retro",w:"luna",s:"retro",d:["Cada 5 tareas: qué decisión faltó, qué regla se repitió","Propone cambios a AGENTS.md / ADRs; tú apruebas"],nw:1},
+ {l:"Mantener verify",w:"astra",s:"pstack-maintain-verification-skill",d:["Revisa que la skill de verificación siga honesta con el código"],nw:1}]}];
+const app=document.getElementById("app");
+P.forEach((p,i)=>{const s=document.createElement("section");s.innerHTML=`<h2>${p.t}</h2><p class="why">${p.w}</p><div class="flow"></div><div class="detail"></div>`;
+const f=s.querySelector(".flow"),d=s.querySelector(".detail");
+p.n.forEach((n,j)=>{if(j)f.insertAdjacentHTML("beforeend","<i>→</i>");const b=document.createElement("button");b.textContent=n.l;b.style.setProperty("--c",C[n.w]);if(n.nw)b.classList.add("new");else if(n.chg)b.classList.add("chg");
+b.onclick=()=>{f.querySelectorAll("button").forEach(x=>x.classList.remove("on"));b.classList.add("on");d.classList.add("on");
+d.innerHTML=`<b>${n.l}</b>${n.s?`<span class="sk">${n.s}</span>`:""}<span class="tag">${{user:"usuario",code:"código",luna:"luna",astra:"astra"}[n.w]}</span><ul>${n.d.map(x=>`<li>${x}</li>`).join("")}</ul>${n.a?`<div class="ab"><div><b>Hoy</b>${n.a}</div><div><b>Propuesto</b>${n.b}</div></div>`:""}`};f.appendChild(b)});
+app.appendChild(s);if(!i)f.querySelectorAll("button")[1].click()});
+document.getElementById("only").onchange=e=>document.body.classList.toggle("only",e.target.checked);
+</script>
+</main></body></html>

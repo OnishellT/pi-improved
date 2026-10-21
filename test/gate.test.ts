@@ -4,7 +4,7 @@ import { registerGate } from "../src/gate.ts";
 import { TASK_DONE_EVENT } from "../src/learn.ts";
 import { ESCALATE_EVENT, REVIEW_EVENT, VERIFY_EVENT } from "../src/events.ts";
 import { readTask } from "../src/task-state.ts";
-import { fakePi, fakeUI, tempProject } from "./helpers.ts";
+import { fakePi, fakeUI, isSubagent, tempProject } from "./helpers.ts";
 
 const manifest = (setup: string) => JSON.stringify({ version: 1, setup, verify: ["check"], connectors: [] });
 const task = { id: "t1", title: "Do it", status: "implementing", allowedExtra: [], startedAt: "now" };
@@ -19,8 +19,8 @@ async function setup(opts: { setup?: string; task?: boolean; pass?: boolean; ans
   const subagent: string[] = [];
   const h = fakePi((cmd, args) => {
     if (cmd === "git") return { code: 0, stdout: args[0] === "diff" ? diff : "" };
-    if (cmd === "subagent") subagent.push(args[0]);
-    if (cmd === "subagent") return args[0] === "spawn" ? { code: 0, stdout: "Spawned review (abc123)" } : args[0] === "wait" ? { code: 0, stdout: `abc123 finished\n\n${opts.review}` } : { code: 0 };
+    if (isSubagent(cmd)) subagent.push(args[0]);
+    if (isSubagent(cmd)) return args[0] === "spawn" ? { code: 0, stdout: "Spawned review (abc123)" } : args[0] === "wait" ? { code: 0, stdout: `abc123 finished\n\n${opts.review}` } : { code: 0 };
     verifies++;
     return opts.pass ? { code: 0 } : { code: 1, stdout: "boom" };
   });
@@ -144,7 +144,7 @@ async function parallel(models: object, answers: unknown[] = [], verifyOut = "")
   h.pi.exec = async (cmd: string, args: string[]) => {
     const base = { stdout: "", stderr: "", killed: false };
     if (cmd === "git") return { ...base, code: 0, stdout: args[0] === "diff" ? "changed" : "" };
-    if (cmd === "subagent") {
+    if (isSubagent(cmd)) {
       order.push(`subagent:${args[0]}`);
       if (args[0] === "spawn") return { ...base, code: 0, stdout: "Spawned review (abc123)" };
       if (args[0] === "wait") return { ...base, code: 0, stdout: "abc123 finished\n\nVERDICT: CHANGES\n1. bug" };

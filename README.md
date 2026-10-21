@@ -2,14 +2,22 @@
 
 Setup automático de proyectos para Pi, pensado para que modelos baratos trabajen con buen contexto.
 
-## Uso
+## Instalación
 
 ```sh
-pi -e ~/projects/pi-improved      # probar sin instalar
-pi install ~/projects/pi-improved # instalar
+pi install git:github.com/OnishellT/pi-improved
 ```
 
-Al abrir un proyecto sin setup, Pi pregunta si quieres hacerlo. También puedes correr `/setup`.
+No hace falta nada más: el CLI de [pi-subagent](https://github.com/badlogic/pi-subagent) y agentlint vienen incluidos (si ya hay un `subagent` en el PATH, se usa ese). Requiere Node >= 22.18.
+
+Luego, en tu proyecto:
+
+1. `/setup`: prepara el proyecto (Pi también te lo ofrece al abrir uno sin setup).
+2. `/models`: elige el modelo de cada fase.
+3. `/task <descripción o PAY-142>`: trabaja una tarea.
+4. `/doctor`: revisa Node, subagent, agentlint, git y que los modelos de `.pi/workflow.json` estén disponibles (si falta alguno, `/login <provider>`).
+
+Para probar sin instalar: `pi -e ~/projects/pi-improved` (corre antes `npm install`).
 
 ## Qué hace `/setup`
 

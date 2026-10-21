@@ -3,6 +3,18 @@ import * as path from "node:path";
 
 export type SetupStatus = "pending" | "running" | "done" | "declined";
 
+export type Phase = "setup" | "plan" | "implement" | "diagnose" | "review" | "learn";
+
+/** Bundled skills (vendor/skills) injected into each phase's prompt; the model never picks one. */
+export const DEFAULT_SKILLS: Record<Phase, string[]> = {
+  setup: ["grilling", "domain-modeling", "pstack-technical-writing", "pstack-create-verification-skill"],
+  plan: ["tdd"],
+  implement: ["tdd"],
+  diagnose: ["diagnosing-bugs"],
+  review: ["pstack-blast-radius"],
+  learn: ["retro", "pstack-maintain-verification-skill"],
+};
+
 export interface McpConfig {
   url: string;
 }
@@ -25,6 +37,8 @@ export interface Manifest {
   connectors: EnabledConnector[];
   /** Model per phase as "provider/model-id"; a missing phase keeps the session model. */
   models?: PhaseModels;
+  /** Bundled skill names per phase; a missing phase uses DEFAULT_SKILLS. */
+  skills?: Partial<Record<Phase, string[]>>;
 }
 
 export interface PhaseModels {

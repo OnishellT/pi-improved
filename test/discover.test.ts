@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { detectConnectors } from "../src/connectors.ts";
-import { discover, isProject } from "../src/discover.ts";
+import { resolveBin } from "../src/bin.ts";
+import { agentlintCmd, discover, isProject } from "../src/discover.ts";
 import { tempProject } from "./helpers.ts";
 
 const noGit = async () => "";
@@ -30,6 +31,16 @@ test("an existing verify entry point wins over individual checks", async () => {
 test("a configured agentlint gate is appended to the verify steps", async () => {
   const root = await tempProject({ "package.json": JSON.stringify({ scripts: { test: "vitest" } }), "pnpm-lock.yaml": "", ".agentlint/config.ts": "" });
   assert.deepEqual((await discover(root, noGit)).verify, ["pnpm run test", "pnpm agentlint check --all"]);
+});
+
+test("agentlint uses the project's package manager when the project depends on it, else the bundled CLI", async () => {
+  const withDep = await tempProject({ "package.json": JSON.stringify({ devDependencies: { "@aurelienbbn/agentlint": "^0.9.1" } }), "pnpm-lock.yaml": "" });
+  const found = await discover(withDep, noGit);
+  assert.equal(found.agentlintInstalled, true);
+  assert.equal(agentlintCmd(found.packageManager, found.agentlintInstalled), "pnpm agentlint");
+  const without = await discover(await tempProject({ "package.json": "{}" }), noGit);
+  assert.equal(without.agentlintInstalled, false);
+  assert.equal(agentlintCmd(without.packageManager, without.agentlintInstalled), resolveBin("agentlint"));
 });
 
 test("python checks come from pyproject tool sections", async () => {
