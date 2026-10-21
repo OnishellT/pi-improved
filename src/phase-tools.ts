@@ -12,9 +12,11 @@ export async function phaseTools(cwd: string) {
 export function registerPhaseTools(pi: ExtensionAPI) {
   const sync = async (ctx: ExtensionContext) => {
     const wanted = await phaseTools(ctx.cwd);
-    const active = new Set(pi.getActiveTools());
+    const current = pi.getActiveTools();
+    const active = new Set(current);
     for (const [name, on] of Object.entries(wanted)) on ? active.add(name) : active.delete(name);
-    pi.setActiveTools([...active]);
+    // Changing the declared tools can cost the provider's prompt cache: only touch them when the phase changes.
+    if (active.size !== current.length || current.some((t) => !active.has(t))) pi.setActiveTools([...active]);
   };
   pi.on("session_start", async (_event, ctx) => sync(ctx));
   pi.on("before_agent_start", async (_event, ctx) => void (await sync(ctx)));

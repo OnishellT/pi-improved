@@ -1,10 +1,11 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 /** agentlint commands that open a browser UI and wait for a person. */
-const INTERACTIVE_AGENTLINT = /\bagentlint\b[^;&|\n]*(\breview\b|--review\b|--wizard\b)/;
+// The `review` subcommand right after the binary (optionally after `--`), or the UI flags anywhere.
+const INTERACTIVE_AGENTLINT = /\bagentlint(?:\s+--)?\s+review\b|\bagentlint\b[^;&|\n]*\s--(?:review|wizard)\b/;
 
 /** Recording an exception to a rule is a decision for the user, even when the rule allows agent authority. */
-const AGENTLINT_ACCEPT = /\bagentlint\b[^;&|\n]*\baccept\b/;
+const AGENTLINT_ACCEPT = /\bagentlint(?:\s+--)?\s+accept\b/;
 
 /** Workflow state the code owns: the model must not rewrite it. */
 const OWNED = /(^|\/)\.pi\/(workflow|task)\.json$/;

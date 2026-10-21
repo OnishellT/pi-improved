@@ -5,6 +5,7 @@ const PHASES = [
   ["setup", "Setup"],
   ["implement", "Implementación"],
   ["review", "Revisión"],
+  ["escalate", "Cuando verify se traba"],
 ] as const satisfies readonly (readonly [keyof PhaseModels, string])[];
 const SESSION = "Usar el modelo de la sesión";
 const KEEP = "Sin cambios";
@@ -34,6 +35,21 @@ export async function usePhaseModel(pi: ExtensionAPI, ctx: ExtensionContext, pha
     return current ? idOf(current) : undefined;
   } catch (error: any) {
     ctx.ui.notify(`No pude elegir el modelo para ${phase}: ${error.message}`, "warning");
+    return undefined;
+  }
+}
+
+/** Switches to `wanted` (provider/id) quietly. Returns the previous model id and the target, or undefined when nothing changed. Never throws. */
+export async function switchModel(pi: ExtensionAPI, ctx: ExtensionContext, wanted: string | undefined): Promise<{ previous: string | undefined; model: string } | undefined> {
+  try {
+    const registry = ctx.modelRegistry;
+    if (!wanted || !registry || (ctx.model && idOf(ctx.model) === wanted)) return undefined;
+    const slash = wanted.indexOf("/");
+    const model = slash > 0 ? registry.find(wanted.slice(0, slash), wanted.slice(slash + 1)) : undefined;
+    if (!model || !registry.getAvailable().some((m) => idOf(m) === wanted)) return undefined;
+    const previous = ctx.model ? idOf(ctx.model) : undefined;
+    return (await pi.setModel(model)) ? { previous, model: wanted } : undefined;
+  } catch {
     return undefined;
   }
 }

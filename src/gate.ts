@@ -1,20 +1,25 @@
 import { createHash } from "node:crypto";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { ESCALATE_EVENT, REVIEW_EVENT, VERIFY_EVENT, type EscalatePayload, type ReviewPayload, type VerifyPayload } from "./events.ts";
 import type { TaskDonePayload } from "./learn.ts";
 import { TASK_DONE_EVENT } from "./learn.ts";
 import { readManifest } from "./manifest.ts";
+import { restoreModel, switchModel } from "./models.ts";
 import { reviewDiff } from "./review.ts";
 import { readTask, updateTask } from "./task-state.ts";
-import { formatVerify, runVerify } from "./verify.ts";
+import { formatVerify, isPolicyFailure, runVerify } from "./verify.ts";
 
 const MAX_RETRIES = 3;
 const MAX_REVIEWS = 2;
+const ESCALATE_AFTER = 2;
 
 export function registerGate(pi: ExtensionAPI) {
   let start = "";
   let writes = 0;
   let retries = 0;
   let reviews = 0;
+  let failures = 0;
+  let escalatedFrom: string | undefined;
   let verified: string | undefined;
 
   const snapshot = async (cwd: string) => {
@@ -22,13 +27,29 @@ export function registerGate(pi: ExtensionAPI) {
     const out = [await git(["status", "--porcelain"]), await git(["diff", "HEAD"])].join("\n--\n");
     return createHash("sha1").update(out).digest("hex");
   };
-  const verify = async (steps: string[], cwd: string) => {
+  const verify = async (steps: string[], cwd: string, emit = false) => {
+    const t0 = Date.now();
     const result = await runVerify(steps, pi.exec.bind(pi), cwd);
-    return { ok: result.ok, report: formatVerify(result) };
+    if (emit) pi.events.emit(VERIFY_EVENT, { root: cwd, ok: result.ok, seconds: (Date.now() - t0) / 1000 } satisfies VerifyPayload);
+    return { ok: result.ok, report: formatVerify(result), policy: !result.ok && isPolicyFailure(result) };
+  };
+  const review = async (cwd: string, task: NonNullable<Awaited<ReturnType<typeof readTask>>>, model: string, signal: AbortSignal) => {
+    const t0 = Date.now();
+    const result = await reviewDiff(pi.exec.bind(pi), cwd, task, model, signal).catch((e: any) => ({ status: "skipped" as const, report: String(e?.message ?? e), cost: undefined, cancelled: false }));
+    const discarded = signal.aborted || result.cancelled === true;
+    pi.events.emit(REVIEW_EVENT, { root: cwd, status: result.status, model, seconds: (Date.now() - t0) / 1000, cost: result.cost, discarded } satisfies ReviewPayload);
+    return result;
+  };
+  const deescalate = async (ctx: any) => {
+    const from = escalatedFrom;
+    escalatedFrom = undefined;
+    failures = 0;
+    if (from) await restoreModel(pi, ctx, from);
   };
 
   pi.on("before_agent_start", async (event, ctx) => {
     if (event.messageType !== "user") return;
+    await deescalate(ctx);
     start = await snapshot(ctx.cwd);
     writes = 0;
     retries = 0;
@@ -47,22 +68,44 @@ export function registerGate(pi: ExtensionAPI) {
     const state = `${now}:${writes}`;
     if (state === verified) return;
 
-    const { ok, report } = await verify(manifest.verify, ctx.cwd);
+    const task = await readTask(ctx.cwd).catch(() => undefined);
+    const reviewModel = manifest.models?.review;
+    const abort = new AbortController();
+    const reviewing = task?.status === "implementing" && reviewModel ? review(ctx.cwd, task, reviewModel, abort.signal) : undefined;
+    if (reviewing) ctx.ui.setStatus("review", `revisando el diff con ${reviewModel}…`);
+    const clearStatus = () => ctx.ui.setStatus("review", undefined);
+    const { ok, report, policy } = await verify(manifest.verify, ctx.cwd, true);
     if (!ok) {
+      // The code will change, so this review is stale: stop its subagent now instead of paying for a verdict nobody uses.
+      if (reviewing) {
+        abort.abort();
+        clearStatus();
+      }
       if (retries >= MAX_RETRIES) {
-        if (!ctx.hasUI) return;
+        if (!ctx.hasUI) return deescalate(ctx).then(() => undefined);
         const choice = await ctx.ui.select("La verificación sigue fallando tras varios intentos. ¿Qué hacemos?", ["Seguir intentando", "Dejarlo así"]);
-        if (choice !== "Seguir intentando") return;
+        if (choice !== "Seguir intentando") return deescalate(ctx).then(() => undefined);
       } else retries++;
-      const content = `${report}\n\nFix it, then finish.`;
+      if (!policy) failures++;
+      const target = manifest.models?.escalate ?? manifest.models?.review ?? manifest.models?.setup;
+      if (failures >= ESCALATE_AFTER && !escalatedFrom) {
+        const switched = await switchModel(pi, ctx, target);
+        if (switched) {
+          escalatedFrom = switched.previous;
+          ctx.ui.notify(`verify falló ${ESCALATE_AFTER} veces: este intento lo hace ${switched.model}`, "warning");
+          pi.events.emit(ESCALATE_EVENT, { root: ctx.cwd, model: switched.model } satisfies EscalatePayload);
+        }
+      }
+      const content = policy
+        ? `${report}\n\nThis is an agentlint rule. Fix the code if the finding is right. If it needs an exception, run the agentlint accept command with a specific reason: the user will be asked to approve it.`
+        : `${report}\n\nFix it, then finish.`;
       return { entries: [{ type: "custom_message", customType: "verify-gate", content, display: true }], continue: true };
     }
 
     verified = state;
-    const task = await readTask(ctx.cwd).catch(() => undefined);
-    if (task?.status === "implementing" && manifest.models?.review) {
-      ctx.ui.setStatus("review", `revisando el diff con ${manifest.models.review}…`);
-      const review = await reviewDiff(pi.exec.bind(pi), ctx.cwd, task, manifest.models.review).finally(() => ctx.ui.setStatus("review", undefined));
+    await deescalate(ctx);
+    if (reviewing) {
+      const review = await reviewing.finally(clearStatus);
       if (review.status === "skipped") ctx.ui.notify(`Revisión omitida: ${review.report}`, "warning");
       else ctx.ui.notify(review.status === "approved" ? "Revisión del diff: aprobada." : "Revisión del diff: pidió cambios. El agente los corrige.", review.status === "approved" ? "info" : "warning");
       if (review.status === "changes") {

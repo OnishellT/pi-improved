@@ -1,7 +1,10 @@
 import { readFileSync } from "node:fs";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseVerdict, reviewDiff } from "../src/review.ts";
+import { parseVerdict, reviewDiff, subagentCost } from "../src/review.ts";
 import type { Task } from "../src/task-state.ts";
 
 const task: Task = {
@@ -73,3 +76,39 @@ test("parseVerdict uses the last verdict", () => {
   assert.equal(parseVerdict("VERDICT: CHANGES\nx\nVERDICT: APPROVED")?.status, "approved");
   assert.equal(parseVerdict("**VERDICT: APPROVED**")?.status, "approved");
 });
+
+test("an aborted review stops its subagent and reports itself as cancelled", async () => {
+  const root = await tempRepoForAbort();
+  const calls: string[] = [];
+  const controller = new AbortController();
+  const exec = async (cmd: string, args: string[], opts: any) => {
+    if (cmd === "git") return { stdout: args[0] === "diff" ? "diff --git a/x b/x\n+1" : "", stderr: "", code: 0, killed: false };
+    calls.push(args[0]);
+    if (args[0] === "spawn") return { stdout: "Spawned review (abc123)", stderr: "", code: 0, killed: false };
+    if (args[0] === "wait") {
+      // Like pi.exec: an abort kills the waiting process.
+      const killed = new Promise<any>((resolve) => opts.signal.addEventListener("abort", () => resolve({ stdout: "", stderr: "", code: 1, killed: true })));
+      controller.abort();
+      return killed;
+    }
+    return { stdout: "", stderr: "", code: 0, killed: false };
+  };
+  const result = await reviewDiff(exec as any, root, { id: "t", title: "x", status: "implementing", allowedExtra: [], startedAt: "" } as any, "p/m", controller.signal);
+  assert.equal(result.cancelled, true);
+  assert.deepEqual(calls, ["spawn", "wait", "stop"]);
+});
+
+test("subagentCost sums the child's assistant costs", async () => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), "runs-"));
+  const run = path.join(dir, "r1");
+  await fs.mkdir(run);
+  const session = path.join(run, "session.jsonl");
+  await fs.writeFile(session, [{ message: { role: "user" } }, { message: { role: "assistant", usage: { cost: { total: 0.01 } } } }, { message: { role: "assistant", usage: { cost: { total: 0.02 } } } }].map((e) => JSON.stringify(e)).join("\n"));
+  await fs.writeFile(path.join(run, "metadata.json"), JSON.stringify({ handle: "abc123", sessionFile: session }));
+  assert.equal(Math.round((await subagentCost("abc123", dir))! * 100) / 100, 0.03);
+  assert.equal(await subagentCost("other", dir), undefined);
+});
+
+async function tempRepoForAbort() {
+  return fs.mkdtemp(path.join(os.tmpdir(), "review-abort-"));
+}

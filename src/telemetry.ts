@@ -1,0 +1,129 @@
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { ESCALATE_EVENT, REVIEW_EVENT, VERIFY_EVENT, type EscalatePayload, type ReviewPayload, type VerifyPayload } from "./events.ts";
+import { readTask } from "./task-state.ts";
+
+export interface TaskMetrics {
+  phases: Record<string, { input: number; output: number; cacheRead: number; cost: number; seconds: number }>;
+  verifyRuns: number;
+  verifyFailures: number;
+  reviews: { status: string; model: string; seconds: number; cost?: number; discarded?: boolean }[];
+  escalations: number;
+}
+
+const MEMORY_PATH = ".pi/memory/tasks.jsonl";
+const metrics = new Map<string, TaskMetrics>();
+
+const empty = (): TaskMetrics => ({ phases: {}, verifyRuns: 0, verifyFailures: 0, reviews: [], escalations: 0 });
+const snapshotPath = (root: string, id: string) => path.join(root, ".pi/metrics", `${id.replace(/[^\w.-]/g, "_")}.json`);
+
+/** Metrics collected in memory for the task, or undefined when none were recorded or loaded. */
+export function taskMetrics(taskId: string): TaskMetrics | undefined {
+  return metrics.get(taskId);
+}
+
+/** Memory first, else the snapshot persisted under `.pi/metrics/` (survives a pi restart). */
+export async function loadMetrics(root: string, taskId: string): Promise<TaskMetrics | undefined> {
+  const known = metrics.get(taskId);
+  if (known) return known;
+  try {
+    const loaded = { ...empty(), ...JSON.parse(await fs.readFile(snapshotPath(root, taskId), "utf8")) } as TaskMetrics;
+    metrics.set(taskId, loaded);
+    return loaded;
+  } catch {
+    return undefined;
+  }
+}
+
+async function readRecords(root: string): Promise<any[]> {
+  const raw = await fs.readFile(path.join(root, MEMORY_PATH), "utf8").catch(() => "");
+  const out: any[] = [];
+  for (const line of raw.split("\n")) {
+    try {
+      if (line.trim()) out.push(JSON.parse(line));
+    } catch {}
+  }
+  return out;
+}
+
+export async function metricsReport(root: string): Promise<string> {
+  const records = (await readRecords(root)).filter((r) => r.metrics);
+  if (!records.length) return "Sin métricas todavía: se guardan al terminar cada tarea.";
+  const rows = records.slice(-10).map((r) => {
+    const phases = Object.values<any>(r.metrics.phases ?? {});
+    const sum = (k: string) => phases.reduce((s, p) => s + (p[k] ?? 0), 0);
+    const reviews: any[] = r.metrics.reviews ?? [];
+    const verdicts = reviews.map((x) => (x.discarded ? `(${x.status})` : x.status)).join(",") || "-";
+    const reviewCost = reviews.reduce((s, x) => s + (x.cost ?? 0), 0);
+    return { id: String(r.ticket ?? r.id), cost: sum("cost") + reviewCost, tokens: sum("input") + sum("output"), seconds: sum("seconds"), fails: r.metrics.verifyFailures ?? 0, verdicts };
+  });
+  const lines = rows.map((r) => `${r.id.padEnd(14)} $${r.cost.toFixed(3).padStart(7)} ${String(r.tokens).padStart(9)} tok ${String(Math.round(r.seconds)).padStart(6)} s  verify✗ ${r.fails}  review: ${r.verdicts}`);
+  const avg = rows.reduce((s, r) => s + r.cost, 0) / rows.length;
+  return [`Últimas ${rows.length} tareas (id, coste, tokens in+out, segundos, fallos de verify, revisiones):`, ...lines, `Coste medio por tarea: $${avg.toFixed(3)}`].join("\n");
+}
+
+/**
+ * Seconds are wall-clock deltas between consecutive message_end events (the first one counts from
+ * agent_start), charged to the task phase current at that moment.
+ */
+export function registerTelemetry(pi: ExtensionAPI) {
+  const last = new Map<string, number>();
+
+  async function active(root: string) {
+    const task = await readTask(root).catch(() => undefined);
+    if (!task || task.status === "done") return undefined;
+    return { id: task.id, status: task.status, data: (await loadMetrics(root, task.id)) ?? empty() };
+  }
+  async function save(root: string, id: string, data: TaskMetrics) {
+    metrics.set(id, data);
+    try {
+      const file = snapshotPath(root, id);
+      await fs.mkdir(path.dirname(file), { recursive: true });
+      await fs.writeFile(file, JSON.stringify(data));
+    } catch {}
+  }
+  async function bump(root: string, change: (m: TaskMetrics) => void) {
+    const t = await active(root);
+    if (!t) return;
+    change(t.data);
+    await save(root, t.id, t.data);
+  }
+
+  pi.on("agent_start", (_e, ctx) => void last.set(ctx.cwd, Date.now()));
+  pi.on("message_end", async (event, ctx) => {
+    const now = Date.now();
+    const seconds = (now - (last.get(ctx.cwd) ?? now)) / 1000;
+    last.set(ctx.cwd, now);
+    const message: any = event.message;
+    const t = await active(ctx.cwd);
+    if (!t) return;
+    const phase = (t.data.phases[t.status] ??= { input: 0, output: 0, cacheRead: 0, cost: 0, seconds: 0 });
+    phase.seconds += seconds;
+    if (message.role === "assistant" && message.usage) {
+      phase.input += message.usage.input ?? 0;
+      phase.output += message.usage.output ?? 0;
+      phase.cacheRead += message.usage.cacheRead ?? 0;
+      phase.cost += message.usage.cost?.total ?? 0;
+    }
+    await save(ctx.cwd, t.id, t.data);
+  });
+
+  pi.events?.on(VERIFY_EVENT, (d) => {
+    const { root, ok } = d as VerifyPayload;
+    return bump(root, (m) => {
+      m.verifyRuns++;
+      if (!ok) m.verifyFailures++;
+    });
+  });
+  pi.events?.on(REVIEW_EVENT, (d) => {
+    const { root, status, model, seconds, cost, discarded } = d as ReviewPayload;
+    return bump(root, (m) => void m.reviews.push({ status, model, seconds, ...(cost !== undefined && { cost }), ...(discarded && { discarded }) }));
+  });
+  pi.events?.on(ESCALATE_EVENT, (d) => bump((d as EscalatePayload).root, (m) => void m.escalations++));
+
+  pi.registerCommand("metrics", {
+    description: "Coste, tokens y tiempo de las últimas tareas",
+    handler: async (_args, ctx) => ctx.ui.notify(await metricsReport(ctx.cwd), "info"),
+  });
+}

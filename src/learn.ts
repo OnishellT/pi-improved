@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { inScope, type Task } from "./task-state.ts";
+import { loadMetrics, type TaskMetrics } from "./telemetry.ts";
 
 /** Event emitted by the gate when the user confirms a task is finished. */
 export const TASK_DONE_EVENT = "pi-improved:task-done";
@@ -24,6 +25,7 @@ interface Record {
   files: string[];
   decisions: { question: string; answer?: string; source?: string }[];
   keywords: string[];
+  metrics?: TaskMetrics;
 }
 
 function tokenize(text: string): string[] {
@@ -106,6 +108,8 @@ export function registerLearn(pi: ExtensionAPI) {
     try {
       const { root, task } = data as TaskDonePayload;
       const record = await buildRecord(pi, root, task);
+      const metrics = await loadMetrics(root, task.id);
+      if (metrics) record.metrics = metrics;
       const file = path.join(root, MEMORY_PATH);
       await fs.mkdir(path.dirname(file), { recursive: true });
       await fs.appendFile(file, `${JSON.stringify(record)}\n`);

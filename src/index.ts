@@ -7,6 +7,7 @@ import { registerModels } from "./models.ts";
 import { registerPhaseTools } from "./phase-tools.ts";
 import { registerSetup } from "./setup.ts";
 import { registerTask } from "./task.ts";
+import { registerTelemetry } from "./telemetry.ts";
 import { registerTriggers } from "./triggers.ts";
 
 /** Set by pi-subagent in every child session. */
@@ -24,4 +25,5 @@ export default function (pi: ExtensionAPI) {
   registerLearn(pi);
   registerPhaseTools(pi);
   registerGuards(pi);
+  registerTelemetry(pi);
 }

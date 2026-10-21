@@ -34,6 +34,8 @@ export interface PhaseModels {
   implement?: string;
   /** Read-only diff review by a subagent before a task closes. */
   review?: string;
+  /** Stronger model for a retry after verify keeps failing; falls back to `review`, then `setup`. */
+  escalate?: string;
 }
 
 export const MANIFEST_PATH = ".pi/workflow.json";

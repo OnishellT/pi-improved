@@ -59,7 +59,7 @@ test("no config, same model, or missing registry is a no-op", async () => {
 test("/models saves selections, unsets and keeps", async () => {
   const root = await tempProject({});
   await updateManifest(root, (x) => void (x.models = { implement: "openai/gpt-6-luna", review: "openai/gpt-6-luna" }));
-  const t = setup(root, luna, [luna, astra], ["openai/gpt-6-astra", "Usar el modelo de la sesión", "Sin cambios"]);
+  const t = setup(root, luna, [luna, astra], ["openai/gpt-6-astra", "Usar el modelo de la sesión", "Sin cambios", "Sin cambios"]);
   registerModels(t.pi);
   await t.commands.get("models").handler("", t.ctx);
   assert.deepEqual((await readManifest(root)).models, { setup: "openai/gpt-6-astra", review: "openai/gpt-6-luna" });
@@ -68,7 +68,7 @@ test("/models saves selections, unsets and keeps", async () => {
 test("/models asks provider first when the list is long", async () => {
   const root = await tempProject({});
   const many = Array.from({ length: 20 }, (_, i) => m(i < 10 ? "a" : "b", `m${i}`));
-  const t = setup(root, luna, many, ["b", "b/m12", "Sin cambios", "Sin cambios"]);
+  const t = setup(root, luna, many, ["b", "b/m12", "Sin cambios", "Sin cambios", "Sin cambios"]);
   registerModels(t.pi);
   await t.commands.get("models").handler("", t.ctx);
   assert.equal((await readManifest(root)).models?.setup, "b/m12");

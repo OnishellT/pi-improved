@@ -1,4 +1,4 @@
-export type Exec = (command: string, args: string[], options: { cwd: string; timeout: number }) => Promise<{ stdout: string; stderr: string; code: number; killed: boolean }>;
+export type Exec = (command: string, args: string[], options: { cwd: string; timeout: number; signal?: AbortSignal }) => Promise<{ stdout: string; stderr: string; code: number; killed: boolean }>;
 
 export interface StepResult {
   step: string;
@@ -20,6 +20,10 @@ export async function runVerify(steps: string[], exec: Exec, cwd: string, timeou
   }
   return { ok: results.length === steps.length && results.every((r) => r.ok), results };
 }
+
+/** A failing agentlint gate needs a fix or a recorded decision, not a smarter model. */
+export const isPolicyFailure = ({ results }: Awaited<ReturnType<typeof runVerify>>) =>
+  results.some((r) => !r.ok && /\bagentlint\b|gate closed|unresolved findings/i.test(`${r.step}\n${r.output}`));
 
 export function formatVerify({ ok, results }: Awaited<ReturnType<typeof runVerify>>) {
   const lines = results.map((r) => `${r.ok ? "✓" : "✗"} ${r.step}`);

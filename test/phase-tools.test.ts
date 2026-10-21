@@ -67,6 +67,9 @@ test("agentlint commands that open the review UI are blocked", async () => {
   assert.equal((await call("npm exec agentlint -- rules scan --review"))?.block, true);
   assert.equal((await call("pnpm agentlint review"))?.block, true);
   assert.equal(await call("npm exec agentlint -- rules scan && npm test"), undefined);
+  // A rule id that contains "review" or "accept" is not the subcommand.
+  assert.equal(await call("npm exec agentlint -- explain facturas/tax-calculation-review"), undefined);
+  assert.equal(await call("pnpm agentlint check --rule payments/accept-terms"), undefined);
 });
 
 test("setup_finish does not add agentlint twice when a package script already runs it", async () => {
@@ -102,4 +105,16 @@ test("the model cannot rewrite the workflow state files", async () => {
   assert.equal((await write(".pi/workflow.json"))?.block, true);
   assert.equal((await write("/repo/.pi/task.json"))?.block, true);
   assert.equal(await write(".pi/skills/domain-x/SKILL.md"), undefined);
+});
+
+test("phase tools leave the declared tools alone when nothing changes", async () => {
+  const root = await tempProject({});
+  const { pi, emit } = fakePi();
+  let calls = 0;
+  pi.getActiveTools = () => ["read"];
+  pi.setActiveTools = () => void calls++;
+  registerPhaseTools(pi);
+  await emit("turn_end", {}, { cwd: root });
+  await emit("before_agent_start", { messageType: "user" }, { cwd: root });
+  assert.equal(calls, 0);
 });
