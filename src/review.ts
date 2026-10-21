@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { resolveBin } from "./bin.ts";
 import type { Task } from "./task-state.ts";
+import { ensureTrusted } from "./subagent-ext.ts";
 import type { Exec } from "./verify.ts";
 
 export type ReviewStatus = "approved" | "changes" | "skipped";
@@ -122,6 +123,7 @@ async function runReview(exec: Exec, root: string, task: Task, model: string, si
     const brief = path.join(dir, "brief.md");
     await fs.writeFile(brief, buildBrief(task, diff, skills));
 
+    await ensureTrusted(root).catch(() => false);
     const spawn = await exec(
       resolveBin("subagent"),
       ["spawn", "--name", "review", "--provider", provider, "--model", id, "--thinking", "medium", "--tools", "read,grep,find,ls", "--cwd", root, "--file", brief, "--prompt", "Review the diff in the attached brief. End with VERDICT: APPROVED or VERDICT: CHANGES and a numbered findings list."],
