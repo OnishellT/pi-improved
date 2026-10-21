@@ -1,0 +1,60 @@
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+
+export type SetupStatus = "pending" | "running" | "done" | "declined";
+
+export interface McpConfig {
+  url: string;
+}
+
+export interface EnabledConnector {
+  id: string;
+  mcp?: McpConfig;
+}
+
+/** Project state committed to the repo at `.pi/workflow.json`. */
+export interface Manifest {
+  version: 1;
+  setup: SetupStatus;
+  language?: string;
+  startedAt?: string;
+  completedAt?: string;
+  verify: string[];
+  /** agentlint command prefix when the project enforces agentlint rules, e.g. "pnpm agentlint". */
+  agentlint?: string;
+  connectors: EnabledConnector[];
+  /** Model per phase as "provider/model-id"; a missing phase keeps the session model. */
+  models?: PhaseModels;
+}
+
+export interface PhaseModels {
+  /** One-off project setup: worth a stronger model. */
+  setup?: string;
+  /** /task planning and implementation: the cheap everyday model. */
+  implement?: string;
+  /** Read-only diff review by a subagent before a task closes. */
+  review?: string;
+}
+
+export const MANIFEST_PATH = ".pi/workflow.json";
+
+const empty = (): Manifest => ({ version: 1, setup: "pending", verify: [], connectors: [] });
+
+export async function readManifest(root: string): Promise<Manifest> {
+  try {
+    const raw = JSON.parse(await fs.readFile(path.join(root, MANIFEST_PATH), "utf8"));
+    return { ...empty(), ...raw };
+  } catch (error: any) {
+    if (error.code === "ENOENT") return empty();
+    throw new Error(`${MANIFEST_PATH} is not valid JSON: ${error.message}`);
+  }
+}
+
+export async function updateManifest(root: string, change: (m: Manifest) => void): Promise<Manifest> {
+  const manifest = await readManifest(root);
+  change(manifest);
+  const file = path.join(root, MANIFEST_PATH);
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, `${JSON.stringify(manifest, null, 2)}\n`);
+  return manifest;
+}

@@ -1,0 +1,19 @@
+{
+  "name": "pi-improved",
+  "version": "0.1.0",
+  "description": "Automatic project setup for Pi: discovery, interview, connectors, docs and a verify gate",
+  "type": "module",
+  "private": true,
+  "keywords": ["pi-package"],
+  "engines": { "node": ">=22.18.0" },
+  "pi": {
+    "extensions": ["./src/index.ts"]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.ts"
+  }
+}

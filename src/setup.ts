@@ -1,0 +1,234 @@
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Type } from "typebox";
+import { CATALOG, connectorById, type ConnectorSignal } from "./connectors.ts";
+import { agentlintCheck, agentlintCmd, discover, hasAgentlintConfig, isProject, type Discovery, type Run } from "./discover.ts";
+import { restoreModel, usePhaseModel } from "./models.ts";
+import { readManifest, updateManifest, type EnabledConnector } from "./manifest.ts";
+import { AGENTS_MAX_LINES, NUDGE, setupPrompt } from "./prompt.ts";
+import { TASK_PATH } from "./task-state.ts";
+import { formatVerify, runVerify } from "./verify.ts";
+
+const MAX_NUDGES = 2;
+const MAX_VERIFY_FAILURES = 3;
+const NONE = "Ninguno más";
+
+/** Returns what is missing from the setup output; empty means complete. */
+export async function checkOutputs(root: string, verify: string[]): Promise<string[]> {
+  const problems: string[] = [];
+  const agents = await fs.readFile(path.join(root, "AGENTS.md"), "utf8").catch(() => undefined);
+  if (agents === undefined) problems.push("AGENTS.md is missing.");
+  else if (agents.split("\n").length > AGENTS_MAX_LINES) problems.push(`AGENTS.md has more than ${AGENTS_MAX_LINES} lines. Move the details into skills.`);
+
+  const skillsDir = path.join(root, ".pi/skills");
+  const skills = await fs.readdir(skillsDir).catch(() => [] as string[]);
+  let valid = 0;
+  for (const dir of skills) {
+    const text = await fs.readFile(path.join(skillsDir, dir, "SKILL.md"), "utf8").catch(() => "");
+    if (!text) continue;
+    if (/^---\n[\s\S]*?\bname:\s*\S[\s\S]*?\bdescription:\s*\S[\s\S]*?\n---/.test(text)) valid++;
+    else problems.push(`.pi/skills/${dir}/SKILL.md needs frontmatter with name and description.`);
+  }
+  if (!valid) problems.push("No domain skill found in .pi/skills/<name>/SKILL.md.");
+  if (!verify.length) problems.push("No verify steps. Every project needs at least one check that runs.");
+  return problems;
+}
+
+async function chooseConnectors(ctx: ExtensionContext, signals: ConnectorSignal[], current: EnabledConnector[]) {
+  const enabled = new Map(current.map((c) => [c.id, c]));
+  const enable = (id: string) => enabled.set(id, { id, mcp: connectorById(id)?.mcp });
+
+  for (const signal of signals) {
+    const c = connectorById(signal.id);
+    if (!c || enabled.has(c.id)) continue;
+    if (await ctx.ui.confirm(`¿Conectar ${c.name}?`, `Lo detecté porque ${signal.evidence}.\nLo usaría en modo solo lectura para ${c.purpose}.`)) enable(c.id);
+  }
+  for (;;) {
+    const rest = CATALOG.filter((c) => !enabled.has(c.id));
+    if (!rest.length) break;
+    const pick = await ctx.ui.select("¿El proyecto usa algún otro servicio?", [NONE, ...rest.map((c) => c.name)]);
+    if (!pick || pick === NONE) break;
+    enable(rest.find((c) => c.name === pick)!.id);
+  }
+  for (const c of enabled.values()) {
+    if (!c.mcp) ctx.ui.notify(`${connectorById(c.id)?.name ?? c.id}: configúralo en ~/.pi/agent/mcp.json con el nombre "${c.id}" y lo usaré.`, "warning");
+  }
+  return [...enabled.values()];
+}
+
+async function ensureIgnored(root: string, entries: string[]) {
+  const gitignore = path.join(root, ".gitignore");
+  const current = await fs.readFile(gitignore, "utf8").catch(() => "");
+  const lines = current.split("\n").map((l) => l.trim());
+  const missing = entries.filter((e) => !lines.includes(e) && !lines.includes(e.replace(/\/$/, "")));
+  if (missing.length) await fs.appendFile(gitignore, `${current && !current.endsWith("\n") ? "\n" : ""}${missing.join("\n")}\n`);
+}
+
+/** True when a verify step already runs the agentlint gate, directly or through a package script. */
+async function runsAgentlint(root: string, verify: string[]) {
+  const scripts: Record<string, string> = JSON.parse((await fs.readFile(path.join(root, "package.json"), "utf8").catch(() => "{}")) || "{}").scripts ?? {};
+  const expand = (step: string) => step.replace(/^(?:npm|pnpm|yarn|bun)(?: run)? ([\w:-]+)$/, (all, name) => scripts[name] ?? all);
+  return verify.some((step) => /agentlint\b.*\bcheck\b/.test(expand(step)));
+}
+
+/** Returns the agentlint command when the project will enforce agentlint rules. */
+async function chooseAgentlint(ctx: ExtensionContext, found: Discovery) {
+  if (found.agentlint) return agentlintCmd(found.packageManager);
+  if (!found.stacks.includes("node")) return undefined;
+  const pick = await ctx.ui.select(
+    "¿Convierto las reglas más importantes de AGENTS.md en reglas de agentlint?\nBloquean el final de cada tarea hasta que se cumplan o alguien acepte la excepción con una razón. Tú eliges cuáles.",
+    ["Sí (recomendado)", "No"],
+  );
+  return pick === "Sí (recomendado)" ? agentlintCmd(found.packageManager) : undefined;
+}
+
+function registerConnectors(pi: ExtensionAPI, connectors: EnabledConnector[]) {
+  const registered = new Set(pi.getMcpServers().map((s: any) => s.name));
+  for (const c of connectors) {
+    if (!c.mcp || registered.has(c.id)) continue;
+    pi.registerMcpServer(c.id, { url: c.mcp.url, exposure: "deferred", description: connectorById(c.id)?.purpose });
+  }
+}
+
+export function registerSetup(pi: ExtensionAPI) {
+  const run: Run = (command, args) => pi.exec(command, args, { timeout: 15_000 }).then((r) => (r.code === 0 ? r.stdout : ""), () => "");
+  let nudges = 0;
+  let verifyFailures = 0;
+
+  const setupRunning = async (cwd: string) => (await readManifest(cwd).catch(() => undefined))?.setup === "running";
+
+  pi.registerCommand("setup", {
+    description: "Prepara el proyecto para el agente: escaneo, entrevista, conectores, docs y verify",
+    handler: async (_args, ctx) => {
+      if (!ctx.hasUI) return ctx.ui.notify("/setup necesita la interfaz interactiva.", "error");
+      const root = ctx.cwd;
+      let manifest = await readManifest(root);
+      if (manifest.setup === "done" && !(await ctx.ui.confirm("Este proyecto ya tiene setup", "¿Quieres actualizarlo?"))) return;
+
+      const resuming = manifest.setup !== "done" && Boolean(manifest.startedAt);
+      ctx.ui.setStatus("setup", "setup: escaneando el repo…");
+      const found = await discover(root, run);
+      const language = manifest.language ?? (await ctx.ui.select("¿En qué idioma escribo preguntas y documentación?", ["Español", "English"]));
+      if (!language) return ctx.ui.setStatus("setup", undefined);
+      const connectors = await chooseConnectors(ctx, found.connectors, manifest.connectors);
+      const agentlint = manifest.agentlint ?? (await chooseAgentlint(ctx, found));
+
+      manifest = await updateManifest(root, (m) => {
+        m.setup = "running";
+        m.language = language;
+        m.startedAt ??= new Date().toISOString();
+        m.connectors = connectors;
+        m.agentlint = agentlint;
+        if (!m.verify.length) m.verify = found.verify;
+      });
+      registerConnectors(pi, connectors);
+      nudges = 0;
+      verifyFailures = 0;
+
+      ctx.ui.setStatus("setup", "setup: el agente está documentando el proyecto…");
+      const previous = await usePhaseModel(pi, ctx, "setup");
+      pi.sendUserMessage(setupPrompt(found, manifest, resuming));
+      await ctx.waitForIdle();
+      await restoreModel(pi, ctx, previous);
+      ctx.ui.setStatus("setup", undefined);
+      if ((await readManifest(root)).setup === "done") await ctx.reload();
+    },
+  });
+
+  pi.registerTool({
+    name: "setup_finish",
+    label: "Finish setup",
+    description: "Finish /setup: checks the written files, runs verify and asks the user to approve. Call it only during /setup.",
+    parameters: Type.Object({
+      verify: Type.Array(Type.String(), { minItems: 1, description: "Shell commands that must all pass, in order" }),
+      summary: Type.String({ description: "What you documented and what is still unresolved, 3-8 lines" }),
+    }),
+    exposure: "model-only",
+    executionMode: "sequential",
+    async execute(_id, params, _signal, _update, ctx) {
+      let { verify } = params;
+      const { summary } = params;
+      const root = ctx.cwd;
+      if (!(await setupRunning(root))) throw new Error("No setup is running. The user starts one with /setup.");
+
+      const { agentlint } = await readManifest(root);
+      const problems = await checkOutputs(root, verify);
+      if (agentlint) {
+        if (!(await hasAgentlintConfig(root))) problems.push(`agentlint is not configured. Run \`${agentlint} init\` and add the rules the user selected.`);
+        else {
+          const tests = await runVerify([`${agentlint} rules test`], pi.exec.bind(pi), root);
+          // A config with zero rules is a valid choice; agentlint reports it as "No matching rules".
+          const noRules = tests.results.some((r) => /No matching rules/.test(r.output));
+          if (!tests.ok && !noRules) problems.push(`agentlint rule fixtures fail:\n${formatVerify(tests)}`);
+        }
+        if (!(await runsAgentlint(root, verify))) verify = [...verify, agentlintCheck(agentlint)];
+      }
+      if (problems.length) throw new Error(`Setup incomplete:\n- ${problems.join("\n- ")}`);
+
+      const result = await runVerify(verify, pi.exec.bind(pi), root);
+      let verifyNote = "";
+      if (!result.ok) {
+        verifyFailures++;
+        const report = formatVerify(result);
+        if (verifyFailures < MAX_VERIFY_FAILURES) throw new Error(`${report}\n\nFix the cause (or the verify steps, if they are wrong) and call setup_finish again.`);
+        const choice = await ctx.ui.select(`verify falló ${verifyFailures} veces. ¿Qué hago?`, ["Seguir intentando", "Terminar igual (verify queda pendiente)", "Pausar el setup"]);
+        if (choice === "Seguir intentando") throw new Error(`${report}\n\nThe user asked you to keep trying.`);
+        if (choice !== "Terminar igual (verify queda pendiente)") {
+          await updateManifest(root, (m) => void (m.setup = "pending"));
+          return { content: [{ type: "text", text: "The user paused setup. Stop here." }], details: undefined, terminate: true };
+        }
+        verifyNote = "\n\n⚠️  verify todavía falla.";
+      }
+
+      const changed = (await run("git", ["-C", root, "status", "--porcelain", "--untracked-files=all"])).trim() || "(sin cambios detectados por git)";
+      const approved = await ctx.ui.confirm("¿Apruebas el setup?", `${summary}${verifyNote}\n\nArchivos:\n${changed}\n\nPuedes revisarlo con git diff antes de responder.`);
+      if (!approved) {
+        const feedback = await ctx.ui.input("¿Qué hay que cambiar?");
+        throw new Error(`The user did not approve. Feedback: ${feedback || "(none)"}. Apply it and call setup_finish again.`);
+      }
+
+      await ensureIgnored(root, [TASK_PATH, ...((await fs.access(path.join(root, "package.json")).then(() => true, () => false)) ? ["node_modules/"] : [])]);
+
+      await updateManifest(root, (m) => {
+        m.setup = "done";
+        m.verify = verify;
+        m.completedAt = new Date().toISOString();
+      });
+      return { content: [{ type: "text", text: "Setup complete and approved. Stop here." }], details: { verify }, terminate: true };
+    },
+  });
+
+  // Connector tools are read-only while setup runs.
+  pi.on("tool_call", async (event, ctx) => {
+    const server = event.toolName.match(/^mcp__(.+?)__/)?.[1];
+    if (!server || !(await setupRunning(ctx.cwd))) return;
+    const manifest = await readManifest(ctx.cwd);
+    if (!manifest.connectors.some((c) => c.id === server)) return;
+    const hints = pi.getAllTools().find((t) => t.name === event.toolName)?.annotations;
+    if (hints?.readOnlyHint !== true) return { block: true, reason: `During setup, ${server} can only be used to read. This tool can modify data.` };
+  });
+
+  // A cheap model often stops early. Push it back to the steps a bounded number of times.
+  pi.on("before_agent_start", async (event) => {
+    if (event.messageType === "user") nudges = 0;
+  });
+  pi.on("agent_before_settle", async (event, ctx) => {
+    if (event.outcome !== "completed" || nudges >= MAX_NUDGES || !(await setupRunning(ctx.cwd))) return;
+    nudges++;
+    return { entries: [{ type: "custom_message", customType: "setup-nudge", content: NUDGE, display: false }], continue: true };
+  });
+
+  pi.on("session_start", async (event, ctx) => {
+    const manifest = await readManifest(ctx.cwd).catch(() => undefined);
+    if (!manifest) return;
+    registerConnectors(pi, manifest.connectors);
+    if (event.reason !== "startup" || ctx.mode !== "tui" || manifest.setup === "done" || manifest.setup === "declined") return;
+    if (!(await isProject(ctx.cwd))) return;
+
+    const question = manifest.startedAt ? "Hay un setup a medias. ¿Lo continúo?" : "Este proyecto no tiene setup del agente. ¿Lo hago ahora?";
+    const choice = await ctx.ui.select(question, ["Sí", "Más tarde", "No volver a preguntar"]);
+    if (choice === "Sí") pi.sendUserMessage("/setup", { expandPromptTemplates: true });
+    else if (choice === "No volver a preguntar") await updateManifest(ctx.cwd, (m) => void (m.setup = "declined"));
+  });
+}

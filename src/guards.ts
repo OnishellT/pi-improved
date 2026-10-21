@@ -1,0 +1,29 @@
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+
+/** agentlint commands that open a browser UI and wait for a person. */
+const INTERACTIVE_AGENTLINT = /\bagentlint\b[^;&|\n]*(\breview\b|--review\b|--wizard\b)/;
+
+/** Recording an exception to a rule is a decision for the user, even when the rule allows agent authority. */
+const AGENTLINT_ACCEPT = /\bagentlint\b[^;&|\n]*\baccept\b/;
+
+/** Workflow state the code owns: the model must not rewrite it. */
+const OWNED = /(^|\/)\.pi\/(workflow|task)\.json$/;
+
+export function registerGuards(pi: ExtensionAPI) {
+  pi.on("tool_call", async (event, ctx) => {
+    if (event.toolName === "write" || event.toolName === "edit") {
+      const file = String((event.input as { path?: unknown }).path ?? "");
+      if (OWNED.test(file)) return { block: true, reason: `${file} is workflow state managed by the extension. Do not edit it; ask the user (/models, /setup) if it needs to change.` };
+      return;
+    }
+    if (event.toolName !== "bash") return;
+    const command = String((event.input as { command?: unknown }).command ?? "");
+    if (INTERACTIVE_AGENTLINT.test(command)) {
+      return { block: true, reason: "This agentlint command opens an interactive UI for a person and would hang. Use `rules scan` or `next --format json` instead." };
+    }
+    if (AGENTLINT_ACCEPT.test(command)) {
+      const approved = ctx.hasUI && (await ctx.ui.select(`El agente quiere aceptar una excepción de agentlint:\n${command}`, ["Aprobar la excepción", "Bloquear: que lo corrija"])) === "Aprobar la excepción";
+      if (!approved) return { block: true, reason: "The user did not accept this exception. Fix the code so the finding no longer applies, or explain why it is wrong and ask the user." };
+    }
+  });
+}
