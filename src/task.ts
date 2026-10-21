@@ -161,8 +161,10 @@ export function registerTask(pi: ExtensionAPI) {
         t.plan = plan;
         t.status = "implementing";
       });
+      const decided = (plan.decisions ?? []).filter((d: any) => d.answer).map((d: any) => `- ${d.question} -> ${d.answer}`);
+      const settled = decided.length ? `\n\nDecisions already made by the user (do not ask again):\n${decided.join("\n")}` : "";
       return {
-        content: [{ type: "text", text: "Plan approved. First write the tests at the agreed seams in the listed test files and run ONLY those test files to see them fail; then implement until they pass. Change only the listed files, use the agreed interface names and follow the decisions (read the ADRs they cite). Do not run the full verify; it runs automatically." }],
+        content: [{ type: "text", text: "Plan approved. First write the tests at the agreed seams in the listed test files and run ONLY those test files to see them fail; then implement until they pass. Change only the listed files, use the agreed interface names and follow the decisions (read the ADRs they cite). Do not run the full verify; it runs automatically." + settled }],
         details: { plan },
       };
     },

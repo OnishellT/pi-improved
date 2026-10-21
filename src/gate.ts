@@ -6,6 +6,7 @@ import { TASK_DONE_EVENT } from "./learn.ts";
 import { readManifest } from "./manifest.ts";
 import { restoreModel, switchModel } from "./models.ts";
 import { assessRisk } from "./risk.ts";
+import { resolvePolicyFailure } from "./policy.ts";
 import { reviewDiff } from "./review.ts";
 import { skillsBlock } from "./skills.ts";
 import { readTask, updateTask } from "./task-state.ts";
@@ -24,6 +25,7 @@ export function registerGate(pi: ExtensionAPI) {
   let failures = 0;
   let escalatedFrom: string | undefined;
   let verified: string | undefined;
+  let policyRepeats = 0;
 
   const snapshot = async (cwd: string) => {
     const git = (args: string[]) => pi.exec("git", args, { cwd }).then((r) => r.stdout, () => "");
@@ -57,6 +59,7 @@ export function registerGate(pi: ExtensionAPI) {
     writes = 0;
     retries = 0;
     reviews = 0;
+    policyRepeats = 0;
   });
 
   pi.on("tool_result", async (event) => {
@@ -93,6 +96,16 @@ export function registerGate(pi: ExtensionAPI) {
       if (reviewing) {
         abort.abort();
         clearStatus();
+      }
+      // The model gets one chance to fix an agentlint finding; after that only the user can decide, so ask them instead of looping.
+      if (policy && ctx.hasUI && policyRepeats++ >= 1) {
+        const outcome = await resolvePolicyFailure(pi, ctx, manifest, report);
+        if (outcome === "stop") return deescalate(ctx).then(() => undefined);
+        if (outcome === "approved") {
+          const content = "The user approved the agentlint exception and it is recorded. Do not change the code: finish so verify runs again.";
+          return { entries: [{ type: "custom_message", customType: "verify-gate", content, display: true }], continue: true };
+        }
+        if (outcome === "failed") ctx.ui.notify("No pude registrar la excepción de agentlint; el modelo sigue.", "warning");
       }
       if (retries >= MAX_RETRIES) {
         if (!ctx.hasUI) return deescalate(ctx).then(() => undefined);

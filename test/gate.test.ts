@@ -243,11 +243,42 @@ test("no escalation without a configured model", async () => {
 });
 
 test("an agentlint failure never escalates and tells the model how to record an exception", async () => {
-  const t = await parallel({ escalate: "p/strong" }, [], "facturas/tax-review src/invoice.js:11\n2 unresolved findings — gate closed");
+  const t = await parallel({ escalate: "p/strong" }, ["Que el modelo lo corrija", "Que el modelo lo corrija"], "facturas/tax-review src/invoice.js:11\n2 unresolved findings — gate closed");
   t.gate.resolve();
   let last: any;
   for (let i = 0; i < 3; i++) last = await t.settle();
   assert.deepEqual(t.set, []);
   assert.equal(t.emitted.some((e) => e.name === ESCALATE_EVENT), false);
   assert.match(last.entries[0].content, /agentlint accept command/);
+});
+
+test("a repeated agentlint failure asks the user; approval records the exception and continues", async () => {
+  const report = "facturas/money-review src/invoice.js:11\n1 unresolved findings — gate closed";
+  const calls: string[] = [];
+  const root = await tempProject({
+    ".pi/workflow.json": JSON.stringify({ version: 1, setup: "done", verify: ["check"], connectors: [], agentlint: "npm exec agentlint --" }),
+    ".pi/task.json": JSON.stringify(task),
+  });
+  let remaining = 1;
+  const h = fakePi((cmd, args) => {
+    if (cmd === "git") return { code: 0, stdout: args[0] === "diff" ? "changed" : "" };
+    const script = args[1] ?? "";
+    calls.push(script);
+    if (/next --format json/.test(script)) return { code: 0, stdout: JSON.stringify({ remaining, selector: remaining ? "sel-1" : undefined }) };
+    if (/ accept /.test(script)) return (remaining = 0), { code: 0 };
+    return { code: 1, stdout: report };
+  });
+  h.pi.events = { emit: () => {} };
+  registerGate(h.pi);
+  const ui = fakeUI(["Aprobar la excepción", "Cambio revisado por finanzas"]);
+  const ctx: any = { cwd: root, hasUI: true, ui };
+  await h.emit("before_agent_start", { messageType: "user" }, ctx);
+  await h.emit("tool_result", { toolName: "write" }, ctx);
+  const first = await h.emit("agent_before_settle", { outcome: "completed" }, ctx);
+  assert.match(first.entries[0].content, /agentlint accept command/);
+  assert.equal(ui.asked.length, 0);
+  const second = await h.emit("agent_before_settle", { outcome: "completed" }, ctx);
+  assert.match(ui.asked[0], /agentlint bloquea/);
+  assert.match(second.entries[0].content, /approved the agentlint exception/);
+  assert.ok(calls.some((c) => /npm exec agentlint -- accept --reason "Cambio revisado por finanzas" "sel-1"/.test(c)));
 });
