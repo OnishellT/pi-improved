@@ -111,3 +111,16 @@ test("prompt lists similar past tasks and the tracker", async () => {
   assert.match(text, /Similar past tasks:\n- PAY-0: added fees/);
   assert.match(text, /jira tools/);
 });
+
+test("a plain-text question while implementing is routed to ask_user; a statement is not", async () => {
+  const { root, ctxFor, emit } = await setup();
+  await writeTask(root, { id: "t1", title: "x", status: "implementing", allowedExtra: [], startedAt: "now" } as any);
+  const { ctx } = ctxFor([]);
+  const say = (text: string) => emit("message_end", { message: { role: "assistant", content: [{ type: "text", text }] } }, ctx);
+  await say("Done with the calendar.");
+  assert.equal(await emit("agent_before_settle", { outcome: "completed" }, ctx), undefined);
+  await say("No package.json exists.\nShould I scaffold one?");
+  const r = await emit("agent_before_settle", { outcome: "completed" }, ctx);
+  assert.equal(r.continue, true);
+  assert.match(r.entries[0].content, /ask_user/);
+});

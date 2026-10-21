@@ -41,7 +41,10 @@ export function fakePi(exec: (cmd: string, args: string[]) => { code: number; st
     registerCommand: (name: string, command: any) => commands.set(name, command),
     on: (event: string, handler: any) => handlers.set(event, [...(handlers.get(event) ?? []), handler]),
     exec: async (cmd: string, args: string[]) => ({ stdout: "", stderr: "", killed: false, ...exec(cmd, args) }),
-    sendUserMessage: (text: string) => sent.push(text),
+    sendUserMessage: (text: string) => {
+      sent.push(text);
+      for (const handler of handlers.get("agent_start") ?? []) handler({}, {});
+    },
     getMcpServers: () => mcp,
     registerMcpServer: (name: string, config: any) => mcp.push({ name, config }),
     getAllTools: () => [],

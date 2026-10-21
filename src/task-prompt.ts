@@ -1,4 +1,5 @@
 export const TASK_NUDGE = "Call task_plan with your plan.";
+export const QUESTION_NUDGE = "The user does not read plain-text questions here. If you need a decision, call ask_user. Otherwise make the reasonable choice that fits the plan, AGENTS.md and the ADRs, and keep implementing.";
 
 export function taskPrompt(title: string, ticket: string | undefined, tracker: string | undefined, related: string[]) {
   const steps = [

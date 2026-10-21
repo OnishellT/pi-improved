@@ -11,6 +11,7 @@ import { TASK_PATH } from "./task-state.ts";
 import { formatVerify, runVerify } from "./verify.ts";
 
 const MAX_NUDGES = 2;
+const START_TIMEOUT = 30_000;
 const MAX_VERIFY_FAILURES = 3;
 const NONE = "Ninguno más";
 
@@ -95,6 +96,11 @@ export function registerSetup(pi: ExtensionAPI) {
   const run: Run = (command, args) => pi.exec(command, args, { timeout: 15_000 }).then((r) => (r.code === 0 ? r.stdout : ""), () => "");
   let nudges = 0;
   let verifyFailures = 0;
+  let onStart: (() => void) | undefined;
+  pi.on("agent_start", () => {
+    onStart?.();
+    onStart = undefined;
+  });
 
   const setupRunning = async (cwd: string) => (await readManifest(cwd).catch(() => undefined))?.setup === "running";
 
@@ -128,7 +134,13 @@ export function registerSetup(pi: ExtensionAPI) {
 
       ctx.ui.setStatus("setup", "setup: el agente está documentando el proyecto…");
       const previous = await usePhaseModel(pi, ctx, "setup");
+      // sendUserMessage does not wait for the run: idle before it starts would restore the model before the first call.
+      const started = new Promise<void>((resolve) => {
+        onStart = resolve;
+        setTimeout(resolve, START_TIMEOUT).unref();
+      });
       pi.sendUserMessage(setupPrompt(found, manifest, resuming));
+      await started;
       await ctx.waitForIdle();
       await restoreModel(pi, ctx, previous);
       ctx.ui.setStatus("setup", undefined);

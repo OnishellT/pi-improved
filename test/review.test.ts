@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { parseVerdict, reviewDiff, subagentCost } from "../src/review.ts";
+import { buildBrief, parseVerdict, reviewDiff, subagentCost } from "../src/review.ts";
 import type { Task } from "../src/task-state.ts";
 
 const task: Task = {
@@ -112,3 +112,10 @@ test("subagentCost sums the child's assistant costs", async () => {
 async function tempRepoForAbort() {
   return fs.mkdtemp(path.join(os.tmpdir(), "review-abort-"));
 }
+
+test("brief inlines new files and keeps blocking-only rules", () => {
+  const brief = buildBrief({ id: "t", title: "T", status: "implementing", allowedExtra: [], startedAt: "now" } as any, { diff: "", truncated: false, untracked: ["a.ts", "big.ts"], contents: { "a.ts": "export const a = 1;" } });
+  assert.match(brief, /### a\.ts\n```\nexport const a = 1;/);
+  assert.match(brief, /- big\.ts \(read it directly\)/);
+  assert.match(brief, /CHANGES is only for blocking problems/);
+});

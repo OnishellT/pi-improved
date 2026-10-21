@@ -24,17 +24,27 @@ async function collectDiff(exec: Exec, root: string) {
   const diff = await git(["diff", "HEAD"]);
   const untracked = (await git(["ls-files", "--others", "--exclude-standard"])).split("\n").filter((f) => f && f !== ".pi/task.json");
   const truncated = diff.length > MAX_DIFF;
-  return { diff: truncated ? diff.slice(0, MAX_DIFF) : diff, truncated, untracked };
+  // New files are not in `git diff HEAD`: inline them while the budget lasts so the reviewer does not spend turns reading them.
+  const contents: Record<string, string> = {};
+  let budget = MAX_DIFF - Math.min(diff.length, MAX_DIFF);
+  for (const file of untracked) {
+    const text = await fs.readFile(path.join(root, file), "utf8").catch(() => undefined);
+    if (text === undefined || text.length > budget || text.includes("\0")) continue;
+    contents[file] = text;
+    budget -= text.length;
+  }
+  return { diff: truncated ? diff.slice(0, MAX_DIFF) : diff, truncated, untracked, contents };
 }
 
-export function buildBrief(task: Task, d: { diff: string; truncated: boolean; untracked: string[] }) {
+export function buildBrief(task: Task, d: { diff: string; truncated: boolean; untracked: string[]; contents?: Record<string, string> }) {
   const plan = task.plan;
   const list = (items: string[]) => (items.length ? items.map((i) => `- ${i}`).join("\n") : "- (none)");
   return [
     `# Diff review: ${task.title}`,
     "You are a strict code reviewer. Review ONLY the diff below against the plan, the decisions, AGENTS.md and docs/adr (read them with your tools).",
-    "Report real bugs, violations of the plan or its decisions, and violations of project rules. No style nitpicks, no praise, no speculative refactors.",
-    "Finish with a line `VERDICT: APPROVED` or `VERDICT: CHANGES`; for CHANGES follow it with a numbered list of findings (file, problem, fix).",
+    "CHANGES is only for blocking problems: wrong behavior, crashes, data loss, security holes, or breaking the plan, its decisions, AGENTS.md or an ADR. Style, naming, extra tests, refactors and anything you are not sure about are not blocking: approve and leave them out.",
+    "The diff and the new files are below in full: read other files only when you need them to confirm a bug.",
+    "Finish with a line `VERDICT: APPROVED` or `VERDICT: CHANGES`; for CHANGES follow it with a numbered list of blocking findings only (file, problem, fix).",
     "## Plan",
     plan?.summary ?? "(no plan)",
     "### Steps",
@@ -43,8 +53,8 @@ export function buildBrief(task: Task, d: { diff: string; truncated: boolean; un
     list(plan?.files ?? []),
     "### Decisions",
     list((plan?.decisions ?? []).map((x) => `${x.question} -> ${x.answer ?? x.source ?? x.status}`)),
-    "## Untracked files (new, read them directly)",
-    list(d.untracked),
+    "## New files",
+    ...(d.untracked.length ? d.untracked.map((f) => (d.contents?.[f] === undefined ? `- ${f} (read it directly)` : `### ${f}\n\`\`\`\n${d.contents[f]}\n\`\`\``)) : ["- (none)"]),
     `## Diff (git diff HEAD)${d.truncated ? `\nTRUNCATED to the first ${MAX_DIFF} characters; inspect the rest with your tools.` : ""}`,
     "```diff",
     d.diff || "(empty)",

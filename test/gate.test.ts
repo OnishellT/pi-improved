@@ -93,19 +93,16 @@ test("/verify reports even without changes", async () => {
   assert.match(notes[0][0], /verify passed/);
 });
 
-test("review CHANGES continues with the findings; max rounds then asks the user", async () => {
-  const t = await setup({ pass: true, task: true, review: "VERDICT: CHANGES\n1. bug", answers: ["Cerrar igual", false] });
+test("review CHANGES continues with the findings once; the fix is checked by verify only", async () => {
+  const t = await setup({ pass: true, task: true, review: "VERDICT: CHANGES\n1. bug", answers: [true] });
   await t.run();
-  for (let i = 0; i < 2; i++) {
-    const r = await t.settle();
-    assert.equal(r.continue, true);
-    assert.equal(r.entries[0].customType, "diff-review");
-    assert.match(r.entries[0].content, /1\. bug[\s\S]*Fix these, then finish\./);
-  }
-  assert.equal(t.ui.asked.length, 0);
+  const r = await t.settle();
+  assert.equal(r.continue, true);
+  assert.equal(r.entries[0].customType, "diff-review");
+  assert.match(r.entries[0].content, /1\. bug[\s\S]*Fix these, then finish\./);
   assert.equal(await t.settle(), undefined);
-  assert.equal(t.ui.asked.length, 2);
-  assert.match(t.ui.asked[0], /revisión/);
+  assert.equal(t.subagent.filter((s) => s === "spawn").length, 1);
+  assert.equal((await readTask(t.root))?.status, "done");
 });
 
 test("review APPROVED goes on to the confirm", async () => {

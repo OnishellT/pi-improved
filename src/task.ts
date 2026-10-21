@@ -7,7 +7,7 @@ import { relatedTasks } from "./learn.ts";
 import { usePhaseModel } from "./models.ts";
 import { readManifest, type Manifest } from "./manifest.ts";
 import { readTask, updateTask, writeTask, type Decision, type Task } from "./task-state.ts";
-import { TASK_NUDGE, taskPrompt } from "./task-prompt.ts";
+import { QUESTION_NUDGE, TASK_NUDGE, taskPrompt } from "./task-prompt.ts";
 
 const MAX_NUDGES = 2;
 const OTHER = "✏️  Otra respuesta…";
@@ -126,11 +126,22 @@ export function registerTask(pi: ExtensionAPI) {
   pi.on("before_agent_start", async (event) => {
     if (event.messageType === "user") nudges = 0;
   });
+  let lastText = "";
+  pi.on("message_end", async (event) => {
+    const message: any = event.message;
+    if (message?.role !== "assistant") return;
+    const content = message.content;
+    lastText = typeof content === "string" ? content : (content ?? []).filter((c: any) => c.type === "text").map((c: any) => c.text).join("\n");
+  });
   pi.on("agent_before_settle", async (event, ctx) => {
     if (event.outcome !== "completed" || nudges >= MAX_NUDGES) return;
     const [task, manifest] = await Promise.all([readTask(ctx.cwd).catch(() => undefined), readManifest(ctx.cwd).catch(() => undefined)]);
-    if (task?.status !== "planning" || manifest?.setup === "running") return;
+    if (manifest?.setup === "running") return;
+    // A plain-text question ends the run with nobody to answer it (RPC, headless): route it to ask_user.
+    const asking = task?.status === "implementing" && /\?\s*$/.test(lastText.trim().slice(-400).split("\n").filter(Boolean).at(-1) ?? "");
+    if (task?.status !== "planning" && !asking) return;
     nudges++;
-    return { entries: [{ type: "custom_message", customType: "task-nudge", content: TASK_NUDGE, display: false }], continue: true };
+    const content = asking ? QUESTION_NUDGE : TASK_NUDGE;
+    return { entries: [{ type: "custom_message", customType: "task-nudge", content, display: false }], continue: true };
   });
 }

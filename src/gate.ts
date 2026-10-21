@@ -10,7 +10,7 @@ import { readTask, updateTask } from "./task-state.ts";
 import { formatVerify, isPolicyFailure, runVerify } from "./verify.ts";
 
 const MAX_RETRIES = 3;
-const MAX_REVIEWS = 2;
+const MAX_REVIEWS = 1;
 const ESCALATE_AFTER = 2;
 
 export function registerGate(pi: ExtensionAPI) {
@@ -71,7 +71,7 @@ export function registerGate(pi: ExtensionAPI) {
     const task = await readTask(ctx.cwd).catch(() => undefined);
     const reviewModel = manifest.models?.review;
     const abort = new AbortController();
-    const reviewing = task?.status === "implementing" && reviewModel ? review(ctx.cwd, task, reviewModel, abort.signal) : undefined;
+    const reviewing = task?.status === "implementing" && reviewModel && reviews < MAX_REVIEWS ? review(ctx.cwd, task, reviewModel, abort.signal) : undefined;
     if (reviewing) ctx.ui.setStatus("review", `revisando el diff con ${reviewModel}…`);
     const clearStatus = () => ctx.ui.setStatus("review", undefined);
     const { ok, report, policy } = await verify(manifest.verify, ctx.cwd, true);
@@ -108,14 +108,12 @@ export function registerGate(pi: ExtensionAPI) {
       const review = await reviewing.finally(clearStatus);
       if (review.status === "skipped") ctx.ui.notify(`Revisión omitida: ${review.report}`, "warning");
       else ctx.ui.notify(review.status === "approved" ? "Revisión del diff: aprobada." : "Revisión del diff: pidió cambios. El agente los corrige.", review.status === "approved" ? "info" : "warning");
+      reviews++;
+      // One round: the fixes are checked by verify, not by another paid review.
       if (review.status === "changes") {
-        const proceed = reviews < MAX_REVIEWS || (ctx.hasUI && (await ctx.ui.select("La revisión sigue pidiendo cambios. ¿Qué hacemos?", ["Seguir corrigiendo", "Cerrar igual"])) === "Seguir corrigiendo");
-        if (proceed) {
-          reviews++;
-          verified = undefined;
-          const content = `${review.report}\n\nFix these, then finish.`;
-          return { entries: [{ type: "custom_message", customType: "diff-review", content, display: true }], continue: true };
-        }
+        verified = undefined;
+        const content = `${review.report}\n\nFix these, then finish.`;
+        return { entries: [{ type: "custom_message", customType: "diff-review", content, display: true }], continue: true };
       }
     }
     if (task?.status === "implementing" && ctx.hasUI && (await ctx.ui.confirm("Verificación OK", `¿Terminó la tarea "${task.title}"?`))) {
