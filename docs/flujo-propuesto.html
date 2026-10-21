@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Flujo propuesto</title>
+<title>Flujo con skills</title>
 <style>
 :root{--bg:#f6f7f9;--card:#fff;--ink:#1a1d23;--mute:#5f6670;--line:#e2e5ea;--user:#d97706;--luna:#2563eb;--astra:#7c3aed;--code:#059669;--new:#dc2626;--skill:#0e7490;--hl:#fff7e6}
 @media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#111317;--card:#1b1e24;--ink:#eceef2;--mute:#9aa2ad;--line:#2b3038;--hl:#2a2410}}
@@ -33,7 +33,7 @@ table{border-collapse:collapse;width:100%;font-size:.85rem}td,th{text-align:left
 </style>
 </head>
 <body><main>
-<h1>Propuesta: skills por fase</h1>
+<h1>Flujo con skills por fase (implementado)</h1>
 <p class="sub">Mismo flujo. Lo que cambia: el <b>código</b> inyecta la skill correcta en cada fase; el modelo barato no tiene que elegirla.</p>
 <div class="legend">
 <span><i class="dot" style="background:var(--user)"></i>Usuario</span>
@@ -46,19 +46,20 @@ table{border-collapse:collapse;width:100%;font-size:.85rem}td,th{text-align:left
 <div class="idea">💡 Las skills no se instalan «sueltas» (cada una sumaría texto a todos los turnos y luna elegiría mal). Van <b>copiadas dentro del paquete</b> y el código decide cuál entra en el prompt de cada fase.</div>
 <div id="app"></div>
 <section><h2>Cómo se conecta</h2><div class="grid">
+<div><b>Instalación en cualquier PC</b><code>pi install git:github.com/OnishellT/pi-improved</code> trae subagent, agentlint y las skills. <code>/doctor</code> lo comprueba.</div>
 <div><b>vendor/skills/</b>Copias fijas de las skills, con versión y licencia (Matt: MIT). Sin descargas en vivo.</div>
 <div><b>.pi/workflow.json → skills</b>Mapa fase → skills, igual que <code>models</code>. Se edita con <code>/skills</code>.</div>
 <div><b>Inyección al inicio del prompt</b>El <code>SKILL.md</code> va al principio del prompt de la fase: se cachea y no cambia entre turnos.</div>
 <div><b>Respeta el layout de Matt</b>Si ya existen <code>GLOSSARY.md</code> o <code>docs/agents/</code>, el setup los reutiliza; los ADR siguen en <code>docs/adr/</code>.</div>
 </div></section>
-<section><h2>Impacto esperado</h2>
-<table><tr><th>Cambio</th><th>Calidad</th><th>Costo</th><th>Orden</th></tr>
-<tr><td>Interfaz + seams en el plan (tdd)</td><td>⬆⬆ la mayoría de tests fallan por nombres/firmas</td><td>=</td><td>1</td></tr>
-<tr><td>Revisión según riesgo</td><td>=</td><td>⬇⬇ hoy es el 97%</td><td>2</td></tr>
-<tr><td>TDD al implementar</td><td>⬆</td><td>⬇ verify atrapa gratis lo que hoy atrapa astra</td><td>3</td></tr>
-<tr><td>diagnosing-bugs antes de escalar</td><td>=</td><td>⬇</td><td>4</td></tr>
-<tr><td>grill-with-docs + pstack en setup</td><td>⬆ mejor AGENTS.md y glosario</td><td>= (1 vez)</td><td>5</td></tr>
-<tr><td>retro + maintain-verification</td><td>⬆ con el tiempo</td><td>=</td><td>6</td></tr></table></section>
+<section><h2>Impacto esperado (pendiente de medir)</h2>
+<table><tr><th>Cambio</th><th>Calidad</th><th>Costo</th><th>Estado</th></tr>
+<tr><td>Interfaz + seams en el plan (tdd)</td><td>⬆⬆ la mayoría de tests fallan por nombres/firmas</td><td>=</td><td>✅ hecho</td></tr>
+<tr><td>Revisión según riesgo</td><td>=</td><td>⬇⬇ hoy es el 97%</td><td>✅ hecho</td></tr>
+<tr><td>TDD al implementar</td><td>⬆</td><td>⬇ verify atrapa gratis lo que hoy atrapa astra</td><td>✅ hecho</td></tr>
+<tr><td>diagnosing-bugs antes de escalar</td><td>=</td><td>⬇</td><td>✅ hecho</td></tr>
+<tr><td>grill-with-docs + pstack en setup</td><td>⬆ mejor AGENTS.md y glosario</td><td>= (1 vez)</td><td>✅ hecho</td></tr>
+<tr><td>retro + maintain-verification</td><td>⬆ con el tiempo</td><td>=</td><td>✅ hecho</td></tr></table></section>
 </main>
 <script>
 const C={user:"var(--user)",code:"var(--code)",luna:"var(--luna)",astra:"var(--astra)"};
@@ -95,7 +96,7 @@ P.forEach((p,i)=>{const s=document.createElement("section");s.innerHTML=`<h2>${p
 const f=s.querySelector(".flow"),d=s.querySelector(".detail");
 p.n.forEach((n,j)=>{if(j)f.insertAdjacentHTML("beforeend","<i>→</i>");const b=document.createElement("button");b.textContent=n.l;b.style.setProperty("--c",C[n.w]);if(n.nw)b.classList.add("new");else if(n.chg)b.classList.add("chg");
 b.onclick=()=>{f.querySelectorAll("button").forEach(x=>x.classList.remove("on"));b.classList.add("on");d.classList.add("on");
-d.innerHTML=`<b>${n.l}</b>${n.s?`<span class="sk">${n.s}</span>`:""}<span class="tag">${{user:"usuario",code:"código",luna:"luna",astra:"astra"}[n.w]}</span><ul>${n.d.map(x=>`<li>${x}</li>`).join("")}</ul>${n.a?`<div class="ab"><div><b>Hoy</b>${n.a}</div><div><b>Propuesto</b>${n.b}</div></div>`:""}`};f.appendChild(b)});
+d.innerHTML=`<b>${n.l}</b>${n.s?`<span class="sk">${n.s}</span>`:""}<span class="tag">${{user:"usuario",code:"código",luna:"luna",astra:"astra"}[n.w]}</span><ul>${n.d.map(x=>`<li>${x}</li>`).join("")}</ul>${n.a?`<div class="ab"><div><b>Hoy</b>${n.a}</div><div><b>Ahora</b>${n.b}</div></div>`:""}`};f.appendChild(b)});
 app.appendChild(s);if(!i)f.querySelectorAll("button")[1].click()});
 document.getElementById("only").onchange=e=>document.body.classList.toggle("only",e.target.checked);
 </script>
