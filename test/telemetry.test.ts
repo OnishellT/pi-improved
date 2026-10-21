@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { ESCALATE_EVENT, REVIEW_EVENT, VERIFY_EVENT } from "../src/events.ts";
 import { TASK_DONE_EVENT, registerLearn } from "../src/learn.ts";
-import { loadMetrics, registerTelemetry, taskMetrics } from "../src/telemetry.ts";
+import { loadMetrics, metricsReport, registerTelemetry, taskMetrics } from "../src/telemetry.ts";
 import { fakePi, tempProject } from "./helpers.ts";
 
 function setup() {
@@ -71,4 +71,14 @@ test("/metrics without data", async () => {
   const notes: string[] = [];
   await s.commands.get("metrics").handler("", { cwd: root, ui: { notify: (t: string) => notes.push(t) } });
   assert.match(notes[0], /Sin métricas/);
+});
+
+test("/metrics shows skipped reviews as · and the savings line", async () => {
+  const mk = (id: string, reviews: object[]) => JSON.stringify({ id, metrics: { phases: {}, verifyFailures: 0, reviews } });
+  const root = await tempProject({
+    ".pi/memory/tasks.jsonl": [mk("A", [{ status: "approved", model: "m", seconds: 1, cost: 0.4 }]), mk("B", [{ status: "skipped-low-risk", model: "m", seconds: 0 }]), mk("C", [{ status: "skipped-low-risk", model: "m", seconds: 0 }])].join("\n"),
+  });
+  const report = await metricsReport(root);
+  assert.match(report, /^B\s.*review: ·$/m);
+  assert.match(report, /Revisiones evitadas: 2 \(≈ \$0\.80 ahorrados\)/);
 });

@@ -15,7 +15,7 @@ function setup(exec?: Parameters<typeof fakePi>[0]) {
 
 const task = (id: string, title: string, summary: string, files: string[], answer?: string): any => ({
   id, title, ticket: id, status: "done", allowedExtra: [], startedAt: "", completedAt: "2026-10-20T10:00:00Z",
-  plan: { summary, steps: [], files, decisions: answer ? [{ id: "d", question: "Rounding mode?", options: [], status: "decided", answer }] : [] },
+  plan: { summary, steps: [], files, interface: [], seams: [], decisions: answer ? [{ id: "d", question: "Rounding mode?", options: [], status: "decided", answer }] : [] },
 });
 
 test("appends a record using git output and ranks related tasks", async () => {
@@ -47,4 +47,22 @@ test("falls back to plan files and swallows errors", async () => {
 
 test("empty store returns []", async () => {
   assert.deepEqual(await relatedTasks(await tempProject({}), "anything"), []);
+});
+
+test("sends the retro prompt on every 5th record, only with UI", async () => {
+  const root = await tempProject({});
+  const f = fakePi(() => ({ code: 0 }));
+  const listeners = new Map<string, (d: unknown) => unknown>();
+  f.pi.events = { on: (name: string, fn: any) => listeners.set(name, fn) };
+  registerLearn(f.pi);
+  const emit = (i: number, hasUI = true) => listeners.get(TASK_DONE_EVENT)!({ root, hasUI, task: task(`T-${i}`, "T", "S", ["a.ts"]) });
+  for (let i = 1; i <= 4; i++) await emit(i);
+  assert.equal(f.sent.length, 0);
+  await emit(5);
+  assert.equal(f.sent.length, 1);
+  assert.match(f.sent[0], /Retro: 5 tasks[\s\S]*ask_user[\s\S]*Never write them without[\s\S]*pstack-maintain-verification-skill/);
+  await emit(6);
+  assert.equal(f.sent.length, 1);
+  for (let i = 7; i <= 10; i++) await emit(i, false);
+  assert.equal(f.sent.length, 1);
 });

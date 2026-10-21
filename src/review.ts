@@ -37,13 +37,14 @@ async function collectDiff(exec: Exec, root: string) {
   return { diff: truncated ? diff.slice(0, MAX_DIFF) : diff, truncated, untracked, contents };
 }
 
-export function buildBrief(task: Task, d: { diff: string; truncated: boolean; untracked: string[]; contents?: Record<string, string> }) {
+export function buildBrief(task: Task, d: { diff: string; truncated: boolean; untracked: string[]; contents?: Record<string, string> }, skills = "") {
   const plan = task.plan;
   const list = (items: string[]) => (items.length ? items.map((i) => `- ${i}`).join("\n") : "- (none)");
   return [
     `# Diff review: ${task.title}`,
+    ...(skills ? [skills] : []),
     "You are a strict code reviewer. Review ONLY the diff below against the plan, the decisions, AGENTS.md and docs/adr (read them with your tools).",
-    "CHANGES is only for blocking problems: wrong behavior, crashes, data loss, security holes, or breaking the plan, its decisions, AGENTS.md or an ADR. Style, naming, extra tests, refactors and anything you are not sure about are not blocking: approve and leave them out.",
+    "CHANGES is only for blocking problems: wrong behavior, crashes, data loss, security holes, or breaking the plan, its decisions, the agreed interface, AGENTS.md or an ADR. Style, naming, extra tests, refactors and anything you are not sure about are not blocking: approve and leave them out.",
     "The diff and the new files are below in full: read other files only when you need them to confirm a bug.",
     "Finish with a line `VERDICT: APPROVED` or `VERDICT: CHANGES`; for CHANGES follow it with a numbered list of blocking findings only (file, problem, fix).",
     "## Plan",
@@ -54,6 +55,11 @@ export function buildBrief(task: Task, d: { diff: string; truncated: boolean; un
     list(plan?.files ?? []),
     "### Decisions",
     list((plan?.decisions ?? []).map((x) => `${x.question} -> ${x.answer ?? x.source ?? x.status}`)),
+    "## Interface",
+    ...(plan?.interface?.length ? plan.interface.map((i) => `- ${i.file} → ${[...i.exports, ...(i.signatures ?? [])].join("; ")}${i.source ? ` (source: ${i.source})` : ""}`) : ["- (none)"]),
+    "Any deviation of the diff from this interface (file, export name or signature) is BLOCKING.",
+    "## Seams",
+    ...(plan?.seams?.length ? plan.seams.map((x) => `- ${x.name} → ${x.testFile}: catches ${x.catches}${x.misses ? `; misses ${x.misses}` : ""}`) : ["- (none)"]),
     "## New files",
     ...(d.untracked.length ? d.untracked.map((f) => (d.contents?.[f] === undefined ? `- ${f} (read it directly)` : `### ${f}\n\`\`\`\n${d.contents[f]}\n\`\`\``)) : ["- (none)"]),
     `## Diff (git diff HEAD)${d.truncated ? `\nTRUNCATED to the first ${MAX_DIFF} characters; inspect the rest with your tools.` : ""}`,
@@ -96,13 +102,13 @@ export async function subagentCost(handle: string, dir = runsDir()): Promise<num
 }
 
 /** Read-only review of the working diff by a stronger model through the pi-subagent CLI. Never throws. */
-export async function reviewDiff(exec: Exec, root: string, task: Task, model: string, signal?: AbortSignal): Promise<ReviewResult> {
+export async function reviewDiff(exec: Exec, root: string, task: Task, model: string, signal?: AbortSignal, skills?: string): Promise<ReviewResult> {
   const spent: { cost?: number } = {};
-  const result = await runReview(exec, root, task, model, signal, spent);
+  const result = await runReview(exec, root, task, model, signal, spent, skills);
   return spent.cost === undefined ? result : { ...result, cost: spent.cost };
 }
 
-async function runReview(exec: Exec, root: string, task: Task, model: string, signal: AbortSignal | undefined, spent: { cost?: number }): Promise<ReviewResult> {
+async function runReview(exec: Exec, root: string, task: Task, model: string, signal: AbortSignal | undefined, spent: { cost?: number }, skills?: string): Promise<ReviewResult> {
   const slash = model.indexOf("/");
   if (slash < 1 || slash === model.length - 1) return skipped(`Modelo de revisión inválido: "${model}" (usa provider/model-id)`);
   const [provider, id] = [model.slice(0, slash), model.slice(slash + 1)];
@@ -114,7 +120,7 @@ async function runReview(exec: Exec, root: string, task: Task, model: string, si
     if (!diff.diff.trim() && !diff.untracked.length) return skipped("No hay cambios que revisar.");
     dir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-review-"));
     const brief = path.join(dir, "brief.md");
-    await fs.writeFile(brief, buildBrief(task, diff));
+    await fs.writeFile(brief, buildBrief(task, diff, skills));
 
     const spawn = await exec(
       resolveBin("subagent"),

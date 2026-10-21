@@ -1,6 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { skillsBlock } from "./skills.ts";
 import { inScope, type Task } from "./task-state.ts";
 import { loadMetrics, type TaskMetrics } from "./telemetry.ts";
 
@@ -9,8 +10,11 @@ export const TASK_DONE_EVENT = "pi-improved:task-done";
 export interface TaskDonePayload {
   root: string;
   task: Task;
+  /** The retro prompt is only sent to an interactive session. */
+  hasUI?: boolean;
 }
 
+const RETRO_EVERY = 5;
 const MEMORY_PATH = ".pi/memory/tasks.jsonl";
 const STOP = new Set(
   "el la los las un una unos unas de del al y o u en con por para que se su sus es son fue como mas pero sin sobre este esta esto ese esa the a an of to in on for and or with is are be by at as it this that from not".split(" "),
@@ -103,16 +107,26 @@ export async function relatedTasks(root: string, query: string, limit = 3): Prom
     .map((x) => format(x.r));
 }
 
+async function retroPrompt(root: string) {
+  return `${await skillsBlock(root, "learn")}
+
+Retro: ${RETRO_EVERY} tasks have been completed. Read the last ${RETRO_EVERY} records of ${MEMORY_PATH} (and .pi/metrics/) and summarise: decisions that were missing from the plans, rules that repeated, verify failures by cause, and review findings.
+Then PROPOSE edits to AGENTS.md, docs/adr or .pi/skills through ask_user options. Never write them without the user's approval.
+Also check the verification skill following pstack-maintain-verification-skill.`;
+}
+
 export function registerLearn(pi: ExtensionAPI) {
   pi.events?.on(TASK_DONE_EVENT, async (data) => {
     try {
-      const { root, task } = data as TaskDonePayload;
+      const { root, task, hasUI } = data as TaskDonePayload;
       const record = await buildRecord(pi, root, task);
       const metrics = await loadMetrics(root, task.id);
       if (metrics) record.metrics = metrics;
       const file = path.join(root, MEMORY_PATH);
       await fs.mkdir(path.dirname(file), { recursive: true });
       await fs.appendFile(file, `${JSON.stringify(record)}\n`);
+      const count = (await readRecords(root)).length;
+      if (hasUI && count % RETRO_EVERY === 0) pi.sendUserMessage(await retroPrompt(root));
     } catch (error) {
       console.error("[memo] no se pudo guardar la tarea:", error);
     }

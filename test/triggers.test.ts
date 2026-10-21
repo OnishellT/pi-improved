@@ -38,7 +38,7 @@ test("isMigration, toRelative, applyEdits", () => {
 
 const task = (over: Partial<Task> = {}): Task => ({
   id: "1", title: "Add thing", status: "implementing", allowedExtra: [], startedAt: "now",
-  plan: { summary: "", steps: [], files: ["src/a.ts"], decisions: [] }, ...over,
+  plan: { summary: "", steps: [], files: ["src/a.ts"], decisions: [], interface: [], seams: [] }, ...over,
 });
 
 async function setup(files: Record<string, string>, answers: unknown[], t: Task | null = task()) {

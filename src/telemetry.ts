@@ -54,13 +54,17 @@ export async function metricsReport(root: string): Promise<string> {
     const phases = Object.values<any>(r.metrics.phases ?? {});
     const sum = (k: string) => phases.reduce((s, p) => s + (p[k] ?? 0), 0);
     const reviews: any[] = r.metrics.reviews ?? [];
-    const verdicts = reviews.map((x) => (x.discarded ? `(${x.status})` : x.status)).join(",") || "-";
+    const verdicts = reviews.map((x) => (x.status === "skipped-low-risk" ? "·" : x.discarded ? `(${x.status})` : x.status)).join(",") || "-";
     const reviewCost = reviews.reduce((s, x) => s + (x.cost ?? 0), 0);
     return { id: String(r.ticket ?? r.id), cost: sum("cost") + reviewCost, tokens: sum("input") + sum("output"), seconds: sum("seconds"), fails: r.metrics.verifyFailures ?? 0, verdicts };
   });
   const lines = rows.map((r) => `${r.id.padEnd(14)} $${r.cost.toFixed(3).padStart(7)} ${String(r.tokens).padStart(9)} tok ${String(Math.round(r.seconds)).padStart(6)} s  verify✗ ${r.fails}  review: ${r.verdicts}`);
   const avg = rows.reduce((s, r) => s + r.cost, 0) / rows.length;
-  return [`Últimas ${rows.length} tareas (id, coste, tokens in+out, segundos, fallos de verify, revisiones):`, ...lines, `Coste medio por tarea: $${avg.toFixed(3)}`].join("\n");
+  const all: any[] = records.flatMap((r) => r.metrics.reviews ?? []);
+  const paid = all.filter((x) => x.status !== "skipped-low-risk" && x.cost !== undefined);
+  const avoided = all.filter((x) => x.status === "skipped-low-risk").length;
+  const mean = paid.length ? paid.reduce((s, x) => s + x.cost, 0) / paid.length : 0;
+  return [`Últimas ${rows.length} tareas (id, coste, tokens in+out, segundos, fallos de verify, revisiones):`, ...lines, `Coste medio por tarea: $${avg.toFixed(3)}`, `Revisiones evitadas: ${avoided} (≈ $${(avoided * mean).toFixed(2)} ahorrados)`].join("\n");
 }
 
 /**

@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import { test } from "node:test";
 import { registerGate } from "../src/gate.ts";
 import { TASK_DONE_EVENT } from "../src/learn.ts";
@@ -199,19 +201,37 @@ test("verify pass handles the parallel review as before and emits both events", 
   assert.deepEqual([rev.status, rev.model, rev.root], ["changes", "p/strong", t.ctx.cwd]);
 });
 
-test("escalates on the 2nd failure and restores the model on pass", async () => {
+test("2nd failure diagnoses on the same model; the 3rd escalates and pass restores the model", async () => {
   const t = await parallel({ escalate: "p/strong" }, [false]);
   t.gate.resolve();
-  await t.settle();
+  const first = await t.settle();
+  assert.equal(first.entries[0].customType, "verify-gate");
+  const second = await t.settle();
+  assert.equal(second.entries[0].customType, "verify-diagnose");
+  assert.match(second.entries[0].content, /Apply the diagnosing-bugs method[\s\S]*reproduce, isolate, state the hypothesis, then fix\./);
   assert.deepEqual(t.set, []);
-  await t.settle();
+  const third = await t.settle();
+  assert.equal(third.entries[0].customType, "verify-gate");
   assert.deepEqual(t.set, ["p/strong"]);
-  assert.ok(t.notes.some((n) => n.includes("verify falló 2 veces: este intento lo hace p/strong")));
+  assert.ok(t.notes.some((n) => n.includes("verify falló 3 veces: este intento lo hace p/strong")));
   assert.deepEqual(t.emitted.find((e) => e.name === ESCALATE_EVENT).payload, { root: t.ctx.cwd, model: "p/strong" });
   t.setCode(0);
   t.ctx.model = { provider: "p", id: "strong" };
   await t.settle();
   assert.deepEqual(t.set, ["p/strong", "p/cheap"]);
+});
+
+test("low-risk diff skips the paid review, notifies and emits skipped-low-risk", async () => {
+  const t = await setup({ pass: true, task: true, review: "VERDICT: CHANGES\n1. bug", answers: [true] });
+  await fs.writeFile(path.join(t.root, ".pi/task.json"), JSON.stringify({ ...task, plan: { summary: "s", steps: [], files: [], decisions: [], interface: [], seams: [] } }));
+  const notes: string[] = [];
+  t.ctx.ui.notify = (m: string) => notes.push(m);
+  await t.run();
+  assert.equal(await t.settle(), undefined);
+  assert.equal(t.subagent.length, 0);
+  assert.ok(notes.some((n) => n.startsWith("Revisión omitida (bajo riesgo)")));
+  assert.equal(t.emitted.find((e) => e.name === REVIEW_EVENT).payload.status, "skipped-low-risk");
+  assert.equal((await readTask(t.root))?.status, "done");
 });
 
 test("no escalation without a configured model", async () => {

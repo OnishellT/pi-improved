@@ -19,6 +19,10 @@ export interface Plan {
   /** Repo-relative files the task may create or change. */
   files: string[];
   decisions: Decision[];
+  /** Names the implementation must expose, pinned before any code is written. */
+  interface: { file: string; exports: string[]; signatures?: string[]; source?: string }[];
+  /** Where the tests attach: what each catches and what it leaves uncovered. */
+  seams: { name: string; testFile: string; catches: string; misses?: string }[];
 }
 
 /** The active task, local to the working copy at `.pi/task.json` (not committed). */

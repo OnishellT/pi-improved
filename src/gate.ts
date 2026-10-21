@@ -5,13 +5,16 @@ import type { TaskDonePayload } from "./learn.ts";
 import { TASK_DONE_EVENT } from "./learn.ts";
 import { readManifest } from "./manifest.ts";
 import { restoreModel, switchModel } from "./models.ts";
+import { assessRisk } from "./risk.ts";
 import { reviewDiff } from "./review.ts";
+import { skillsBlock } from "./skills.ts";
 import { readTask, updateTask } from "./task-state.ts";
 import { formatVerify, isPolicyFailure, runVerify } from "./verify.ts";
 
 const MAX_RETRIES = 3;
 const MAX_REVIEWS = 1;
-const ESCALATE_AFTER = 2;
+const ESCALATE_AFTER = 3;
+const DIAGNOSE_AT = 2;
 
 export function registerGate(pi: ExtensionAPI) {
   let start = "";
@@ -35,7 +38,7 @@ export function registerGate(pi: ExtensionAPI) {
   };
   const review = async (cwd: string, task: NonNullable<Awaited<ReturnType<typeof readTask>>>, model: string, signal: AbortSignal) => {
     const t0 = Date.now();
-    const result = await reviewDiff(pi.exec.bind(pi), cwd, task, model, signal).catch((e: any) => ({ status: "skipped" as const, report: String(e?.message ?? e), cost: undefined, cancelled: false }));
+    const result = await reviewDiff(pi.exec.bind(pi), cwd, task, model, signal, await skillsBlock(cwd, "review")).catch((e: any) => ({ status: "skipped" as const, report: String(e?.message ?? e), cost: undefined, cancelled: false }));
     const discarded = signal.aborted || result.cancelled === true;
     pi.events.emit(REVIEW_EVENT, { root: cwd, status: result.status, model, seconds: (Date.now() - t0) / 1000, cost: result.cost, discarded } satisfies ReviewPayload);
     return result;
@@ -71,7 +74,17 @@ export function registerGate(pi: ExtensionAPI) {
     const task = await readTask(ctx.cwd).catch(() => undefined);
     const reviewModel = manifest.models?.review;
     const abort = new AbortController();
-    const reviewing = task?.status === "implementing" && reviewModel && reviews < MAX_REVIEWS ? review(ctx.cwd, task, reviewModel, abort.signal) : undefined;
+    let wanted = task?.status === "implementing" && !!reviewModel && reviews < MAX_REVIEWS;
+    if (wanted && reviewModel) {
+      const risk = await assessRisk(pi.exec.bind(pi), ctx.cwd, task, manifest);
+      if (!risk.review) {
+        wanted = false;
+        reviews++;
+        ctx.ui.notify(`Revisión omitida (bajo riesgo): ${risk.reasons.join("; ") || "diff pequeño y sin zonas sensibles"}`, "info");
+        pi.events.emit(REVIEW_EVENT, { root: ctx.cwd, status: "skipped-low-risk", model: reviewModel, seconds: 0, cost: 0 } satisfies ReviewPayload);
+      }
+    }
+    const reviewing = wanted && task && reviewModel ? review(ctx.cwd, task, reviewModel, abort.signal) : undefined;
     if (reviewing) ctx.ui.setStatus("review", `revisando el diff con ${reviewModel}…`);
     const clearStatus = () => ctx.ui.setStatus("review", undefined);
     const { ok, report, policy } = await verify(manifest.verify, ctx.cwd, true);
@@ -96,10 +109,14 @@ export function registerGate(pi: ExtensionAPI) {
           pi.events.emit(ESCALATE_EVENT, { root: ctx.cwd, model: switched.model } satisfies EscalatePayload);
         }
       }
+      const diagnose = !policy && failures === DIAGNOSE_AT;
       const content = policy
         ? `${report}\n\nThis is an agentlint rule. Fix the code if the finding is right. If it needs an exception, run the agentlint accept command with a specific reason: the user will be asked to approve it.`
-        : `${report}\n\nFix it, then finish.`;
-      return { entries: [{ type: "custom_message", customType: "verify-gate", content, display: true }], continue: true };
+        : failures === DIAGNOSE_AT
+          ? `${report}\n\n${await skillsBlock(ctx.cwd, "diagnose")}\n\nApply the diagnosing-bugs method to this failure before changing code: reproduce, isolate, state the hypothesis, then fix.`
+          : `${report}\n\nFix it, then finish.`;
+      const customType = diagnose ? "verify-diagnose" : "verify-gate";
+      return { entries: [{ type: "custom_message", customType, content, display: true }], continue: true };
     }
 
     verified = state;
@@ -121,7 +138,7 @@ export function registerGate(pi: ExtensionAPI) {
         t.status = "done";
         t.completedAt = new Date().toISOString();
       });
-      pi.events.emit(TASK_DONE_EVENT, { root: ctx.cwd, task: done } satisfies TaskDonePayload);
+      pi.events.emit(TASK_DONE_EVENT, { root: ctx.cwd, task: done, hasUI: ctx.hasUI } satisfies TaskDonePayload);
     }
   });
 

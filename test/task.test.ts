@@ -7,10 +7,18 @@ import { readTask, writeTask } from "../src/task-state.ts";
 import { registerTask } from "../src/task.ts";
 import { fakePi, fakeUI, tempProject } from "./helpers.ts";
 
-const plan = (decisions: any[] = []) => ({ summary: "Add fee", steps: ["edit"], files: ["src/fee.ts"], decisions });
+const plan = (decisions: any[] = [], extra: any = {}) => ({
+  summary: "Add fee",
+  steps: ["edit"],
+  files: ["src/fee.ts", "test/fee.test.ts"],
+  decisions,
+  interface: [{ file: "src/fee.ts", exports: ["fee"], source: "ticket" }],
+  seams: [{ name: "fee calc", testFile: "test/fee.test.ts", catches: "rounding" }],
+  ...extra,
+});
 
 async function setup(done = true) {
-  const root = await tempProject({ "docs/adr/0001-money.md": "# money\n" });
+  const root = await tempProject({ "docs/adr/0001-money.md": "# money\n", "src/money.ts": "export const m = 1;\n" });
   if (done) await updateManifest(root, (m) => void (m.setup = "done"));
   const h = fakePi();
   registerTask(h.pi);
@@ -124,4 +132,35 @@ test("a plain-text question while implementing is routed to ask_user; a statemen
   const r = await emit("agent_before_settle", { outcome: "completed" }, ctx);
   assert.equal(r.continue, true);
   assert.match(r.entries[0].content, /ask_user/);
+});
+
+test("invented interface names ask the user and write an ADR", async () => {
+  const { commands, tools, ctxFor, root } = await setup();
+  await commands.get("task").handler("Add fee", ctxFor([]).ctx);
+  const { ctx, ui } = ctxFor(["Aceptar los nombres propuestos", true]);
+  const result = await tools.get("task_plan").execute("1", plan([], { interface: [{ file: "src/fee.ts", exports: ["fee"], signatures: ["fee(n: number): number"], source: "user" }] }), undefined, undefined, ctx);
+  assert.equal(ui.asked.length, 2);
+  assert.match(result.content[0].text, /write the tests/);
+  const d = (await readTask(root))!.plan!.decisions[0];
+  assert.equal(d.status, "decided");
+  assert.match(await fs.readFile(path.join(root, d.source!), "utf8"), /Interface for Add fee[\s\S]*fee\(n: number\)/);
+});
+
+test("interface from ticket or an existing path is accepted silently", async () => {
+  const { commands, tools, ctxFor, root } = await setup();
+  await commands.get("task").handler("Add fee", ctxFor([]).ctx);
+  const { ctx, ui } = ctxFor([true]);
+  const iface = [{ file: "src/fee.ts", exports: ["fee"], source: "ticket" }, { file: "src/money.ts", exports: ["m"], source: "src/money.ts#m" }];
+  await tools.get("task_plan").execute("1", plan([], { interface: iface }), undefined, undefined, ctx);
+  assert.equal(ui.asked.length, 1);
+  assert.equal((await readTask(root))!.plan!.decisions.length, 0);
+});
+
+test("seam outside files and empty interface with new files are rejected", async () => {
+  const { commands, tools, ctxFor } = await setup();
+  await commands.get("task").handler("Add fee", ctxFor([]).ctx);
+  const run = (extra: any) => tools.get("task_plan").execute("1", plan([], extra), undefined, undefined, ctxFor([true]).ctx);
+  await assert.rejects(run({ seams: [{ name: "x", testFile: "test/other.test.ts", catches: "y" }] }), /test\/other\.test\.ts/);
+  await assert.rejects(run({ interface: [] }), /interface is empty/);
+  await run({ interface: [], files: ["src/money.ts"], seams: [{ name: "m", testFile: "src/money.ts", catches: "x" }] });
 });

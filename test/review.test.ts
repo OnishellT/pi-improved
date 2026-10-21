@@ -14,7 +14,7 @@ const task: Task = {
   status: "implementing",
   allowedExtra: [],
   startedAt: "now",
-  plan: { summary: "Login form summary", steps: ["step one"], files: ["src/login.ts"], decisions: [{ id: "d1", question: "Which hash?", options: [], status: "decided", answer: "argon2" }] },
+  plan: { summary: "Login form summary", steps: ["step one"], files: ["src/login.ts"], decisions: [{ id: "d1", question: "Which hash?", options: [], status: "decided", answer: "argon2" }], interface: [], seams: [] },
 };
 
 function fakeExec(opts: { spawn?: any; wait?: any } = {}) {
@@ -119,4 +119,14 @@ test("brief inlines new files and keeps blocking-only rules", () => {
   assert.match(brief, /### a\.ts\n```\nexport const a = 1;/);
   assert.match(brief, /- big\.ts \(read it directly\)/);
   assert.match(brief, /CHANGES is only for blocking problems/);
+});
+
+test("brief shows interface, seams and the optional skills block", () => {
+  const task = { id: "t", title: "T", status: "implementing", allowedExtra: [], startedAt: "now", plan: { summary: "s", steps: [], files: [], decisions: [], interface: [{ file: "src/a.ts", exports: ["a"], signatures: ["a(): number"], source: "ticket" }], seams: [{ name: "a", testFile: "test/a.test.ts", catches: "wrong value", misses: "io" }] } } as any;
+  const d = { diff: "", truncated: false, untracked: [] };
+  const brief = buildBrief(task, d, "## Skill: tdd");
+  assert.match(brief, /^# Diff review: T\n## Skill: tdd/);
+  assert.match(brief, /## Interface\n- src\/a\.ts → a; a\(\): number \(source: ticket\)[\s\S]*BLOCKING/);
+  assert.match(brief, /## Seams\n- a → test\/a\.test\.ts: catches wrong value; misses io/);
+  assert.doesNotMatch(buildBrief(task, d), /Skill: tdd/);
 });

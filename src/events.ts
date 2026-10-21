@@ -10,7 +10,7 @@ export interface VerifyPayload {
 export const REVIEW_EVENT = "pi-improved:review";
 export interface ReviewPayload {
   root: string;
-  status: "approved" | "changes" | "skipped";
+  status: "approved" | "changes" | "skipped" | "skipped-low-risk";
   model: string;
   seconds: number;
   /** Cost of the review subagent's own model calls, when its session could be read. */

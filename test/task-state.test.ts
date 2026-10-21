@@ -6,7 +6,7 @@ import { writeAdr } from "../src/adr.ts";
 import { inScope, readTask, updateTask, writeTask, type Task } from "../src/task-state.ts";
 import { tempProject } from "./helpers.ts";
 
-const task = (files: string[]): Task => ({ id: "t1", title: "x", status: "implementing", plan: { summary: "", steps: [], files, decisions: [] }, allowedExtra: [], startedAt: "" });
+const task = (files: string[]): Task => ({ id: "t1", title: "x", status: "implementing", plan: { summary: "", steps: [], files, decisions: [], interface: [], seams: [] }, allowedExtra: [], startedAt: "" });
 
 test("task state round-trips and clears", async () => {
   const root = await tempProject({});
