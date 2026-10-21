@@ -1,5 +1,7 @@
+import * as fs from "node:fs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { resolveBin } from "./bin.ts";
+import { bundledExtension, hasGlobalSubagent } from "./subagent-ext.ts";
 import { readManifest } from "./manifest.ts";
 
 const MIN_NODE = [22, 18];
@@ -32,6 +34,10 @@ export async function runDoctor(pi: ExtensionAPI, ctx: ExtensionContext, version
   const agentlint = resolveBin("agentlint");
   const agentlintOk = await probe(agentlint, ["--help"]);
   checks.push({ name: "agentlint", ok: agentlintOk, detail: agentlintOk ? agentlint : "no se encontró o no corre" });
+  const ext = hasGlobalSubagent() ? "global" : fs.existsSync(bundledExtension()) ? "empaquetada" : undefined;
+  checks.push({ name: "extensión subagent", ok: Boolean(ext), detail: ext ?? "falta: sin ella la revisión nunca termina (reinstala el paquete)" });
+  const tmuxOk = await probe("tmux", ["-V"]);
+  checks.push({ name: "tmux", ok: tmuxOk, detail: tmuxOk ? "ok" : "no está instalado: la revisión con subagente lo necesita (apt/brew install tmux)" });
   const gitOk = await probe("git", ["--version"]);
   checks.push({ name: "git", ok: gitOk, detail: gitOk ? "ok" : "no está instalado" });
 

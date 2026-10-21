@@ -4,6 +4,8 @@ Setup automático de proyectos para Pi, pensado para que modelos baratos trabaje
 
 ## Instalación
 
+Requisitos del sistema: Node >= 22.18, git y **tmux** (pi-subagent lanza las revisiones en sesiones tmux). Todo lo demás viene con el paquete.
+
 ```sh
 pi install git:github.com/OnishellT/pi-improved
 ```
@@ -40,7 +42,7 @@ Si el modelo se detiene antes de tiempo, un hook lo empuja a seguir (como máxim
 ## Modelos y subagentes
 
 - **`/models`** elige un modelo por fase: `setup` (conviene uno fuerte, se usa una vez), `implement` (el barato del día a día) y `review`. Se guarda en `.pi/workflow.json`.
-- **Revisión del diff:** si hay un modelo de `review`, cuando `verify` pasa un hijo de [pi-subagent](https://github.com/badlogic/pi-subagent) con ese modelo y solo lectura revisa el diff contra el plan, las ADRs y `AGENTS.md`. Si pide cambios, vuelven al modelo barato (2 rondas y después decides tú). Si no hay tmux o falla, la revisión se omite y te avisa.
+- **Revisión del diff:** si hay un modelo de `review`, cuando `verify` pasa un hijo de [pi-subagent](https://github.com/badlogic/pi-subagent) con ese modelo y solo lectura revisa el diff contra el plan, las ADRs y `AGENTS.md`. Solo se paga cuando el riesgo lo justifica (diff grande, dependencias, migraciones, rutas sensibles, decisiones nuevas); si pide cambios, vuelven al modelo barato (1 ronda). Si no hay tmux o falla, la revisión se omite y te avisa.
 - **Dentro de un hijo** (`PI_SUBAGENT_RUN_DIR`) la extensión no registra nada: nada de ofertas de setup, bloqueos ni preguntas que nadie puede ver.
 
 ## Protecciones
