@@ -5,7 +5,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 const INTERACTIVE_AGENTLINT = /\bagentlint(?:\s+--)?\s+review\b|\bagentlint\b[^;&|\n]*\s--(?:review|wizard)\b/;
 
 /** Recording an exception to a rule is a decision for the user, even when the rule allows agent authority. */
-const AGENTLINT_ACCEPT = /\bagentlint(?:\s+--)?\s+accept\b/;
+const AGENTLINT_ACCEPT = /\bagentlint(?:\s+--)?\s+(?:accept|approve)\b/;
 
 /** Workflow state the code owns: the model must not rewrite it. */
 const OWNED = /(^|\/)\.pi\/(workflow|task)\.json$/;

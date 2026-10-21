@@ -249,7 +249,7 @@ test("an agentlint failure never escalates and tells the model how to record an 
   for (let i = 0; i < 3; i++) last = await t.settle();
   assert.deepEqual(t.set, []);
   assert.equal(t.emitted.some((e) => e.name === ESCALATE_EVENT), false);
-  assert.match(last.entries[0].content, /agentlint accept command/);
+  assert.match(last.entries[0].content, /the user will be asked to approve/);
 });
 
 test("a repeated agentlint failure asks the user; approval records the exception and continues", async () => {
@@ -265,7 +265,7 @@ test("a repeated agentlint failure asks the user; approval records the exception
     const script = args[1] ?? "";
     calls.push(script);
     if (/next --format json/.test(script)) return { code: 0, stdout: JSON.stringify({ remaining, selector: remaining ? "sel-1" : undefined }) };
-    if (/ accept /.test(script)) return (remaining = 0), { code: 0 };
+    if (/ approve /.test(script)) return (remaining = 0), { code: 0 };
     return { code: 1, stdout: report };
   });
   h.pi.events = { emit: () => {} };
@@ -275,10 +275,10 @@ test("a repeated agentlint failure asks the user; approval records the exception
   await h.emit("before_agent_start", { messageType: "user" }, ctx);
   await h.emit("tool_result", { toolName: "write" }, ctx);
   const first = await h.emit("agent_before_settle", { outcome: "completed" }, ctx);
-  assert.match(first.entries[0].content, /agentlint accept command/);
+  assert.match(first.entries[0].content, /the user will be asked to approve/);
   assert.equal(ui.asked.length, 0);
   const second = await h.emit("agent_before_settle", { outcome: "completed" }, ctx);
   assert.match(ui.asked[0], /agentlint bloquea/);
   assert.match(second.entries[0].content, /approved the agentlint exception/);
-  assert.ok(calls.some((c) => /npm exec agentlint -- accept --reason "Cambio revisado por finanzas" "sel-1"/.test(c)));
+  assert.ok(calls.some((c) => /AGENTLINT_ACTOR=human:\S+ npm exec agentlint -- approve --reason "Cambio revisado por finanzas" "sel-1"/.test(c)));
 });

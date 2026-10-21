@@ -124,7 +124,7 @@ export function registerGate(pi: ExtensionAPI) {
       }
       const diagnose = !policy && failures === DIAGNOSE_AT;
       const content = policy
-        ? `${report}\n\nThis is an agentlint rule. Fix the code if the finding is right. If it needs an exception, run the agentlint accept command with a specific reason: the user will be asked to approve it.`
+        ? `${report}\n\nThis is an agentlint rule. Fix the code if the finding is right. If it needs an exception, finish again as is: the user will be asked to approve it.`
         : failures === DIAGNOSE_AT
           ? `${report}\n\n${await skillsBlock(ctx.cwd, "diagnose")}\n\nApply the diagnosing-bugs method to this failure before changing code: reproduce, isolate, state the hypothesis, then fix.`
           : `${report}\n\nFix it, then finish.`;
