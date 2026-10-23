@@ -10,7 +10,8 @@ export interface VerifyPayload {
 export const REVIEW_EVENT = "pi-improved:review";
 export interface ReviewPayload {
   root: string;
-  status: "approved" | "changes" | "skipped" | "skipped-low-risk";
+  /** plan-ok / plan-fix: the strong-model spot check of the plan (before any code). */
+  status: "approved" | "changes" | "skipped" | "skipped-low-risk" | "plan-ok" | "plan-fix";
   model: string;
   seconds: number;
   /** Cost of the review subagent's own model calls, when its session could be read. */

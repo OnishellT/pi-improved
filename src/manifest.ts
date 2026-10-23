@@ -39,8 +39,9 @@ export interface Manifest {
   models?: PhaseModels;
   /** Bundled skill names per phase; a missing phase uses DEFAULT_SKILLS. */
   skills?: Partial<Record<Phase, string[]>>;
-  /** When the strong-model diff review runs. Default: only if the diff looks risky (size, dependencies, migrations, sensitive paths, new decisions). */
-  review?: { paths?: string[]; always?: boolean; never?: boolean };
+  /** When the strong-model diff review runs. Default: only if the diff looks risky (size, dependencies, migrations, sensitive paths, new decisions).
+   *  `plan` (default true): one short strong-model check of the plan's interface before the user approves it. */
+  review?: { paths?: string[]; always?: boolean; never?: boolean; plan?: boolean };
 }
 
 export interface PhaseModels {

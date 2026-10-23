@@ -1,0 +1,39 @@
+import assert from "node:assert/strict";
+import { test } from "node:test";
+import { checkContract, formatContract, missingNames, stemTokens } from "../src/contract.ts";
+import { tempProject } from "./helpers.ts";
+
+const plan = (iface: any[]) => ({ summary: "", steps: [], files: [], decisions: [], interface: iface, seams: [] });
+
+test("stemTokens splits kebab, snake and camel case stems", () => {
+  assert.deepEqual(stemTokens("src/lib/entry-sizing.ts"), ["entry", "sizing"]);
+  assert.deepEqual(stemTokens("order_guards.py"), ["order", "guards"]);
+  assert.deepEqual(stemTokens("ScaleOutSteps.test.ts"), ["Scale", "Out", "Steps"]);
+});
+
+test("missingNames: exports must be whole words in the evidence, case-insensitive", () => {
+  const ticket = "## Scope\n- `computeEntryQty({ size, ask })` returning a quantity\n- `validateSizeChange(current, next)`";
+  assert.deepEqual(missingNames({ file: "src/sizing.ts", exports: ["computeEntryQty", "validateSizeChange"] }, ticket, false), []);
+  assert.deepEqual(missingNames({ file: "src/sizing.ts", exports: ["computeEntryQty", "parseMicros"] }, ticket, false), ["parseMicros"]);
+  // `size` is a word in the ticket, `sizeChange` is not
+  assert.deepEqual(missingNames({ file: "src/x.ts", exports: ["sizeChange"] }, ticket, false), ["sizeChange"]);
+  assert.deepEqual(missingNames({ file: "src/x.ts", exports: ["COMPUTEENTRYQTY"] }, ticket, false), []);
+});
+
+test("missingNames: a new file's stem needs every token in the evidence; existing files are not checked", () => {
+  const ticket = "# Stop and trailing levels\nPure functions for the initial stop.";
+  assert.deepEqual(missingNames({ file: "src/lib/domain/protection.ts", exports: [] }, ticket, true), ["protection.ts"]);
+  assert.deepEqual(missingNames({ file: "src/lib/domain/stop.ts", exports: [] }, ticket, true), []);
+  assert.deepEqual(missingNames({ file: "src/lib/domain/trailing-stop.ts", exports: [] }, ticket, true), []);
+  assert.deepEqual(missingNames({ file: "src/lib/domain/protection.ts", exports: [] }, ticket, false), []);
+});
+
+test("checkContract reports missing files and names not present in their file", async () => {
+  const root = await tempProject({ "src/fee.ts": "export function fee(n: number) { return n; }\nexport const feeRate = 1;\n" });
+  assert.deepEqual(await checkContract(root, plan([{ file: "src/fee.ts", exports: ["fee", "feeRate"] }])), []);
+  const problems = await checkContract(root, plan([{ file: "src/fee.ts", exports: ["fee", "formatFee"] }, { file: "src/money.ts", exports: ["parseMicros"] }]));
+  assert.deepEqual(problems, ["src/fee.ts: missing formatFee", "src/money.ts: the file does not exist"]);
+  assert.match(formatContract(problems), /Interface contract not met[\s\S]*- src\/fee\.ts: missing formatFee/);
+  // `fee` alone must not satisfy `feeRate2`
+  assert.deepEqual(await checkContract(root, plan([{ file: "src/fee.ts", exports: ["feeRate2"] }])), ["src/fee.ts: missing feeRate2"]);
+});

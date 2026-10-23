@@ -21,6 +21,8 @@ Luego, en tu proyecto:
 
 Para probar sin instalar: `pi -e ~/projects/pi-improved` (corre antes `npm install`).
 
+El flujo completo que se espera en un proyecto (del setup al deploy, quién hace qué y qué cubre hoy el paquete) está en [docs/WORKFLOW.md](docs/WORKFLOW.md).
+
 ## Qué hace `/setup`
 
 1. **Escanea el repo (código, sin modelo):** stack, gestor de paquetes, CI, docs y comandos de verificación. Detecta conectores por el remote de git, las claves de tickets en los commits y las URLs en las docs.
@@ -35,8 +37,10 @@ Si el modelo se detiene antes de tiempo, un hook lo empuja a seguir (como máxim
 
 1. **`/task <descripción o PAY-142>`**: el agente lee el ticket (si hay Jira o Linear), las skills, las ADRs y las **tareas pasadas parecidas**. Luego propone un plan con `task_plan`.
 2. **Decisiones:** si el plan trae una decisión que ninguna doc respalda, el código te la pregunta con opciones y la guarda como ADR en `docs/adr/`. Apruebas el plan una vez.
+   - **Nombres verificados:** el plan fija archivo y exports (`interface`) citando su fuente. El código comprueba que cada nombre aparezca literalmente en esa fuente (texto del ticket leído por MCP, archivos de spec nombrados en `/task`, docs o código existente); si no aparece, el nombre cuenta como inventado y te lo pregunta. Texto plano, sin parsear: funciona en cualquier lenguaje.
+   - **Chequeo del plan:** si hay modelo de `review` (o de `setup`), antes de pedirte aprobación un hijo de solo lectura con ese modelo lee ticket, interfaz y archivos hermanos y devuelve `OK` o una lista de arreglos (nombres, forma de argumentos, helpers existentes, entradas inválidas). Una sola vez por tarea; `"review": { "plan": false }` lo apaga.
 3. **Pausas automáticas mientras implementa:** archivos fuera del plan, paquetes nuevos (por comando o editando `package.json`, `pyproject.toml`, etc.) y migraciones o esquemas.
-4. **Bloqueo con `verify`:** si el agente cambió archivos, no termina hasta que `verify` pase (3 reintentos automáticos y después decides tú). `/verify` lo corre a mano.
+4. **Bloqueo con `verify`:** si el agente cambió archivos, no termina hasta que `verify` pase (3 reintentos automáticos y después decides tú). `/verify` lo corre a mano. Antes de `verify` se comprueba el **contrato de interfaz**: cada export del plan debe aparecer en su archivo; si falta, el agente lo corrige sin gastar tiempo de verify ni revisión.
 5. **Aprender:** al confirmar que la tarea terminó, se guarda una ficha corta en `.pi/memory/tasks.jsonl` (se versiona), que alimenta el paso 1 de tareas futuras.
 
 ## Modelos y subagentes
