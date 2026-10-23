@@ -3,38 +3,66 @@ import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { writeAdr } from "./adr.ts";
+import { missingNames } from "./contract.ts";
+import { REVIEW_EVENT, type ReviewPayload } from "./events.ts";
 import { relatedTasks } from "./learn.ts";
 import { usePhaseModel } from "./models.ts";
+import { checkPlan } from "./plan-check.ts";
 import { skillsBlock } from "./skills.ts";
 import { readManifest, type Manifest } from "./manifest.ts";
 import { inScope, readTask, updateTask, writeTask, type Decision, type Task } from "./task-state.ts";
-import { QUESTION_NUDGE, TASK_NUDGE, taskPrompt } from "./task-prompt.ts";
+import { QUESTION_NUDGE, TASK_NUDGE, planText, taskPrompt } from "./task-prompt.ts";
 
 const MAX_NUDGES = 2;
+const MAX_PLAN_CHECKS = 1;
+const MAX_TICKET_TEXT = 300_000;
 const OTHER = "✏️  Otra respuesta…";
 const TICKET = /^[A-Z][A-Z0-9]+-\d+$/;
 const TRACKERS = ["jira", "linear"];
+const SPEC_FILE = /(?:^|[\s:(\[`"'])((?:\.{1,2}\/|\/|[\w.-]+\/)?[\w.-]+(?:\/[\w.-]+)*\.(?:md|markdown|txt|rst|adoc))(?=$|[\s:,;.)\]`"'])/g;
 
 const exists = (file: string) => fs.access(file).then(() => true, () => false);
 
-const planText = (p: NonNullable<Task["plan"]>) =>
-  [
-    p.summary,
-    "",
-    "Pasos:",
-    ...p.steps.map((s, i) => `${i + 1}. ${s}`),
-    "",
-    "Archivos:",
-    ...p.files.map((f) => `- ${f}`),
-    ...(p.interface?.length ? ["", "Interfaz:", ...p.interface.map((i) => `- ${i.file}: ${i.exports.join(", ")}${i.source ? ` (${i.source})` : ""}`)] : []),
-    ...(p.seams?.length ? ["", "Seams:", ...p.seams.map((x) => `- ${x.name} → ${x.testFile}: ${x.catches}${x.misses ? ` (no cubre: ${x.misses})` : ""}`)] : []),
-    ...(p.decisions.length ? ["", "Decisiones:", ...p.decisions.map((d) => `- ${d.question} → ${d.answer ?? `ver ${d.source}`}`)] : []),
-  ].join("\n");
-
 const tracker = (manifest: Manifest) => manifest.connectors.find((c) => TRACKERS.includes(c.id))?.id;
+
+/** Existing spec files named in a /task request, repo-relative when inside the repo. */
+export async function specFiles(root: string, text: string): Promise<string[]> {
+  const found: string[] = [];
+  for (const m of text.matchAll(SPEC_FILE)) {
+    const raw = m[1].replace(/[.,;:]+$/, "");
+    const abs = path.resolve(root, raw);
+    if (!(await exists(abs)) || found.includes(abs)) continue;
+    found.push(abs);
+  }
+  return found.map((f) => (f.startsWith(`${root}${path.sep}`) ? path.relative(root, f) : f));
+}
+
+/** Text content of a tool result (MCP results arrive as content blocks or plain strings). */
+const resultText = (content: unknown): string => {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) return content.map((c: any) => (typeof c === "string" ? c : typeof c?.text === "string" ? c.text : "")).join("\n");
+  return typeof (content as any)?.text === "string" ? (content as any).text : "";
+};
 
 export function registerTask(pi: ExtensionAPI) {
   let nudges = 0;
+  /** What the planner read from the tracker (MCP) while planning: the ticket, as evidence for interface names. */
+  const ticketText = new Map<string, string>();
+
+  const evidenceFor = async (root: string, task: Task) => {
+    const parts = [task.title, ...(task.ticket ? [task.ticket] : [])];
+    for (const spec of task.spec ?? []) parts.push(await fs.readFile(path.resolve(root, spec), "utf8").catch(() => ""));
+    parts.push(ticketText.get(root) ?? "");
+    return parts.join("\n");
+  };
+
+  const start = async (ctx: any, manifest: Manifest, task: Task) => {
+    nudges = 0;
+    ticketText.delete(ctx.cwd);
+    await usePhaseModel(pi, ctx, "implement");
+    pi.sendUserMessage(taskPrompt(task.title, task.ticket, tracker(manifest), await relatedTasks(ctx.cwd, task.title), await skillsBlock(ctx.cwd, "plan"), task.spec));
+    return ctx.waitForIdle();
+  };
 
   pi.registerCommand("task", {
     description: "Empieza una tarea: el agente investiga, propone un plan y tú lo apruebas",
@@ -52,22 +80,15 @@ export function registerTask(pi: ExtensionAPI) {
 
       if (active && active.status !== "done") {
         const choice = await ctx.ui.select(`Ya hay una tarea activa: ${active.title}`, ["Continuarla", "Reemplazarla", "Cancelar"]);
-        if (choice === "Continuarla" && active.status === "planning") {
-          nudges = 0;
-          await usePhaseModel(pi, ctx, "implement");
-          pi.sendUserMessage(taskPrompt(active.title, active.ticket, tracker(manifest), await relatedTasks(root, active.title), await skillsBlock(root, "plan")));
-          return ctx.waitForIdle();
-        }
+        if (choice === "Continuarla" && active.status === "planning") return start(ctx, manifest, active);
         if (choice !== "Reemplazarla") return;
       }
 
       const ticket = TICKET.test(arg) ? arg : undefined;
-      const task: Task = { id: `t${Date.now()}`, title: arg, ticket, status: "planning", allowedExtra: [], startedAt: new Date().toISOString() };
+      const spec = await specFiles(root, arg);
+      const task: Task = { id: `t${Date.now()}`, title: arg, ticket, status: "planning", allowedExtra: [], startedAt: new Date().toISOString(), ...(spec.length && { spec }) };
       await writeTask(root, task);
-      nudges = 0;
-      await usePhaseModel(pi, ctx, "implement");
-      pi.sendUserMessage(taskPrompt(arg, ticket, tracker(manifest), await relatedTasks(root, arg), await skillsBlock(root, "plan")));
-      await ctx.waitForIdle();
+      await start(ctx, manifest, task);
     },
   });
 
@@ -91,7 +112,7 @@ export function registerTask(pi: ExtensionAPI) {
           file: Type.String(),
           exports: Type.Array(Type.String()),
           signatures: Type.Optional(Type.Array(Type.String())),
-          source: Type.Optional(Type.String({ description: '"ticket", a doc/GLOSSARY.md/existing file path that gives the names, or "user" when nobody gave them' })),
+          source: Type.Optional(Type.String({ description: '"ticket", a doc/GLOSSARY.md/existing file path that gives the names, or "user" when nobody gave them. The names must appear literally in that source.' })),
         }),
         { description: "File and export names the tests will import. May be [] only when no file in `files` is new" },
       ),
@@ -119,15 +140,20 @@ export function registerTask(pi: ExtensionAPI) {
       const stray = params.seams.filter((x) => !inScope(scope, x.testFile));
       if (stray.length) throw new Error(`Seam test files must be listed in files: ${stray.map((x) => x.testFile).join(", ")}. Fix the plan and call task_plan again.`);
 
+      // Names are only "given" when the cited source really contains them; the label alone proves nothing.
+      const evidence = await evidenceFor(root, task);
       const decisions: Decision[] = [];
-      const invented = [];
+      const invented: string[] = [];
       for (const entry of params.interface) {
         const file = entry.source && entry.source !== "user" && entry.source !== "ticket" ? entry.source.split("#")[0] : undefined;
-        if (entry.source === "ticket" || (file && (await exists(path.join(root, file))))) continue;
-        invented.push(entry);
+        const text = entry.source === "ticket" ? evidence : file && (await exists(path.join(root, file))) ? await fs.readFile(path.join(root, file), "utf8").catch(() => "") : "";
+        const missing = text ? missingNames(entry, text, await isNew(entry.file)) : [...entry.exports, path.basename(entry.file)];
+        if (!missing.length) continue;
+        const names = [...entry.exports, ...(entry.signatures ?? [])].join(", ");
+        invented.push(`${entry.file}: ${names}${text ? ` (no aparecen en ${entry.source}: ${missing.join(", ")})` : ""}`);
       }
       if (invented.length) {
-        const proposal = invented.map((i) => `${i.file}: ${[...i.exports, ...(i.signatures ?? [])].join(", ")}`).join("\n");
+        const proposal = invented.join("\n");
         const question = `Nombres propuestos (nadie los define):\n${proposal}`;
         const accept = "Aceptar los nombres propuestos";
         let answer = await ctx.ui.select(question, [accept, OTHER]);
@@ -152,6 +178,23 @@ export function registerTask(pi: ExtensionAPI) {
       }
 
       const plan = { summary: params.summary, steps: params.steps, files: params.files, decisions, interface: params.interface, seams: params.seams };
+
+      // One short strong-model read of the plan: cheaper than reviewing the diff it produces, and it fixes names before they exist.
+      const manifest = await readManifest(root);
+      const checker = manifest.models?.review ?? manifest.models?.setup;
+      if (checker && manifest.review?.plan !== false && (task.planChecks ?? 0) < MAX_PLAN_CHECKS) {
+        await updateTask(root, (t) => void (t.planChecks = (t.planChecks ?? 0) + 1));
+        ctx.ui.setStatus("plan-check", `revisando el plan con ${checker}…`);
+        const t0 = Date.now();
+        const check = await checkPlan(pi.exec.bind(pi), root, task, plan, evidence, checker).finally(() => ctx.ui.setStatus("plan-check", undefined));
+        pi.events.emit(REVIEW_EVENT, { root, status: check.status === "ok" ? "plan-ok" : check.status === "fix" ? "plan-fix" : "skipped", model: checker, seconds: (Date.now() - t0) / 1000, cost: check.cost } satisfies ReviewPayload);
+        if (check.status === "skipped") ctx.ui.notify(`Chequeo del plan omitido: ${check.report}`, "warning");
+        else if (check.status === "fix") {
+          ctx.ui.notify("Chequeo del plan: pidió cambios. El agente corrige el plan.", "warning");
+          throw new Error(`A senior review of the plan found problems. Apply these fixes (or justify in the summary why not) and call task_plan again:\n\n${check.report}`);
+        } else ctx.ui.notify("Chequeo del plan: OK.", "info");
+      }
+
       if (!(await ctx.ui.confirm("¿Apruebas el plan?", planText(plan)))) {
         const feedback = await ctx.ui.input("¿Qué hay que cambiar?");
         throw new Error(`The user did not approve the plan. Feedback: ${feedback || "(none)"}. Revise it and call task_plan again.`);
@@ -161,6 +204,7 @@ export function registerTask(pi: ExtensionAPI) {
         t.plan = plan;
         t.status = "implementing";
       });
+      ticketText.delete(root);
       const decided = (plan.decisions ?? []).filter((d: any) => d.answer).map((d: any) => `- ${d.question} -> ${d.answer}`);
       const settled = decided.length ? `\n\nDecisions already made by the user (do not ask again):\n${decided.join("\n")}` : "";
       return {
@@ -172,6 +216,15 @@ export function registerTask(pi: ExtensionAPI) {
 
   pi.on("before_agent_start", async (event) => {
     if (event.messageType === "user") nudges = 0;
+  });
+  pi.on("tool_result", async (event, ctx) => {
+    if (!/^mcp__/.test(event.toolName)) return;
+    const task = await readTask(ctx.cwd).catch(() => undefined);
+    if (task?.status !== "planning") return;
+    const text = resultText((event as any).content ?? (event as any).result);
+    if (!text) return;
+    const current = ticketText.get(ctx.cwd) ?? "";
+    if (current.length < MAX_TICKET_TEXT) ticketText.set(ctx.cwd, `${current}\n${text}`.slice(0, MAX_TICKET_TEXT));
   });
   let lastText = "";
   pi.on("message_end", async (event) => {

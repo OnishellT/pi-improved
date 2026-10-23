@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { ESCALATE_EVENT, REVIEW_EVENT, VERIFY_EVENT, type EscalatePayload, type ReviewPayload, type VerifyPayload } from "./events.ts";
+import { checkContract, formatContract } from "./contract.ts";
 import type { TaskDonePayload } from "./learn.ts";
 import { TASK_DONE_EVENT } from "./learn.ts";
 import { readManifest } from "./manifest.ts";
@@ -75,6 +76,14 @@ export function registerGate(pi: ExtensionAPI) {
     if (state === verified) return;
 
     const task = await readTask(ctx.cwd).catch(() => undefined);
+    // The pinned names are a contract: check them before spending verify time or a paid review on code that misses them.
+    if (task?.status === "implementing" && task.plan && retries < MAX_RETRIES) {
+      const problems = await checkContract(ctx.cwd, task.plan);
+      if (problems.length) {
+        retries++;
+        return { entries: [{ type: "custom_message", customType: "contract-gate", content: `${formatContract(problems)}\n\nExpose exactly these names in these files (the plan's interface), then finish.`, display: true }], continue: true };
+      }
+    }
     const reviewModel = manifest.models?.review;
     const abort = new AbortController();
     let wanted = task?.status === "implementing" && !!reviewModel && reviews < MAX_REVIEWS;

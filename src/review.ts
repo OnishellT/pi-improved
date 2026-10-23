@@ -102,49 +102,76 @@ export async function subagentCost(handle: string, dir = runsDir()): Promise<num
   return undefined;
 }
 
-/** Read-only review of the working diff by a stronger model through the pi-subagent CLI. Never throws. */
-export async function reviewDiff(exec: Exec, root: string, task: Task, model: string, signal?: AbortSignal, skills?: string): Promise<ReviewResult> {
-  const spent: { cost?: number } = {};
-  const result = await runReview(exec, root, task, model, signal, spent, skills);
-  return spent.cost === undefined ? result : { ...result, cost: spent.cost };
-}
+export type SubagentRun = { ok: true; output: string; cost?: number } | { ok: false; reason: string; cancelled?: boolean; cost?: number };
 
-async function runReview(exec: Exec, root: string, task: Task, model: string, signal: AbortSignal | undefined, spent: { cost?: number }, skills?: string): Promise<ReviewResult> {
+/**
+ * One read-only subagent (pi-subagent CLI) on `model`, fed a brief file, waited for and stopped. Never throws.
+ * Shared by the diff review and the plan spot check so both pay the same way and die the same way.
+ */
+export async function runSubagent(exec: Exec, root: string, opts: { name: string; model: string; brief: string; prompt: string; signal?: AbortSignal; waitSeconds?: number }): Promise<SubagentRun> {
+  const { model, signal } = opts;
+  const waitSeconds = opts.waitSeconds ?? WAIT_SECONDS;
   const slash = model.indexOf("/");
-  if (slash < 1 || slash === model.length - 1) return skipped(`Modelo de revisión inválido: "${model}" (usa provider/model-id)`);
+  if (slash < 1 || slash === model.length - 1) return { ok: false, reason: `Modelo inválido: "${model}" (usa provider/model-id)` };
   const [provider, id] = [model.slice(0, slash), model.slice(slash + 1)];
   let dir: string | undefined;
   let handle: string | undefined;
-  const cancelled = (): ReviewResult => ({ status: "skipped", report: "Revisión cancelada: el diff cambió.", cancelled: true });
+  let cost: number | undefined;
+  const cancelled = (): SubagentRun => ({ ok: false, reason: "cancelado", cancelled: true });
+  const fail = (reason: string): SubagentRun => ({ ok: false, reason });
+  const result = await attempt();
+  return cost === undefined ? result : { ...result, cost };
+
+  async function attempt(): Promise<SubagentRun> {
   try {
-    const diff = await collectDiff(exec, root);
-    if (!diff.diff.trim() && !diff.untracked.length) return skipped("No hay cambios que revisar.");
-    dir = await fs.mkdtemp(path.join(os.tmpdir(), "pi-review-"));
+    dir = await fs.mkdtemp(path.join(os.tmpdir(), `pi-${opts.name}-`));
     const brief = path.join(dir, "brief.md");
-    await fs.writeFile(brief, buildBrief(task, diff, skills));
+    await fs.writeFile(brief, opts.brief);
 
     await ensureTrusted(root).catch(() => false);
     const spawn = await exec(
       resolveBin("subagent"),
-      ["spawn", "--name", "review", "--provider", provider, "--model", id, "--thinking", "medium", "--tools", "read,grep,find,ls", "--cwd", root, "--file", brief, "--prompt", "Review the diff in the attached brief. End with VERDICT: APPROVED or VERDICT: CHANGES and a numbered findings list."],
+      ["spawn", "--name", opts.name, "--provider", provider, "--model", id, "--thinking", "medium", "--tools", "read,grep,find,ls", "--cwd", root, "--file", brief, "--prompt", opts.prompt],
       { cwd: root, timeout: 60_000 },
     );
-    if (spawn.code !== 0) return skipped(`No se pudo lanzar la revisión: ${(spawn.stderr || spawn.stdout).trim().slice(0, 300) || `código ${spawn.code}`}`);
+    if (spawn.code !== 0) return fail(`No se pudo lanzar el subagente: ${(spawn.stderr || spawn.stdout).trim().slice(0, 300) || `código ${spawn.code}`}`);
     handle = /\(([0-9a-f]+)\)/.exec(spawn.stdout)?.[1] ?? /Spawned (\S+)/.exec(spawn.stdout)?.[1];
-    if (!handle) return skipped("No se pudo leer el identificador del subagente.");
+    if (!handle) return fail("No se pudo leer el identificador del subagente.");
     if (signal?.aborted) return cancelled();
 
-    const wait = await exec(resolveBin("subagent"), ["wait", handle, "--timeout", String(WAIT_SECONDS)], { cwd: root, timeout: (WAIT_SECONDS + 30) * 1000, signal });
+    const wait = await exec(resolveBin("subagent"), ["wait", handle, "--timeout", String(waitSeconds)], { cwd: root, timeout: (waitSeconds + 30) * 1000, signal });
     if (signal?.aborted) return cancelled();
-    if (wait.code !== 0 || wait.killed) return skipped(`La revisión falló: ${(wait.stderr || wait.stdout).trim().slice(0, 300) || "sin respuesta"}`);
-    return parseVerdict(wait.stdout) ?? skipped("La revisión no incluyó un veredicto.");
+    if (wait.code !== 0 || wait.killed) return fail(`El subagente falló: ${(wait.stderr || wait.stdout).trim().slice(0, 300) || "sin respuesta"}`);
+    return { ok: true, output: wait.stdout };
   } catch (error: any) {
-    return signal?.aborted ? cancelled() : skipped(`La revisión no se pudo ejecutar: ${error?.message ?? error}`);
+    return signal?.aborted ? cancelled() : fail(`No se pudo ejecutar: ${error?.message ?? error}`);
   } finally {
     if (handle) {
-      spent.cost = await subagentCost(handle);
+      cost = await subagentCost(handle);
       await exec(resolveBin("subagent"), ["stop", handle], { cwd: root, timeout: 30_000 }).catch(() => {});
     }
     if (dir) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
   }
+  }
+}
+
+/** Read-only review of the working diff by a stronger model through the pi-subagent CLI. Never throws. */
+export async function reviewDiff(exec: Exec, root: string, task: Task, model: string, signal?: AbortSignal, skills?: string): Promise<ReviewResult> {
+  let diff: Awaited<ReturnType<typeof collectDiff>>;
+  try {
+    diff = await collectDiff(exec, root);
+  } catch (error: any) {
+    return skipped(`La revisión no se pudo ejecutar: ${error?.message ?? error}`);
+  }
+  if (!diff.diff.trim() && !diff.untracked.length) return skipped("No hay cambios que revisar.");
+  const run = await runSubagent(exec, root, {
+    name: "review",
+    model,
+    signal,
+    brief: buildBrief(task, diff, skills),
+    prompt: "Review the diff in the attached brief. End with VERDICT: APPROVED or VERDICT: CHANGES and a numbered findings list.",
+  });
+  const withCost = (r: ReviewResult): ReviewResult => (run.cost === undefined ? r : { ...r, cost: run.cost });
+  if (!run.ok) return withCost(run.cancelled ? { status: "skipped", report: "Revisión cancelada: el diff cambió.", cancelled: true } : skipped(`La revisión falló: ${run.reason}`));
+  return withCost(parseVerdict(run.output) ?? skipped("La revisión no incluyó un veredicto."));
 }

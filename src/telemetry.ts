@@ -61,7 +61,7 @@ export async function metricsReport(root: string): Promise<string> {
   const lines = rows.map((r) => `${r.id.padEnd(14)} $${r.cost.toFixed(3).padStart(7)} ${String(r.tokens).padStart(9)} tok ${String(Math.round(r.seconds)).padStart(6)} s  verify✗ ${r.fails}  review: ${r.verdicts}`);
   const avg = rows.reduce((s, r) => s + r.cost, 0) / rows.length;
   const all: any[] = records.flatMap((r) => r.metrics.reviews ?? []);
-  const paid = all.filter((x) => x.status !== "skipped-low-risk" && x.cost !== undefined);
+  const paid = all.filter((x) => x.status !== "skipped-low-risk" && !String(x.status).startsWith("plan-") && x.cost !== undefined);
   const avoided = all.filter((x) => x.status === "skipped-low-risk").length;
   const mean = paid.length ? paid.reduce((s, x) => s + x.cost, 0) / paid.length : 0;
   return [`Últimas ${rows.length} tareas (id, coste, tokens in+out, segundos, fallos de verify, revisiones):`, ...lines, `Coste medio por tarea: $${avg.toFixed(3)}`, `Revisiones evitadas: ${avoided} (≈ $${(avoided * mean).toFixed(2)} ahorrados)`].join("\n");

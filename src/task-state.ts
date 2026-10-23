@@ -34,6 +34,10 @@ export interface Task {
   plan?: Plan;
   /** Files outside the plan the user allowed during implementation. */
   allowedExtra: string[];
+  /** Spec files named in the /task request: their text counts as ticket evidence for interface names. */
+  spec?: string[];
+  /** Strong-model plan spot checks already spent on this task (bounded to keep the cost flat). */
+  planChecks?: number;
   startedAt: string;
   completedAt?: string;
 }

@@ -282,3 +282,22 @@ test("a repeated agentlint failure asks the user; approval records the exception
   assert.match(second.entries[0].content, /approved the agentlint exception/);
   assert.ok(calls.some((c) => /AGENTLINT_ACTOR=human:\S+ npm exec agentlint -- approve --reason "Cambio revisado por finanzas" "sel-1"/.test(c)));
 });
+
+test("interface contract: names missing from the files block before verify and the review; present names pass", async () => {
+  const t = await setup({ pass: true, task: true, review: "VERDICT: APPROVED", answers: [true] });
+  const plan = { summary: "s", steps: [], files: ["src/fee.ts"], decisions: [], interface: [{ file: "src/fee.ts", exports: ["fee", "formatFee"], source: "ticket" }], seams: [] };
+  await fs.writeFile(path.join(t.root, ".pi/task.json"), JSON.stringify({ ...task, plan }));
+  await fs.mkdir(path.join(t.root, "src"), { recursive: true });
+  await fs.writeFile(path.join(t.root, "src/fee.ts"), "export const fee = 1;\n");
+  await t.run();
+  const r = await t.settle();
+  assert.equal(r.continue, true);
+  assert.equal(r.entries[0].customType, "contract-gate");
+  assert.match(r.entries[0].content, /src\/fee\.ts: missing formatFee/);
+  assert.equal(t.verifies(), 0);
+  assert.equal(t.subagent.length, 0);
+  await fs.writeFile(path.join(t.root, "src/fee.ts"), "export const fee = 1;\nexport const formatFee = () => '';\n");
+  assert.equal(await t.settle(), undefined);
+  assert.equal(t.verifies(), 1);
+  assert.equal((await readTask(t.root))?.status, "done");
+});
