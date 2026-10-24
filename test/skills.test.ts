@@ -31,6 +31,14 @@ test("skillsBlock strips Skill tool lines, rewrites Claude and is deterministic"
   assert.doesNotMatch(learn, /Skill tool|\/pstack-|\bClaude\b/);
 });
 
+test("skillsBlock drops the pstack boilerplate section and keeps the skill body", async () => {
+  const root = await tempProject({});
+  for (const phase of ["setup", "review", "learn"] as const) {
+    assert.doesNotMatch(await skillsBlock(root, phase), /Agent integration boundary|not an enforcement layer/);
+  }
+  assert.match(await skillsBlock(root, "review"), /\*\*Reply:\*\*[^\n]*\n*$/);
+});
+
 test("phaseSkills honors the manifest override", async () => {
   const root = await tempProject({});
   assert.deepEqual(await phaseSkills(root, "plan"), ["tdd"]);
