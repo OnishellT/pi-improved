@@ -1,138 +1,140 @@
-# Forma de trabajo
+# Workflow
 
-pi-improved existe para una idea: **el modelo barato implementa; el código decide cuándo puede avanzar; el modelo fuerte y la persona entran solo donde aportan.** Este documento describe el flujo completo que se espera en un proyecto, de la primera sesión al deploy, y qué parte de ese flujo cubre hoy el paquete.
+One idea: **the cheap model implements, code decides when work advances, and the strong model and the person step in only where they add value.** Below is the expected flow from first session to deploy, and what the package covers today.
 
-Regla transversal: todo lo que hace pi-improved es **agnóstico de lenguaje y framework**. El paquete no trae gates para un stack concreto; los comandos de verificación salen del propio proyecto y se guardan en `.pi/workflow.json`. Lo que el código comprueba por su cuenta lo hace sobre texto plano (nombres, archivos, diffs), nunca parseando un lenguaje.
+Everything is **language- and framework-agnostic**. No stack-specific gates ship in the package. Verification commands come from the project (`.pi/workflow.json`). Code checks read plain text (names, files, diffs) and never parse a language.
 
-## El flujo de un vistazo
+## Flow at a glance
 
-| # | Etapa | Quién | Con qué | En pi-improved |
-|---|-------|-------|---------|----------------|
-| 1 | Setup inicial: docs, skills, reglas | Orquestador (modelo `setup`) + persona | `/setup`, skills de setup, agentlint | Cubierto |
-| 2 | Planificación | Orquestador (modelo `implement`) + chequeo del modelo `review` | `/task`, `task_plan`, nombres verificados, plan check | Cubierto |
-| 3 | Implementación con contexto específico | Modelo `implement` | Plan aprobado, skill tdd, pausas automáticas | Cubierto en la sesión; pendiente como subagente aislado |
-| 4 | Verificación real en el entorno esperado | Código (`verify`) | Herramientas del setup: `verify-app` (navegador / CLI / API / TUI) + compilador, linter, tests | Cubierto |
-| 5 | agentlint | Código (`verify`) | Reglas de `.agentlint/config.ts` | Cubierto |
-| 6 | Corrección de errores | Orquestador; a la tercera, modelo `escalate` | Gate de verify, skill diagnosing-bugs, revisión del diff | Cubierto |
-| 7 | Creación de la PR con verificaciones estáticas | Orquestador | Skills y herramientas del setup | Pendiente |
-| 8 | Revisión de la PR en CI | CI del proyecto | Linters, tests, agentlint en CI | Fuera del paquete |
-| 9 | Deploy | CI/CD del proyecto | Pipeline del proyecto | Fuera del paquete |
-| 10 | Verificación manual | Persona | Entorno desplegado | Fuera del paquete |
+| # | Stage | Who | Tools | Status |
+|---|-------|-----|-------|--------|
+| 1 | Initial setup: docs, skills, rules | `setup` model + person | `/setup`, setup skills, agentlint | Covered |
+| 2 | Planning | `implement` model, `review` model check | `/task`, `task_plan`, verified names, plan check | Covered |
+| 3 | Implementation with specific context | `implement` model | Approved plan, `tdd` skill, automatic pauses | Covered in session. Isolated subagent pending |
+| 4 | Real verification in the expected environment | Code (`verify`) | `verify-app` (browser, CLI, API or TUI), compiler, linter, tests | Covered |
+| 5 | agentlint | Code (`verify`) | Rules in `.agentlint/config.ts` | Covered |
+| 6 | Error correction | Orchestrator. 3rd failure: `escalate` model | `verify` gate, `diagnosing-bugs` skill, diff review | Covered |
+| 7 | PR with static checks | Orchestrator | Setup skills and tools | Pending |
+| 8 | PR review in CI | Project CI | Linters, tests, agentlint | Out of package |
+| 9 | Deploy | Project CI/CD | Project pipeline | Out of package |
+| 10 | Manual verification | Person | Deployed environment | Out of package |
 
-"Cubierto" significa que el código del paquete lo ejecuta y lo bloquea cuando falla. "Pendiente" es la siguiente pieza a construir. "Fuera del paquete" es trabajo del proyecto y de la persona que pi-improved prepara, pero no ejecuta.
+**Covered**: package code runs it and blocks on failure. **Pending**: next piece to build. **Out of package**: project and person work that pi-improved prepares but does not run.
 
-## 1. Setup inicial: el orquestador crea documentos, skills y reglas
+## 1. Initial setup
 
-Se hace una vez por repositorio, con el modelo más fuerte que haya (`models.setup`). Su salida es el contexto que después consumen los modelos baratos, así que aquí no se ahorra.
+Once per repo, with the strongest model available (`models.setup`). Its output is the context cheap models read later, so spend here.
 
-Qué pasa en `/setup`:
+`/setup` does:
 
-1. **Escaneo en código, sin modelo.** Stack, gestor de paquetes, CI, docs existentes, comandos de verificación candidatos, conectores (Jira, Linear) por el remote de git y las claves de tickets en los commits.
-2. **Entrevista.** El modelo sigue la skill `grilling`: una pregunta cada vez con `ask_user`, opciones con la recomendada primero, nada que el código ya responda. Máximo unas 12 preguntas.
-3. **Documentos.** `GLOSSARY.md`, `AGENTS.md` (máximo 150 líneas: propósito, stack, comandos, mapa, convenciones, reglas MUST/NEVER), `docs/adr/` con las decisiones que el código muestra o la persona confirmó, y una skill `.pi/skills/domain-<área>/SKILL.md` por área de negocio.
-4. **Skill de verificación de la app.** Siguiendo `pstack-create-verification-skill`, el modelo escribe `.pi/skills/verify-app/SKILL.md` con un script ejecutable cuando la app se puede manejar sin persona: navegador headless para una web, el binario para una CLI, llamadas para una API, el terminal para una TUI. Las evidencias quedan en `.pi/evidence/`. Esta skill es la herramienta con la que la etapa 4 comprueba la funcionalidad de verdad, no solo los tests.
-5. **Reglas.** Si la persona acepta, se instala agentlint y se convierten en reglas hasta 3 MUST/NEVER de `AGENTS.md`: las que un patrón detecta pero una persona debe juzgar. Autoridad humana por defecto.
-6. **`verify`.** El modelo deja la lista de comandos de verificación del proyecto ordenada de más rápida a más lenta (compilador o typechecker, linter, tests, `verify-app`, agentlint) y llama a `setup_finish`, que comprueba en código que los archivos existen y tienen el formato correcto, corre `verify` y pide una sola aprobación.
+1. **Scan (code, no model):** stack, package manager, CI, docs, candidate verify commands, and connectors (Jira, Linear) from the git remote, ticket keys in commits and URLs in docs. Then ask the minimum: language, and one read-only confirmation per connector.
+2. **Interview:** the model follows the `grilling` skill. One question at a time via `ask_user`, recommended option first, nothing the code answers. About 12 questions at most.
+3. **Documents:** `GLOSSARY.md`. `AGENTS.md` (max 150 lines: purpose, stack, commands, map, conventions, MUST/NEVER rules). `docs/adr/` for decisions the code shows or the person confirmed. `.pi/skills/domain-<area>/SKILL.md` per business area.
+4. **App verification skill:** following `pstack-create-verification-skill`, write `.pi/skills/verify-app/SKILL.md` with an executable script when the app can run without a person: headless browser (web), the binary (CLI), calls (API), the terminal (TUI). Evidence goes to `.pi/evidence/`. Stage 4 uses it to test real behavior, not only unit tests.
+5. **Rules:** if the person accepts, install agentlint and turn up to 3 `AGENTS.md` MUST/NEVER rules into agentlint rules: those a pattern can detect but a person must judge. Human authority by default. Adopt gradually. Never accept findings in bulk.
+6. **`verify`:** leave the project's verify commands ordered fastest first (compiler or typechecker, linter, tests, `verify-app`, agentlint), then call `setup_finish`. It checks in code that files exist and are well formed, runs `verify`, and asks for one approval.
 
-Resultado: `.pi/workflow.json` con `setup: "done"`, `verify`, `models`, `connectors` y, si aplica, `agentlint`. Se versiona.
+If the model stops early, a hook pushes it on (max 2 times per message). If `verify` fails 3 times, the person decides.
 
-## 2. Planificación
+Result: `.pi/workflow.json` with `setup: "done"`, `verify`, `models`, `connectors`, and `agentlint` if used. Versioned.
 
-`/task <descripción | PAY-142 | ruta/a/spec.md>` arranca una tarea. El orquestador (modelo `implement`) lee el ticket por MCP, los archivos de spec que se nombren, `GLOSSARY.md`, `AGENTS.md`, las skills y ADRs relacionadas, las tareas pasadas parecidas de `.pi/memory/tasks.jsonl`, y el código que va a tocar junto con sus archivos hermanos. No edita nada.
+## 2. Planning
 
-Después llama a `task_plan` con:
+`/task <description | PAY-142 | path/to/spec.md>` starts a task. The orchestrator (`implement` model) reads the ticket via MCP, named spec files, `GLOSSARY.md`, `AGENTS.md`, related skills and ADRs, similar past tasks from `.pi/memory/tasks.jsonl`, and the code it will touch plus its sibling files. It edits nothing.
+
+It then calls `task_plan` with:
 
 - `summary`, `steps`, `files`.
-- `decisions`: solo elecciones que ningún documento resuelve, con 2 a 4 opciones. Las que el código no puede resolver se preguntan a la persona y se guardan como ADR.
-- `interface`: archivo, exports y firmas que los tests van a importar, citando la fuente (ticket, doc o archivo existente).
-- `seams`: puntos de prueba según la skill `tdd`; cada criterio de aceptación del ticket, incluidos los de entrada inválida, debe tener uno.
+- `decisions`: only choices no document settles, 2 to 4 options each. Choices the code cannot resolve go to the person and are stored as ADRs in `docs/adr/`.
+- `interface`: file, exports and signatures the tests will import, citing the source (ticket, doc or existing file).
+- `seams`: test points per the `tdd` skill. Each ticket acceptance criterion, invalid-input ones included, needs one.
 
-Dos comprobaciones corren antes de pedir aprobación:
+Two checks run before the person is asked to approve:
 
-- **Nombres verificados** (`src/contract.ts`). Cada nombre de `interface` debe aparecer literalmente, como palabra, en la fuente que cita; un archivo nuevo debe tener todas las palabras de su nombre en esa fuente. Lo que no aparece cuenta como inventado y se pregunta. Es texto plano: sirve en cualquier lenguaje.
-- **Chequeo del plan** (`src/plan-check.ts`). Un hijo de solo lectura con el modelo `review` (o `setup`) lee ticket, interfaz y archivos hermanos y devuelve `VERDICT: OK` o una lista de arreglos: nombres que no siguen la convención de la carpeta, forma de argumentos distinta a la del ticket, helpers existentes que se están duplicando, entradas inválidas sin cubrir. Una vez por tarea. Si pide arreglos, el orquestador corrige el plan y vuelve a llamar a `task_plan`. `"review": { "plan": false }` lo apaga.
+- **Verified names** (`src/contract.ts`). Each `interface` name must appear literally, as a word, in its cited source: ticket text read via MCP, spec files named in `/task`, docs, or existing code. A new file needs every word of its name in that source. Anything absent counts as invented and is asked. Plain text, any language.
+- **Plan check** (`src/plan-check.ts`). A read-only child with the `review` (or `setup`) model reads the ticket, interface and sibling files. It returns `VERDICT: OK` or a fix list: names that break the folder convention, argument shapes that differ from the ticket's, existing helpers being duplicated, invalid inputs left uncovered. Once per task. On fixes, the orchestrator corrects the plan and calls `task_plan` again. `"review": { "plan": false }` turns it off.
 
-La persona aprueba el plan una vez. `.pi/task.json` pasa a `implementing`.
+The person approves the plan once. `.pi/task.json` becomes `implementing`.
 
-## 3. Implementación con contexto específico
+## 3. Implementation with specific context
 
-La forma esperada es que **implemente un agente que recibe solo lo que necesita**: el plan aprobado, la interfaz, los seams, las ADRs que tocan y las skills de la fase. Nada de la conversación de planificación, nada de otras tareas. Cuanto menos contexto arrastra el modelo barato, mejor sigue el plan.
+Target: **an agent that receives only what it needs** implements. Its input is the approved plan, interface, seams, relevant ADRs and phase skills. No planning conversation, no other tasks. The less context a cheap model carries, the better it follows the plan.
 
-Hoy la implementación corre en la misma sesión de pi con el modelo `implement`, con la skill `tdd` inyectada y el plan como contrato. Los subagentes que ya existen son los de solo lectura (chequeo del plan y revisión del diff). Mover la implementación a un subagente con el contexto recortado es el siguiente paso de esta etapa; lo que la rodea (gates, pausas, verificación) ya está hecho y no cambia.
+Today: implementation runs in the same pi session with the `implement` model, `tdd` injected and the plan as contract. The existing subagents are read-only (plan check, diff review). Moving implementation to a trimmed-context subagent is the next step. The surrounding pieces (gates, pauses, verification) are done and will not change.
 
-Mientras implementa, el código pausa y pregunta cuando el agente:
+Code pauses and asks when the agent:
 
-- toca archivos fuera de `files` del plan;
-- añade dependencias, por comando o editando `package.json`, `pyproject.toml`, `go.mod`, etc.;
-- crea migraciones o cambia esquemas.
+- touches files outside the plan's `files`;
+- adds dependencies, by command or by editing `package.json`, `pyproject.toml`, `go.mod`, etc.;
+- creates migrations or changes schemas.
 
-Si el agente escribe una pregunta en texto plano en vez de usar `ask_user`, un empujón se lo recuerda.
+If the agent writes a question in plain text instead of using `ask_user`, a nudge reminds it.
 
-## 4. Verificación real en el entorno esperado
+## 4. Real verification
 
-Cuando el agente da la tarea por terminada, el código no le cree. En `agent_before_settle`:
+When the agent calls the task done, code does not believe it. In `agent_before_settle`:
 
-1. **Contrato de interfaz.** Cada export del plan debe aparecer en su archivo. Si falta, vuelve al agente sin gastar tiempo de verify ni dinero de revisión.
-2. **`verify`.** Se ejecutan en orden los comandos de `.pi/workflow.json`: primero los rápidos (compilador, typechecker, linter), después los tests, después `verify-app`, que ejercita la funcionalidad en el entorno real con las herramientas que el setup dejó: abrir la pantalla en el navegador headless, correr el comando de la CLI, llamar al endpoint, recorrer la TUI. Las evidencias quedan en `.pi/evidence/`.
+1. **Interface contract.** Each plan export must appear in its file. If one is missing, the task returns to the agent without spending verify time or review money.
+2. **`verify`.** Commands from `.pi/workflow.json` run in order: fast ones first (compiler, typechecker, linter), then tests, then `verify-app`. `verify-app` exercises the functionality in the real environment with the tools setup left: open the screen in the headless browser, run the CLI command, call the endpoint, walk the TUI. Evidence goes to `.pi/evidence/`.
 
-El agente no puede cerrar la tarea con `verify` en rojo. Los comandos vienen del proyecto, no del paquete: el mismo flujo sirve para TypeScript, Python, Go o lo que haya.
+The agent cannot close the task while `verify` is red. It gets 3 automatic retries, then the person decides. `/verify` runs it by hand. Commands come from the project, so the same flow serves TypeScript, Python, Go or anything else.
 
 ## 5. agentlint
 
-`agentlint check --all` es un paso más de `verify`. Comprueba las reglas MUST/NEVER que el setup convirtió en código. Si una regla falla:
+`agentlint check --all` is one more `verify` step. It checks the MUST/NEVER rules setup turned into code. If a rule fails:
 
-- el agente tiene un intento para corregir el código;
-- si vuelve a fallar, la persona decide: corregir o registrar la excepción. La excepción se aprueba con `agentlint approve` y actor humano, porque pi no tiene TTY y puede estar corriendo dentro de otro agente.
+- the agent gets one attempt to fix the code;
+- if it fails again, the person decides: fix, or record the exception. The exception is approved with `agentlint approve` and a human actor, because pi has no TTY and may run inside another agent.
 
-Los comandos de agentlint que abren su interfaz interactiva están bloqueados: se quedarían esperando a alguien.
+Guards: `agentlint accept` and `approve` always ask the person, even when the rule lets the agent decide. Commands that open the interactive UI (`review`, `--review`, `--wizard`) are blocked, because they would wait for someone.
 
-## 6. Corrección de errores
+## 6. Error correction
 
-El informe de `verify` vuelve al orquestador con instrucciones, y la presión sube con cada fallo:
+The `verify` report returns to the orchestrator with instructions. Pressure rises with each failure:
 
-| Fallo | Qué pasa |
-|-------|----------|
-| 1.º | "Arréglalo y termina." |
-| 2.º | Se inyecta la skill `diagnosing-bugs`: reproducir, aislar, hipótesis, y solo entonces tocar código. |
-| 3.º | Se cambia al modelo `escalate` (o `review`, o `setup`) para ese intento. |
-| Más | La persona decide: seguir o dejarlo. |
+| Failure | What happens |
+|---------|--------------|
+| 1st | "Fix it and finish." |
+| 2nd | `diagnosing-bugs` skill injected: reproduce, isolate, hypothesize, then touch code. |
+| 3rd | Switch to the `escalate` model (or `review`, or `setup`) for that attempt. |
+| More | The person decides: continue or drop. |
 
-Cuando `verify` pasa y el diff es arriesgado (grande, dependencias nuevas, migraciones, rutas sensibles, decisiones nuevas), un hijo de solo lectura con el modelo `review` revisa el diff contra el plan, las ADRs y `AGENTS.md` siguiendo `pstack-blast-radius`. Una ronda: si pide cambios, el modelo barato los hace y los comprueba `verify`, no otra revisión pagada. Un diff pequeño y sin zonas sensibles no paga revisión.
+When `verify` passes and the diff is risky (large, new dependencies, migrations, sensitive paths, new decisions), a read-only child with the `review` model reviews the diff against the plan, ADRs and `AGENTS.md`, following `pstack-blast-radius`. One round. If it asks for changes, the cheap model makes them and `verify` checks them, not another paid review. A small diff outside sensitive areas pays no review. Without tmux, or on failure, the review is skipped and the person is told.
 
-Al confirmar la persona que la tarea terminó, se guarda una ficha en `.pi/memory/tasks.jsonl`; cada 5 tareas corre una retro con la skill `retro` y se revisa la skill de verificación con `pstack-maintain-verification-skill`.
+When the person confirms the task is done, a record goes to `.pi/memory/tasks.jsonl`. It feeds the planning of future tasks (stage 2). Every 5 tasks, a retro runs with the `retro` skill and the verification skill is reviewed with `pstack-maintain-verification-skill`.
 
-## 7. Creación de la PR con verificaciones estáticas
+## 7. PR with static checks
 
-Pendiente. Lo esperado: al cerrar la tarea, el orquestador prepara la rama y la PR usando las herramientas que el setup identificó (CLI del hosting, plantilla de PR del repo) y adjunta el resultado de las verificaciones estáticas: comandos de `verify`, hallazgos de agentlint, resumen del plan y de las ADRs nuevas. La PR lleva la evidencia de `verify-app` cuando existe. Nada se pushea sin orden de la persona.
+Pending. Expected: on closing the task, the orchestrator prepares the branch and PR with the tools setup identified (hosting CLI, the repo's PR template). It attaches the static check results: `verify` commands, agentlint findings, plan summary, new ADRs, and `verify-app` evidence when it exists. Nothing is pushed without the person's order.
 
-## 8. Revisión de la PR en CI
+## 8. PR review in CI
 
-Fuera del paquete, pero el setup lo prepara: los mismos comandos de `verify` deben correr en el CI del proyecto, agentlint incluido. Lo que pasa en local tiene que pasar en CI con la misma lista; si divergen, el setup o la retro lo corrigen.
+Out of package, but setup prepares it. The same `verify` commands, agentlint included, must run in the project's CI. What passes locally must pass in CI with the same list. If they diverge, setup or the retro fixes it.
 
 ## 9. Deploy
 
-Fuera del paquete. Lo hace el pipeline del proyecto cuando la PR se aprueba.
+Out of package. The project pipeline deploys once the PR is approved.
 
-## 10. Verificación manual
+## 10. Manual verification
 
-Fuera del paquete y a propósito. La última palabra sobre la funcionalidad la tiene una persona en el entorno desplegado. `verify-app` y las evidencias de `.pi/evidence/` existen para que esa comprobación sea corta y dirigida, no para sustituirla.
+Out of package, on purpose. A person has the last word on functionality in the deployed environment. `verify-app` and `.pi/evidence/` make that check short and targeted. They do not replace it.
 
-## Cómo funciona por dentro
+## Internals
 
-**Estado.** `.pi/workflow.json` es el estado del proyecto (versionado): setup, `verify`, `models`, `skills`, `connectors`, `review`, `agentlint`. `.pi/task.json` es la tarea activa (local, en `.gitignore`): `status` (`planning` | `implementing` | `done`), `plan`, `spec`, `planChecks`, `allowedExtra`.
+**State.** `.pi/workflow.json` is project state (versioned): setup, `verify`, `models`, `skills`, `connectors`, `review`, `agentlint`. `.pi/task.json` is the active task (local, in `.gitignore`): `status` (`planning` | `implementing` | `done`), `plan`, `spec`, `planChecks`, `allowedExtra`.
 
-**Modelos por fase.** `/models` fija `setup`, `implement`, `review` y `escalate` como `provider/model`. La fase que falta usa el modelo de la sesión. El modelo fuerte se usa una vez en setup, en el chequeo del plan, en la revisión del diff cuando hay riesgo y en el tercer intento de corrección; el resto es el modelo barato.
+**Models per phase.** `/models` sets `setup`, `implement`, `review` and `escalate` as `provider/model`. A missing phase uses the session model. The strong model runs once in setup, in the plan check, in the diff review when risky, and on the third fix attempt. Everything else uses the cheap model.
 
-**Skills por fase.** Las skills viven en `vendor/skills/` y se inyectan en el prompt de cada fase (`/skills` las cambia): setup = grilling, domain-modeling, technical-writing, create-verification-skill; plan e implementación = tdd; diagnóstico = diagnosing-bugs; revisión = blast-radius; aprendizaje = retro, maintain-verification-skill. El modelo nunca elige una skill.
+**Skills per phase.** Skills live in `vendor/skills/` and are injected into each phase prompt (`/skills` changes them). setup = grilling, domain-modeling, technical-writing, create-verification-skill. plan and implement = tdd. diagnose = diagnosing-bugs. review = blast-radius. learn = retro, maintain-verification-skill. The model never picks a skill.
 
-**Gates.** Todo lo que bloquea se hace en código, en eventos de pi: `agent_before_settle` (contrato, verify, revisión, cierre), `tool_result` (conteo de escrituras, texto de MCP como evidencia del ticket) y `tool_call` (archivos fuera del plan, dependencias, migraciones, comandos interactivos de agentlint). Las herramientas `setup_finish` y `task_plan` solo son visibles en su fase.
+**Gates.** All blocking happens in code, on pi events: `agent_before_settle` (contract, verify, review, close), `tool_result` (write count, MCP text as ticket evidence) and `tool_call` (files outside the plan, dependencies, migrations, interactive agentlint commands). `setup_finish` and `task_plan` are visible only in their phase.
 
-**Subagentes.** Los hijos se lanzan con pi-subagent en tmux, en solo lectura (`read,grep,find,ls`), con un brief en archivo y un tiempo máximo. Dentro de un hijo (`PI_SUBAGENT_RUN_DIR`) la extensión no registra nada. Su coste se registra en la telemetría de la tarea.
+**Subagents.** Children launch via pi-subagent in tmux, read-only (`read,grep,find,ls`), with a brief file and a time limit. Inside a child (`PI_SUBAGENT_RUN_DIR`) the extension registers nothing: no setup offers, blocks or questions nobody can see. Their cost goes to the task telemetry.
 
-**Portabilidad.** `pi install git:github.com/OnishellT/pi-improved` basta; pi-subagent y agentlint vienen incluidos. Requisitos del sistema que no se pueden empaquetar: Node >= 22.18, git, tmux. `/doctor` los comprueba.
+**Portability.** `pi install git:github.com/OnishellT/pi-improved` is enough. pi-subagent and agentlint are bundled. System requirements that cannot be packaged: Node >= 22.18, git, tmux. `/doctor` checks them.
 
-## Pendiente
+## Pending
 
-1. **Subagente implementador** con contexto recortado (etapa 3).
-2. **Creación de la PR** con las verificaciones estáticas adjuntas (etapa 7).
-3. **Evaluación con más tareas** y una variante con pista de interfaz para medir la calidad con el flujo completo.
+1. **Implementer subagent** with trimmed context (stage 3).
+2. **PR creation** with static checks attached (stage 7).
+3. **Evaluation with more tasks**, plus a variant with an interface hint, to measure quality on the full flow.

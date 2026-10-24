@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Current flow</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--ink:#1a1d23;--mute:#5f6670;--line:#e2e5ea;--user:#d97706;--luna:#2563eb;--astra:#7c3aed;--code:#059669;--hl:#fff7e6}
+@media (prefers-color-scheme:dark){:root:not([data-theme=light]){--bg:#111317;--card:#1b1e24;--ink:#eceef2;--mute:#9aa2ad;--line:#2b3038;--hl:#2a2410}}
+:root[data-theme=dark]{--bg:#111317;--card:#1b1e24;--ink:#eceef2;--mute:#9aa2ad;--line:#2b3038;--hl:#2a2410}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.45 system-ui,sans-serif;padding:16px}
+main{max-width:980px;margin:0 auto}h1{font-size:1.5rem;margin:0 0 4px}.sub{color:var(--mute);margin:0 0 16px}
+.legend{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 18px;font-size:.85rem}.legend span{display:flex;align-items:center;gap:6px}
+.dot{width:12px;height:12px;border-radius:50%;display:inline-block}
+.models{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:22px}
+.models div{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:8px 10px;font-size:.85rem}.models b{display:block;font-size:.75rem;color:var(--mute);text-transform:uppercase}
+section{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:14px}
+h2{font-size:1.05rem;margin:0 0 4px}.why{color:var(--mute);font-size:.85rem;margin:0 0 10px}
+.flow{display:flex;gap:6px;overflow-x:auto;padding:4px 0 8px;align-items:center}
+.flow button{flex:none;border:2px solid var(--c);background:transparent;color:var(--ink);border-radius:999px;padding:6px 12px;font:inherit;font-size:.85rem;cursor:pointer;white-space:nowrap}
+.flow button.on{background:var(--c);color:#fff}.flow i{color:var(--mute);font-style:normal;flex:none}
+.detail{border-top:1px dashed var(--line);margin-top:6px;padding-top:10px;display:none}.detail.on{display:block}
+.detail ul{margin:6px 0 0;padding-left:18px}.detail li{margin:3px 0}.detail code{font-size:.8rem;background:var(--bg);padding:1px 5px;border-radius:4px}
+.tag{font-size:.75rem;color:var(--mute);margin-left:8px}
+table{border-collapse:collapse;width:100%;font-size:.85rem}td,th{text-align:left;padding:5px 6px;border-bottom:1px solid var(--line)}th{color:var(--mute);font-weight:600}
+details summary{cursor:pointer;font-weight:600}
+</style>
+</head>
+<body><main>
+<h1>Current flow (pi-improved)</h1>
+<p class="sub">Tap a step for details. Cheap model works. Code decides. Expensive model only reviews.</p>
+<div class="legend">
+<span><i class="dot" style="background:var(--user)"></i>User</span>
+<span><i class="dot" style="background:var(--code)"></i>Code (deterministic, $0)</span>
+<span><i class="dot" style="background:var(--luna)"></i>gpt-6-luna (cheap)</span>
+<span><i class="dot" style="background:var(--astra)"></i>gpt-6-astra (expensive)</span>
+</div>
+<div class="models">
+<div><b>Setup</b>astra · once per repo</div><div><b>Implement</b>luna · $0.01 per task</div><div><b>Review</b>astra · ~$0.35 per task</div><div><b>Escalate</b>astra · only if verify stalls</div>
+</div>
+<div id="app"></div>
+<section><details><summary>Measured on 5 real tasks</summary>
+<table><tr><th></th><th>Tests OK</th><th>Cost</th><th>Time</th><th>Interventions</th></tr>
+<tr><td>A: astra alone</td><td>25/121</td><td>$4.23</td><td>13 min</td><td>0</td></tr>
+<tr><td><b>B: this flow</b></td><td>22/121</td><td><b>$1.86</b></td><td><b>6 min</b></td><td>0</td></tr></table>
+<p class="why">Astra review is 97% of B's cost.</p></details></section>
+</main>
+<script>
+const C={user:"var(--user)",code:"var(--code)",luna:"var(--luna)",astra:"var(--astra)"};
+const P=[
+{t:"1 · Setup",w:"/setup · once per repo. Explains the repo to the cheap model.",n:[
+ {l:"Scan repo",w:"code",f:"discover.ts",d:["Stack, package manager, CI, docs, tests","Propose verify steps","Detect Jira, Linear, GitHub, Slack signals"]},
+ {l:"3 questions",w:"user",f:"setup.ts",d:["Language","Connectors (MCP) to enable","agentlint rules? (Node only)"]},
+ {l:"Document",w:"astra",f:"prompt.ts",d:["Short interview with <code>ask_user</code>","Write <code>AGENTS.md</code> (≤150 lines)","Domain skills in <code>.pi/skills/</code>","ADRs in <code>docs/adr/</code>","agentlint rules (authority: human)"]},
+ {l:"setup_finish",w:"code",f:"setup.ts",d:["Check files exist","Run verify (up to 3 failures)","Ask for your approval","Save <code>.pi/workflow.json = done</code>"]}]},
+{t:"2 · Plan",w:"/task · every decision needs a written source.",n:[
+ {l:"/task TICKET",w:"user",f:"task.ts",d:["Switch to implement model (luna)","Fetch similar tasks from memory"]},
+ {l:"Read and plan",w:"luna",f:"task-prompt.ts",d:["Read ticket and AGENTS.md","Call <code>task_plan</code>: steps, files, decisions"]},
+ {l:"Validate sources",w:"code",f:"task.ts",d:["Each decision cites AGENTS.md, an ADR, or a skill","No source → ask"]},
+ {l:"Decide",w:"user",f:"ask.ts",d:["<code>ask_user</code>: 2–4 options + 'Other'","Your answer is saved as a new ADR"]},
+ {l:"Approve plan",w:"user",f:"task.ts",d:["Plan status: <code>implementing</code>"]}]},
+{t:"3 · Implement",w:"luna works. Code stops it when it leaves the plan.",n:[
+ {l:"Write code",w:"luna",f:"",d:["Plan files only","No manual verify runs"]},
+ {l:"Triggers",w:"code",f:"triggers.ts",d:["File out of scope → pause","New dependency → pause","Migration → pause","Each pause asks you"]},
+ {l:"Guards",w:"code",f:"guards.ts",d:["Cannot touch <code>.pi/*.json</code>","Block interactive agentlint","<code>agentlint accept</code> only with your OK"]},
+ {l:"Stray question",w:"code",f:"task.ts",d:["If the reply ends with a question in text → push it to <code>ask_user</code>","So it never waits idle"]}]},
+{t:"4 · Gate at finish",w:"When luna says 'done', code checks that it is.",n:[
+ {l:"Verify",w:"code",f:"gate.ts",d:["Manifest tests, lint, agentlint…","Fail → report + 'fix it' (max 3)","agentlint rule failure → never escalates"]},
+ {l:"Escalate",w:"astra",f:"models.ts",d:["After 2 real failures, switch to astra","Back to luna when it passes"]},
+ {l:"Diff review",w:"astra",f:"review.ts",d:["Read-only subagent, parallel with verify","Verify fails → cancelled (not paid)","1 round only. Blocks only on real bugs"]},
+ {l:"Done?",w:"user",f:"gate.ts",d:["You confirm, task becomes <code>done</code>"]}]},
+{t:"5 · Learn",w:"Each closed task leaves a record.",n:[
+ {l:"Memory",w:"code",f:"learn.ts",d:["<code>.pi/memory/tasks.jsonl</code>: title, files, decisions","Feeds 'similar tasks' in step 2"]},
+ {l:"Metrics",w:"code",f:"telemetry.ts",d:["Tokens, cost, seconds per phase","Verify failures, reviews, escalations","<code>/metrics</code> shows them"]}]}];
+const app=document.getElementById("app");
+P.forEach((p,i)=>{const s=document.createElement("section");s.innerHTML=`<h2>${p.t}</h2><p class="why">${p.w}</p><div class="flow"></div><div class="detail"></div>`;
+const f=s.querySelector(".flow"),d=s.querySelector(".detail");
+p.n.forEach((n,j)=>{if(j)f.insertAdjacentHTML("beforeend","<i>→</i>");const b=document.createElement("button");b.textContent=n.l;b.style.setProperty("--c",C[n.w]);
+b.onclick=()=>{f.querySelectorAll("button").forEach(x=>x.classList.remove("on"));b.classList.add("on");d.classList.add("on");
+d.innerHTML=`<b>${n.l}</b><span class="tag">${{user:"user",code:"code",luna:"luna",astra:"astra"}[n.w]}${n.f?" · src/"+n.f:""}</span><ul>${n.d.map(x=>`<li>${x}</li>`).join("")}</ul>`};f.appendChild(b)});
+app.appendChild(s);if(!i)f.querySelector("button").click()});
+</script>
+</main></body></html>

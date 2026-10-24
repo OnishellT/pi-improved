@@ -1,71 +1,41 @@
 # pi-improved
 
-Setup automático de proyectos para Pi, pensado para que modelos baratos trabajen con buen contexto.
+Automatic project setup for Pi, so cheap models work with good context. The cheap model implements, code gates each step, and the strong model and the person step in only where they add value.
 
-## Instalación
+## Install
 
-Requisitos del sistema: Node >= 22.18, git y **tmux** (pi-subagent lanza las revisiones en sesiones tmux). Todo lo demás viene con el paquete.
+Requirements: Node >= 22.18, git and **tmux** (reviews run in tmux sessions). The rest ships with the package, including the [pi-subagent](https://github.com/badlogic/pi-subagent) CLI and [agentlint](https://github.com/aurelienbobenrieth/agentlint). A `subagent` already on the PATH wins.
 
 ```sh
 pi install git:github.com/OnishellT/pi-improved
 ```
 
-No hace falta nada más: el CLI de [pi-subagent](https://github.com/badlogic/pi-subagent) y agentlint vienen incluidos (si ya hay un `subagent` en el PATH, se usa ese). Requiere Node >= 22.18.
+To try without installing: `npm install`, then `pi -e ~/projects/pi-improved`.
 
-Luego, en tu proyecto:
+## Use
 
-1. `/setup`: prepara el proyecto (Pi también te lo ofrece al abrir uno sin setup).
-2. `/models`: elige el modelo de cada fase.
-3. `/task <descripción o PAY-142>`: trabaja una tarea.
-4. `/doctor`: revisa Node, subagent, agentlint, git y que los modelos de `.pi/workflow.json` estén disponibles (si falta alguno, `/login <provider>`).
+In your project:
 
-Para probar sin instalar: `pi -e ~/projects/pi-improved` (corre antes `npm install`).
+1. `/setup`: scan the repo, ask the minimum, then have the model write `AGENTS.md`, domain skills, ADRs and a verification skill. Pi offers it when you open a project without setup.
+2. `/models`: pick a model per phase (`setup`, `implement`, `review`, `escalate`). Saved in `.pi/workflow.json`.
+3. `/task <description or PAY-142>`: plan, approve once, implement. Code gates the end on `verify`, then a read-only review runs if the diff is risky.
+4. `/doctor`: check Node, subagent, agentlint, tmux, git, and that the configured models are available. If one is missing, run `/login <provider>`.
 
-El flujo completo que se espera en un proyecto (del setup al deploy, quién hace qué y qué cubre hoy el paquete) está en [docs/WORKFLOW.md](docs/WORKFLOW.md).
+`/verify` runs verification by hand. `/skills` picks the skills injected per phase.
 
-## Qué hace `/setup`
+Stages, gates, checks and internals: [docs/WORKFLOW.md](docs/WORKFLOW.md).
 
-1. **Escanea el repo (código, sin modelo):** stack, gestor de paquetes, CI, docs y comandos de verificación. Detecta conectores por el remote de git, las claves de tickets en los commits y las URLs en las docs.
-2. **Pregunta lo mínimo:** idioma y qué conectores activar (una confirmación por conector, en solo lectura).
-3. **Le da al modelo un solo prompt corto** para explorar el código y preguntarte con `ask_user` (opciones para elegir). Con eso escribe `AGENTS.md`, `.pi/skills/domain-*/SKILL.md` y `docs/adr/`.
-4. **agentlint (opcional, proyectos de Node):** si aceptas, el modelo instala [agentlint](https://github.com/aurelienbobenrieth/agentlint) y convierte en reglas las MUST/NEVER de `AGENTS.md` que tú elijas (hasta 3 para empezar). Se adoptan de forma gradual y nunca se aceptan hallazgos en bloque. Después, `agentlint check --all` corre como un paso más de `verify`.
-5. **`setup_finish` revisa el resultado en código:** que existan los archivos y que el formato sea correcto. Después corre `verify` y te pide aprobar una sola vez.
+## State
 
-Si el modelo se detiene antes de tiempo, un hook lo empuja a seguir (como máximo 2 veces por mensaje). Si `verify` falla 3 veces, decides tú.
-
-## El flujo de cada tarea
-
-1. **`/task <descripción o PAY-142>`**: el agente lee el ticket (si hay Jira o Linear), las skills, las ADRs y las **tareas pasadas parecidas**. Luego propone un plan con `task_plan`.
-2. **Decisiones:** si el plan trae una decisión que ninguna doc respalda, el código te la pregunta con opciones y la guarda como ADR en `docs/adr/`. Apruebas el plan una vez.
-   - **Nombres verificados:** el plan fija archivo y exports (`interface`) citando su fuente. El código comprueba que cada nombre aparezca literalmente en esa fuente (texto del ticket leído por MCP, archivos de spec nombrados en `/task`, docs o código existente); si no aparece, el nombre cuenta como inventado y te lo pregunta. Texto plano, sin parsear: funciona en cualquier lenguaje.
-   - **Chequeo del plan:** si hay modelo de `review` (o de `setup`), antes de pedirte aprobación un hijo de solo lectura con ese modelo lee ticket, interfaz y archivos hermanos y devuelve `OK` o una lista de arreglos (nombres, forma de argumentos, helpers existentes, entradas inválidas). Una sola vez por tarea; `"review": { "plan": false }` lo apaga.
-3. **Pausas automáticas mientras implementa:** archivos fuera del plan, paquetes nuevos (por comando o editando `package.json`, `pyproject.toml`, etc.) y migraciones o esquemas.
-4. **Bloqueo con `verify`:** si el agente cambió archivos, no termina hasta que `verify` pase (3 reintentos automáticos y después decides tú). `/verify` lo corre a mano. Antes de `verify` se comprueba el **contrato de interfaz**: cada export del plan debe aparecer en su archivo; si falta, el agente lo corrige sin gastar tiempo de verify ni revisión.
-5. **Aprender:** al confirmar que la tarea terminó, se guarda una ficha corta en `.pi/memory/tasks.jsonl` (se versiona), que alimenta el paso 1 de tareas futuras.
-
-## Modelos y subagentes
-
-- **`/models`** elige un modelo por fase: `setup` (conviene uno fuerte, se usa una vez), `implement` (el barato del día a día) y `review`. Se guarda en `.pi/workflow.json`.
-- **Revisión del diff:** si hay un modelo de `review`, cuando `verify` pasa un hijo de [pi-subagent](https://github.com/badlogic/pi-subagent) con ese modelo y solo lectura revisa el diff contra el plan, las ADRs y `AGENTS.md`. Solo se paga cuando el riesgo lo justifica (diff grande, dependencias, migraciones, rutas sensibles, decisiones nuevas); si pide cambios, vuelven al modelo barato (1 ronda). Si no hay tmux o falla, la revisión se omite y te avisa.
-- **Dentro de un hijo** (`PI_SUBAGENT_RUN_DIR`) la extensión no registra nada: nada de ofertas de setup, bloqueos ni preguntas que nadie puede ver.
-
-## Protecciones
-
-- `setup_finish` y `task_plan` solo son visibles en su fase.
-- Los comandos de agentlint que abren su interfaz (`review`, `--review`, `--wizard`) se bloquean, porque se quedarían esperando a una persona.
-- `agentlint accept` siempre te pide aprobación, aunque la regla permita que decida el agente.
-
-`.pi/task.json` es la tarea activa. Es local, y el setup lo agrega al `.gitignore`.
-
-## Estado
-
-`.pi/workflow.json` (se versiona en git):
+`.pi/workflow.json` (versioned in git):
 
 ```json
 { "version": 1, "setup": "done", "language": "Español", "verify": ["npm run test"], "connectors": [{ "id": "jira", "mcp": { "url": "…" } }] }
 ```
 
-## Desarrollo
+`.pi/task.json` is the active task. It is local, and setup adds it to `.gitignore`.
+
+## Development
 
 ```sh
 npm test
