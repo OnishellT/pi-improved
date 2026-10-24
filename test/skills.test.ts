@@ -3,7 +3,7 @@ import { test } from "node:test";
 import { discover } from "../src/discover.ts";
 import { updateManifest, readManifest } from "../src/manifest.ts";
 import { setupPrompt } from "../src/prompt.ts";
-import { listSkills, loadSkill, phaseSkills, registerSkills, skillsBlock } from "../src/skills.ts";
+import { clean, listSkills, loadSkill, phaseSkills, registerSkills, skillsBlock } from "../src/skills.ts";
 import { fakePi, fakeUI, tempProject } from "./helpers.ts";
 
 test("listSkills finds the bundled skills", async () => {
@@ -67,4 +67,9 @@ test("/skills saves a per-phase selection", async () => {
   const ui = fakeUI(["No changes", "· retro", "Done", "No changes", "No changes", "No changes", "No changes"]);
   await commands.get("skills").handler("", { cwd: root, ui });
   assert.deepEqual((await readManifest(root)).skills, { plan: ["tdd", "retro"] });
+});
+
+test("clean ignores a ## line inside a code fence when looking for the boilerplate section", () => {
+  const text = ["# Skill", "", "## Agent integration boundary", "", "```md", "## not a heading", "```", "", "Still boilerplate.", "", "## Next", "Kept."].join("\n");
+  assert.equal(clean(text, []), ["# Skill", "", "## Next", "Kept."].join("\n"));
 });

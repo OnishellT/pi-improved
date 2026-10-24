@@ -4,7 +4,7 @@ Date: 2026-10-23. Target version: Claude Code 2.1.309 (installed). Status: plan,
 
 Goal: port the pi-improved workflow to Claude Code as **one plugin**, native features first, code well written, tested, language-agnostic. Integrate, do not reimplement, what Claude Code does (plan mode, subagents with own model, skills, hooks, permissions, MCP, memory, worktrees, cost).
 
-Verification tags (Spanish [pendiente] is written [pending]):
+Verification tags:
 
 - [lab]: tested here on Claude Code 2.1.309 with haiku in lab repo `cc-lab/` (scratchpad), hooks dumping each event's JSON. Mod validated with `claude plugin validate`, typed with `tsc` against the engine types, tested with `claude plugin test`, loaded headless with `--plugin-dir`.
 - [docs]: confirmed by an agent against the official docs (`code.claude.com/docs`) and CHANGELOG, section cited.
