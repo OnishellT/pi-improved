@@ -56,7 +56,7 @@ test("/skills saves a per-phase selection", async () => {
   const { pi, commands } = fakePi();
   registerSkills(pi);
   // setup: keep; plan: toggle retro then done; the other four phases: keep.
-  const ui = fakeUI(["Sin cambios", "· retro", "Listo", "Sin cambios", "Sin cambios", "Sin cambios", "Sin cambios"]);
+  const ui = fakeUI(["No changes", "· retro", "Done", "No changes", "No changes", "No changes", "No changes"]);
   await commands.get("skills").handler("", { cwd: root, ui });
   assert.deepEqual((await readManifest(root)).skills, { plan: ["tdd", "retro"] });
 });

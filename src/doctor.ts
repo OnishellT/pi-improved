@@ -27,28 +27,28 @@ export async function runDoctor(pi: ExtensionAPI, ctx: ExtensionContext, version
     }
   };
   const checks: Check[] = [];
-  checks.push({ name: "Node", ok: nodeOk(version), detail: nodeOk(version) ? version : `${version}: se necesita >= ${MIN_NODE.join(".")}` });
+  checks.push({ name: "Node", ok: nodeOk(version), detail: nodeOk(version) ? version : `${version}: needs >= ${MIN_NODE.join(".")}` });
   const subagent = resolveBin("subagent");
   const subagentOk = await probe(subagent, ["list"]);
-  checks.push({ name: "subagent", ok: subagentOk, detail: subagentOk ? subagent : "no se encontró o no corre (reinstala con `pi install git:github.com/OnishellT/pi-improved`)" });
+  checks.push({ name: "subagent", ok: subagentOk, detail: subagentOk ? subagent : "not found or not running (reinstall with `pi install git:github.com/OnishellT/pi-improved`)" });
   const agentlint = resolveBin("agentlint");
   const agentlintOk = await probe(agentlint, ["--help"]);
-  checks.push({ name: "agentlint", ok: agentlintOk, detail: agentlintOk ? agentlint : "no se encontró o no corre" });
+  checks.push({ name: "agentlint", ok: agentlintOk, detail: agentlintOk ? agentlint : "not found or not running" });
   const ext = hasGlobalSubagent() ? "global" : fs.existsSync(bundledExtension()) ? "empaquetada" : undefined;
-  checks.push({ name: "extensión subagent", ok: Boolean(ext), detail: ext ?? "falta: sin ella la revisión nunca termina (reinstala el paquete)" });
+  checks.push({ name: "subagent extension", ok: Boolean(ext), detail: ext ?? "missing: without it the review never finishes (reinstall the package)" });
   const tmuxOk = await probe("tmux", ["-V"]);
-  checks.push({ name: "tmux", ok: tmuxOk, detail: tmuxOk ? "ok" : "no está instalado: la revisión con subagente lo necesita (apt/brew install tmux)" });
+  checks.push({ name: "tmux", ok: tmuxOk, detail: tmuxOk ? "ok" : "not installed: the subagent review needs it (apt/brew install tmux)" });
   const gitOk = await probe("git", ["--version"]);
-  checks.push({ name: "git", ok: gitOk, detail: gitOk ? "ok" : "no está instalado" });
+  checks.push({ name: "git", ok: gitOk, detail: gitOk ? "ok" : "not installed" });
 
   const wanted = Object.values((await readManifest(ctx.cwd).catch(() => undefined))?.models ?? {}).filter((m): m is string => Boolean(m));
   if (wanted.length && ctx.modelRegistry) {
     const available = new Set(ctx.modelRegistry.getAvailable().map((m) => `${m.provider}/${m.id}`));
     const missing = [...new Set(wanted)].filter((m) => !available.has(m));
     checks.push({
-      name: "Modelos",
+      name: "Models",
       ok: !missing.length,
-      detail: missing.length ? `no disponibles: ${missing.join(", ")}. Corre /login <provider> para: ${[...new Set(missing.map((m) => m.split("/")[0]))].join(", ")}` : "ok",
+      detail: missing.length ? `unavailable: ${missing.join(", ")}. Run /login <provider> for: ${[...new Set(missing.map((m) => m.split("/")[0]))].join(", ")}` : "ok",
     });
   }
   return checks;
@@ -58,7 +58,7 @@ let warned = false;
 
 export function registerDoctor(pi: ExtensionAPI) {
   pi.registerCommand("doctor", {
-    description: "Revisa que el entorno tenga todo lo que pi-improved necesita",
+    description: "Check that the environment has everything pi-improved needs",
     handler: async (_args, ctx) => {
       const checks = await runDoctor(pi, ctx);
       ctx.ui.notify(checks.map((c) => `${c.ok ? "✓" : "✗"} ${c.name}: ${c.detail}`).join("\n"), checks.every((c) => c.ok) ? "info" : "warning");
@@ -68,6 +68,6 @@ export function registerDoctor(pi: ExtensionAPI) {
     if (warned || !ctx.hasUI) return;
     warned = true;
     const bad = (await runDoctor(pi, ctx)).filter((c) => !c.ok);
-    if (bad.length) ctx.ui.notify(`Falta algo en el entorno (${bad.map((c) => c.name).join(", ")}). Corre /doctor.`, "warning");
+    if (bad.length) ctx.ui.notify(`Something is missing in the environment (${bad.map((c) => c.name).join(", ")}). Run /doctor.`, "warning");
   });
 }

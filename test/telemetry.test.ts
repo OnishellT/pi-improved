@@ -62,7 +62,7 @@ test("snapshot is persisted and reloaded; learn record includes metrics; /metric
 
   await s.commands.get("metrics").handler("", ctx);
   assert.match(notes[0], /M-2/);
-  assert.match(notes[0], /Coste medio por tarea: \$0\.400/);
+  assert.match(notes[0], /Mean cost per task: \$0\.400/);
 });
 
 test("/metrics without data", async () => {
@@ -70,7 +70,7 @@ test("/metrics without data", async () => {
   const s = setup();
   const notes: string[] = [];
   await s.commands.get("metrics").handler("", { cwd: root, ui: { notify: (t: string) => notes.push(t) } });
-  assert.match(notes[0], /Sin métricas/);
+  assert.match(notes[0], /No metrics/);
 });
 
 test("/metrics shows skipped reviews as · and the savings line", async () => {
@@ -80,5 +80,5 @@ test("/metrics shows skipped reviews as · and the savings line", async () => {
   });
   const report = await metricsReport(root);
   assert.match(report, /^B\s.*review: ·$/m);
-  assert.match(report, /Revisiones evitadas: 2 \(≈ \$0\.80 ahorrados\)/);
+  assert.match(report, /Reviews avoided: 2 \(≈ \$0\.80 saved\)/);
 });

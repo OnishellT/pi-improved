@@ -16,7 +16,7 @@ import { QUESTION_NUDGE, TASK_NUDGE, planText, taskPrompt } from "./task-prompt.
 const MAX_NUDGES = 2;
 const MAX_PLAN_CHECKS = 1;
 const MAX_TICKET_TEXT = 300_000;
-const OTHER = "✏️  Otra respuesta…";
+const OTHER = "✏️  Other answer…";
 const TICKET = /^[A-Z][A-Z0-9]+-\d+$/;
 const TRACKERS = ["jira", "linear"];
 const SPEC_FILE = /(?:^|[\s:(\[`"'])((?:\.{1,2}\/|\/|[\w.-]+\/)?[\w.-]+(?:\/[\w.-]+)*\.(?:md|markdown|txt|rst|adoc))(?=$|[\s:,;.)\]`"'])/g;
@@ -65,23 +65,23 @@ export function registerTask(pi: ExtensionAPI) {
   };
 
   pi.registerCommand("task", {
-    description: "Empieza una tarea: el agente investiga, propone un plan y tú lo apruebas",
+    description: "Start a task: the agent investigates and proposes a plan, you approve it",
     handler: async (args, ctx) => {
       const root = ctx.cwd;
       const arg = args.trim();
       const active = await readTask(root);
-      if (!arg) return ctx.ui.notify(active ? `${active.title} (${active.status})` : "No hay tarea activa. Usa /task <descripción o ticket>.", "info");
+      if (!arg) return ctx.ui.notify(active ? `${active.title} (${active.status})` : "No active task. Use /task <description or ticket>.", "info");
       if (arg === "cancel") {
         await writeTask(root, undefined);
-        return ctx.ui.notify("Tarea cancelada.", "info");
+        return ctx.ui.notify("Task cancelled.", "info");
       }
       const manifest = await readManifest(root);
-      if (manifest.setup !== "done") return ctx.ui.notify("Primero corre /setup.", "error");
+      if (manifest.setup !== "done") return ctx.ui.notify("Run /setup first.", "error");
 
       if (active && active.status !== "done") {
-        const choice = await ctx.ui.select(`Ya hay una tarea activa: ${active.title}`, ["Continuarla", "Reemplazarla", "Cancelar"]);
-        if (choice === "Continuarla" && active.status === "planning") return start(ctx, manifest, active);
-        if (choice !== "Reemplazarla") return;
+        const choice = await ctx.ui.select(`A task is already active: ${active.title}`, ["Continue it", "Replace it", "Cancel"]);
+        if (choice === "Continue it" && active.status === "planning") return start(ctx, manifest, active);
+        if (choice !== "Replace it") return;
       }
 
       const ticket = TICKET.test(arg) ? arg : undefined;
@@ -150,12 +150,12 @@ export function registerTask(pi: ExtensionAPI) {
         const missing = text ? missingNames(entry, text, await isNew(entry.file)) : [...entry.exports, path.basename(entry.file)];
         if (!missing.length) continue;
         const names = [...entry.exports, ...(entry.signatures ?? [])].join(", ");
-        invented.push(`${entry.file}: ${names}${text ? ` (no aparecen en ${entry.source}: ${missing.join(", ")})` : ""}`);
+        invented.push(`${entry.file}: ${names}${text ? ` (not found in ${entry.source}: ${missing.join(", ")})` : ""}`);
       }
       if (invented.length) {
         const proposal = invented.join("\n");
-        const question = `Nombres propuestos (nadie los define):\n${proposal}`;
-        const accept = "Aceptar los nombres propuestos";
+        const question = `Proposed names (nobody defines them):\n${proposal}`;
+        const accept = "Accept the proposed names";
         let answer = await ctx.ui.select(question, [accept, OTHER]);
         if (answer === OTHER) answer = await ctx.ui.input(question);
         if (answer === undefined) throw new Error("The user cancelled the interface question, so the plan is not approved. Stop and wait for the user.");
@@ -184,19 +184,19 @@ export function registerTask(pi: ExtensionAPI) {
       const checker = manifest.models?.review ?? manifest.models?.setup;
       if (checker && manifest.review?.plan !== false && (task.planChecks ?? 0) < MAX_PLAN_CHECKS) {
         await updateTask(root, (t) => void (t.planChecks = (t.planChecks ?? 0) + 1));
-        ctx.ui.setStatus("plan-check", `revisando el plan con ${checker}…`);
+        ctx.ui.setStatus("plan-check", `checking the plan with ${checker}…`);
         const t0 = Date.now();
         const check = await checkPlan(pi.exec.bind(pi), root, task, plan, evidence, checker).finally(() => ctx.ui.setStatus("plan-check", undefined));
         pi.events.emit(REVIEW_EVENT, { root, status: check.status === "ok" ? "plan-ok" : check.status === "fix" ? "plan-fix" : "skipped", model: checker, seconds: (Date.now() - t0) / 1000, cost: check.cost } satisfies ReviewPayload);
-        if (check.status === "skipped") ctx.ui.notify(`Chequeo del plan omitido: ${check.report}`, "warning");
+        if (check.status === "skipped") ctx.ui.notify(`Plan check skipped: ${check.report}`, "warning");
         else if (check.status === "fix") {
-          ctx.ui.notify("Chequeo del plan: pidió cambios. El agente corrige el plan.", "warning");
+          ctx.ui.notify("Plan check: changes requested. The agent fixes the plan.", "warning");
           throw new Error(`A senior review of the plan found problems. Apply these fixes (or justify in the summary why not) and call task_plan again:\n\n${check.report}`);
-        } else ctx.ui.notify("Chequeo del plan: OK.", "info");
+        } else ctx.ui.notify("Plan check: OK.", "info");
       }
 
-      if (!(await ctx.ui.confirm("¿Apruebas el plan?", planText(plan)))) {
-        const feedback = await ctx.ui.input("¿Qué hay que cambiar?");
+      if (!(await ctx.ui.confirm("Approve the plan?", planText(plan)))) {
+        const feedback = await ctx.ui.input("What should change?");
         throw new Error(`The user did not approve the plan. Feedback: ${feedback || "(none)"}. Revise it and call task_plan again.`);
       }
 

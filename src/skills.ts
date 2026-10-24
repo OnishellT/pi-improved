@@ -5,16 +5,16 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { DEFAULT_SKILLS, readManifest, updateManifest, type Phase } from "./manifest.ts";
 
 const MAX_BODY = 12_000;
-const KEEP = "Sin cambios";
-const DEFAULTS = "Por defecto";
-const DONE = "Listo";
+const KEEP = "No changes";
+const DEFAULTS = "Defaults";
+const DONE = "Done";
 const PHASES: [Phase, string][] = [
   ["setup", "Setup"],
   ["plan", "Plan"],
-  ["implement", "Implementación"],
-  ["diagnose", "Diagnóstico"],
-  ["review", "Revisión"],
-  ["learn", "Aprendizaje"],
+  ["implement", "Implement"],
+  ["diagnose", "Diagnose"],
+  ["review", "Review"],
+  ["learn", "Learn"],
 ];
 
 export interface Skill {
@@ -88,12 +88,12 @@ export async function skillsBlock(root: string, phase: Phase): Promise<string> {
 
 export function registerSkills(pi: ExtensionAPI) {
   pi.registerCommand("skills", {
-    description: "Elige qué skills incluye cada fase: setup, plan, implementación, diagnóstico, revisión y aprendizaje",
+    description: "Pick the skills each phase includes: setup, plan, implement, diagnose, review and learn",
     handler: async (_args, ctx: ExtensionContext) => {
       const root = ctx.cwd;
       const all = await listSkills();
       const current = (await readManifest(root)).skills ?? {};
-      const now = (phase: Phase, source: Partial<Record<Phase, string[]>>) => (source[phase] ?? DEFAULT_SKILLS[phase]).join(", ") || "ninguna";
+      const now = (phase: Phase, source: Partial<Record<Phase, string[]>>) => (source[phase] ?? DEFAULT_SKILLS[phase]).join(", ") || "none";
       ctx.ui.notify(PHASES.map(([key, name]) => `${name}: ${now(key, current)}`).join("\n"), "info");
 
       const next = { ...current };
@@ -102,7 +102,7 @@ export function registerSkills(pi: ExtensionAPI) {
         let changed = false;
         for (;;) {
           const options = [changed ? DONE : KEEP, DEFAULTS, ...all.map((s) => `${chosen.includes(s) ? "✓" : "·"} ${s}`)];
-          const pick = await ctx.ui.select(`${name} (ahora: ${chosen.join(", ") || "ninguna"})`, options);
+          const pick = await ctx.ui.select(`${name} (now: ${chosen.join(", ") || "none"})`, options);
           if (!pick || pick === KEEP || pick === DONE) break;
           changed = true;
           if (pick === DEFAULTS) {

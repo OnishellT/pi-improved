@@ -19,22 +19,22 @@ test("a small ordinary diff with a plan is low risk", async () => {
 });
 
 test("size thresholds: > 200 lines or > 6 files", async () => {
-  assert.match((await risk(exec([["src/a.ts", 201]]))).reasons[0], /201 líneas/);
+  assert.match((await risk(exec([["src/a.ts", 201]]))).reasons[0], /201 lines/);
   assert.equal((await risk(exec([["src/a.ts", 200]]))).review, false);
   const seven = Array.from({ length: 7 }, (_, i) => [`src/f${i}.ts`, 1] as [string, number]);
-  assert.match((await risk(exec(seven))).reasons[0], /7 archivos/);
+  assert.match((await risk(exec(seven))).reasons[0], /7 files/);
   assert.equal((await risk(exec(seven.slice(0, 6)))).review, false);
 });
 
 test("untracked files count towards the diff", async () => {
-  assert.match((await risk(exec([], ["a", "b", "c", "d", "e", "f", "g"]))).reasons[0], /7 archivos/);
+  assert.match((await risk(exec([], ["a", "b", "c", "d", "e", "f", "g"]))).reasons[0], /7 files/);
 });
 
 test("dependency manifests, lockfiles and migrations", async () => {
   for (const f of ["package.json", "pnpm-lock.yaml", "yarn.lock", "bun.lockb", "requirements-dev.txt", "pyproject.toml", "go.mod", "Cargo.toml", "Gemfile"]) {
     assert.match((await risk(exec([[f, 1]]))).reasons.join(), /dependencias/, f);
   }
-  assert.match((await risk(exec([["db/migrate/001_x.rb", 1]]))).reasons.join(), /migración/);
+  assert.match((await risk(exec([["db/migrate/001_x.rb", 1]]))).reasons.join(), /migration/);
 });
 
 test("sensitive directories", async () => {
@@ -51,8 +51,8 @@ test("review.paths globs", async () => {
 });
 
 test("plan: missing plan or decisions answered by the user", async () => {
-  assert.deepEqual((await risk(exec([["a.ts", 1]]), { ...task, plan: undefined })).reasons, ["sin plan"]);
-  assert.deepEqual((await risk(exec([["a.ts", 1]]), null)).reasons, ["sin plan"]);
+  assert.deepEqual((await risk(exec([["a.ts", 1]]), { ...task, plan: undefined })).reasons, ["no plan"]);
+  assert.deepEqual((await risk(exec([["a.ts", 1]]), null)).reasons, ["no plan"]);
   const decided = { ...task, plan: { ...plan, decisions: [{ id: "d", question: "?", options: [], status: "decided", answer: "x" }] } };
   assert.equal((await risk(exec([["a.ts", 1]]), decided)).review, true);
   const documented = { ...task, plan: { ...plan, decisions: [{ id: "d", question: "?", options: [], status: "documented" }] } };

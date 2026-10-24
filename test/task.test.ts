@@ -50,9 +50,9 @@ test("active task: replace asks, cancel keeps it", async () => {
   const { commands, ctxFor, root } = await setup();
   await commands.get("task").handler("First", ctxFor([]).ctx);
   const first = (await readTask(root))!.id;
-  await commands.get("task").handler("Second", ctxFor(["Cancelar"]).ctx);
+  await commands.get("task").handler("Second", ctxFor(["Cancel"]).ctx);
   assert.equal((await readTask(root))!.id, first);
-  await commands.get("task").handler("Second", ctxFor(["Reemplazarla"]).ctx);
+  await commands.get("task").handler("Second", ctxFor(["Replace it"]).ctx);
   assert.equal((await readTask(root))!.title, "Second");
 });
 
@@ -71,7 +71,7 @@ test("task_plan with a documented source asks only for approval", async () => {
 test("invalid source is asked and recorded as an ADR", async () => {
   const { commands, tools, ctxFor, root } = await setup();
   await commands.get("task").handler("Add fee", ctxFor([]).ctx);
-  const { ctx, ui } = ctxFor(["✏️  Otra respuesta…", "basis points", true]);
+  const { ctx, ui } = ctxFor(["✏️  Other answer…", "basis points", true]);
   const decisions = [{ question: "Fee unit?", options: ["cents", "percent"], source: "docs/missing.md" }];
   await tools.get("task_plan").execute("1", plan(decisions), undefined, undefined, ctx);
   assert.equal(ui.asked.length, 3);
@@ -137,7 +137,7 @@ test("a plain-text question while implementing is routed to ask_user; a statemen
 test("invented interface names ask the user and write an ADR", async () => {
   const { commands, tools, ctxFor, root } = await setup();
   await commands.get("task").handler("Add fee", ctxFor([]).ctx);
-  const { ctx, ui } = ctxFor(["Aceptar los nombres propuestos", true]);
+  const { ctx, ui } = ctxFor(["Accept the proposed names", true]);
   const result = await tools.get("task_plan").execute("1", plan([], { interface: [{ file: "src/fee.ts", exports: ["fee"], signatures: ["fee(n: number): number"], source: "user" }] }), undefined, undefined, ctx);
   assert.equal(ui.asked.length, 2);
   assert.match(result.content[0].text, /write the tests/);
@@ -176,20 +176,20 @@ test("names labelled 'ticket' but absent from the ticket text are asked; names i
   await tools.get("task_plan").execute("1", plan([], { interface: [{ file: "src/fee.ts", exports: ["fee", "computeTotal"], source: "ticket" }] }), undefined, undefined, quiet.ctx);
   assert.equal(quiet.ui.asked.length, 1);
   // parseMicros is nowhere and the new file `micros.ts` is not a ticket noun: the label 'ticket' does not save it
-  await commands.get("task").handler("Add fee per docs/spec.md", ctxFor(["Reemplazarla"]).ctx);
-  const loud = ctxFor(["Aceptar los nombres propuestos", true]);
+  await commands.get("task").handler("Add fee per docs/spec.md", ctxFor(["Replace it"]).ctx);
+  const loud = ctxFor(["Accept the proposed names", true]);
   await tools.get("task_plan").execute("1", plan([], { files: ["src/micros.ts", "test/fee.test.ts"], interface: [{ file: "src/micros.ts", exports: ["parseMicros"], source: "ticket" }] }), undefined, undefined, loud.ctx);
   assert.equal(loud.ui.asked.length, 2);
-  assert.match(loud.ui.asked[0], /Nombres propuestos[\s\S]*src\/micros\.ts: parseMicros \(no aparecen en ticket: parseMicros, micros\.ts\)/);
+  assert.match(loud.ui.asked[0], /Proposed names[\s\S]*src\/micros\.ts: parseMicros \(not found in ticket: parseMicros, micros\.ts\)/);
   assert.equal((await readTask(root))!.plan!.decisions[0].status, "decided");
 });
 
 test("a cited existing file must contain the names too", async () => {
   const { commands, tools, ctxFor } = await setup();
   await commands.get("task").handler("Add fee", ctxFor([]).ctx);
-  const { ctx, ui } = ctxFor(["Aceptar los nombres propuestos", true]);
+  const { ctx, ui } = ctxFor(["Accept the proposed names", true]);
   await tools.get("task_plan").execute("1", plan([], { interface: [{ file: "src/money.ts", exports: ["m", "formatUsd"], source: "src/money.ts" }] }), undefined, undefined, ctx);
-  assert.match(ui.asked[0], /no aparecen en src\/money\.ts: formatUsd/);
+  assert.match(ui.asked[0], /not found in src\/money\.ts: formatUsd/);
 });
 
 test("plan check: FIX sends the findings back once, the retry skips the paid check, OK and disabled proceed", async () => {
@@ -227,15 +227,15 @@ test("plan check: FIX sends the findings back once, the retry skips the paid che
   assert.equal((await readTask(root))!.status, "implementing");
 
   // OK proceeds to the approval in one go
-  await h.commands.get("task").handler("Again", ctxFor(["Reemplazarla"]).ctx);
-  await h.tools.get("task_plan").execute("1", { ...plan(), interface: [{ file: "src/fee.ts", exports: ["fee"], source: "user" }] }, undefined, undefined, ctxFor(["Aceptar los nombres propuestos", true]).ctx);
+  await h.commands.get("task").handler("Again", ctxFor(["Replace it"]).ctx);
+  await h.tools.get("task_plan").execute("1", { ...plan(), interface: [{ file: "src/fee.ts", exports: ["fee"], source: "user" }] }, undefined, undefined, ctxFor(["Accept the proposed names", true]).ctx);
   assert.equal(spawns.length, 2);
   assert.equal(emitted.at(-1).payload.status, "plan-ok");
 
   // review.plan = false disables it
   await updateManifest(root, (m) => void (m.review = { plan: false }));
-  await h.commands.get("task").handler("Third", ctxFor(["Reemplazarla"]).ctx);
-  await h.tools.get("task_plan").execute("1", { ...plan(), interface: [{ file: "src/fee.ts", exports: ["fee"], source: "user" }] }, undefined, undefined, ctxFor(["Aceptar los nombres propuestos", true]).ctx);
+  await h.commands.get("task").handler("Third", ctxFor(["Replace it"]).ctx);
+  await h.tools.get("task_plan").execute("1", { ...plan(), interface: [{ file: "src/fee.ts", exports: ["fee"], source: "user" }] }, undefined, undefined, ctxFor(["Accept the proposed names", true]).ctx);
   assert.equal(spawns.length, 2);
 });
 

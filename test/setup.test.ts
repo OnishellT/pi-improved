@@ -28,7 +28,7 @@ test("/setup runs discovery, asks only about connectors, and hands one prompt to
     args.includes("remote") ? { code: 0, stdout: "origin git@github.com:acme/app.git (fetch)" } : { code: 0 },
   );
   registerSetup(pi);
-  const { ctx, ui } = ctxFor(root, ["Español", true, "Ninguno más", "No"]);
+  const { ctx, ui } = ctxFor(root, ["Español", true, "No more", "No"]);
 
   await commands.get("setup").handler("", ctx);
 
@@ -47,7 +47,7 @@ test("choosing agentlint adds its steps to the prompt", async () => {
   const root = await tempProject({ "package.json": "{}", "pnpm-lock.yaml": "" });
   const { pi, commands, sent } = fakePi();
   registerSetup(pi);
-  await commands.get("setup").handler("", ctxFor(root, ["Español", "Ninguno más", "Sí (recomendado)"]).ctx);
+  await commands.get("setup").handler("", ctxFor(root, ["Español", "No more", "Yes (recommended)"]).ctx);
   assert.equal((await readManifest(root)).agentlint, "pnpm agentlint");
   assert.match(sent[0], /pnpm add -D @aurelienbbn\/agentlint[\s\S]*rule-advisor[\s\S]*NEVER bulk-accept/);
 });
@@ -126,7 +126,7 @@ test("the settle hook nudges a model that stops early, a bounded number of times
 test("ask_user batches questions and supports a free-text answer", async () => {
   const { pi, tools } = fakePi();
   registerAskUser(pi);
-  const { ctx } = ctxFor("/", ["Postgres", "✏️  Otra respuesta…", "Equipo de pagos"]);
+  const { ctx } = ctxFor("/", ["Postgres", "✏️  Other answer…", "Equipo de pagos"]);
   const result = await tools.get("ask_user").execute(
     "1",
     { questions: [{ question: "¿Base de datos?", options: ["Postgres", "MySQL"] }, { question: "¿Dueño?", options: ["Core", "Infra"] }] },

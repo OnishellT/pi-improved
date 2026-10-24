@@ -72,5 +72,5 @@ export async function checkPlan(exec: Exec, root: string, task: Task, plan: Plan
   });
   const withCost = (r: PlanCheckResult): PlanCheckResult => (run.cost === undefined ? r : { ...r, cost: run.cost });
   if (!run.ok) return withCost({ status: "skipped", report: run.reason });
-  return withCost(parsePlanVerdict(run.output) ?? { status: "skipped", report: "El chequeo del plan no incluyó un veredicto." });
+  return withCost(parsePlanVerdict(run.output) ?? { status: "skipped", report: "The plan check did not include a verdict." });
 }

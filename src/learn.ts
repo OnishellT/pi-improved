@@ -128,7 +128,7 @@ export function registerLearn(pi: ExtensionAPI) {
       const count = (await readRecords(root)).length;
       if (hasUI && count % RETRO_EVERY === 0) pi.sendUserMessage(await retroPrompt(root));
     } catch (error) {
-      console.error("[memo] no se pudo guardar la tarea:", error);
+      console.error("[memo] could not save the task:", error);
     }
   });
 }

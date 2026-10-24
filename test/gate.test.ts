@@ -64,7 +64,7 @@ test("failure continues with the report; a write tool alone counts as change", a
 });
 
 test("retry cap asks the user, then stops", async () => {
-  const t = await setup({ answers: ["Seguir intentando", "Dejarlo así"] });
+  const t = await setup({ answers: ["Keep trying", "Leave it as is"] });
   await t.run();
   for (let i = 0; i < 3; i++) assert.equal((await t.settle()).continue, true);
   assert.equal(t.ui.asked.length, 0);
@@ -120,7 +120,7 @@ test("review skipped notifies and still confirms; no review model never spawns",
   t.ctx.ui.notify = (m: string) => notes.push(m);
   await t.run();
   await t.settle();
-  assert.match(notes[0], /Revisión omitida/);
+  assert.match(notes[0], /Review skipped/);
   assert.equal((await readTask(t.root))?.status, "done");
   const n = await setup({ pass: true, task: true, answers: [true] });
   await n.run();
@@ -213,7 +213,7 @@ test("2nd failure diagnoses on the same model; the 3rd escalates and pass restor
   const third = await t.settle();
   assert.equal(third.entries[0].customType, "verify-gate");
   assert.deepEqual(t.set, ["p/strong"]);
-  assert.ok(t.notes.some((n) => n.includes("verify falló 3 veces: este intento lo hace p/strong")));
+  assert.ok(t.notes.some((n) => n.includes("verify failed 3 times: p/strong takes this attempt")));
   assert.deepEqual(t.emitted.find((e) => e.name === ESCALATE_EVENT).payload, { root: t.ctx.cwd, model: "p/strong" });
   t.setCode(0);
   t.ctx.model = { provider: "p", id: "strong" };
@@ -229,7 +229,7 @@ test("low-risk diff skips the paid review, notifies and emits skipped-low-risk",
   await t.run();
   assert.equal(await t.settle(), undefined);
   assert.equal(t.subagent.length, 0);
-  assert.ok(notes.some((n) => n.startsWith("Revisión omitida (bajo riesgo)")));
+  assert.ok(notes.some((n) => n.startsWith("Review skipped (low risk)")));
   assert.equal(t.emitted.find((e) => e.name === REVIEW_EVENT).payload.status, "skipped-low-risk");
   assert.equal((await readTask(t.root))?.status, "done");
 });
@@ -243,7 +243,7 @@ test("no escalation without a configured model", async () => {
 });
 
 test("an agentlint failure never escalates and tells the model how to record an exception", async () => {
-  const t = await parallel({ escalate: "p/strong" }, ["Que el modelo lo corrija", "Que el modelo lo corrija"], "facturas/tax-review src/invoice.js:11\n2 unresolved findings — gate closed");
+  const t = await parallel({ escalate: "p/strong" }, ["Make the model fix it", "Make the model fix it"], "facturas/tax-review src/invoice.js:11\n2 unresolved findings — gate closed");
   t.gate.resolve();
   let last: any;
   for (let i = 0; i < 3; i++) last = await t.settle();
@@ -270,7 +270,7 @@ test("a repeated agentlint failure asks the user; approval records the exception
   });
   h.pi.events = { emit: () => {} };
   registerGate(h.pi);
-  const ui = fakeUI(["Aprobar la excepción", "Cambio revisado por finanzas"]);
+  const ui = fakeUI(["Approve the exception", "Cambio revisado por finanzas"]);
   const ctx: any = { cwd: root, hasUI: true, ui };
   await h.emit("before_agent_start", { messageType: "user" }, ctx);
   await h.emit("tool_result", { toolName: "write" }, ctx);
@@ -278,7 +278,7 @@ test("a repeated agentlint failure asks the user; approval records the exception
   assert.match(first.entries[0].content, /the user will be asked to approve/);
   assert.equal(ui.asked.length, 0);
   const second = await h.emit("agent_before_settle", { outcome: "completed" }, ctx);
-  assert.match(ui.asked[0], /agentlint bloquea/);
+  assert.match(ui.asked[0], /agentlint blocks/);
   assert.match(second.entries[0].content, /approved the agentlint exception/);
   assert.ok(calls.some((c) => /AGENTLINT_ACTOR=human:\S+ npm exec agentlint -- approve --reason "Cambio revisado por finanzas" "sel-1"/.test(c)));
 });

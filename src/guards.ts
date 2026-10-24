@@ -23,7 +23,7 @@ export function registerGuards(pi: ExtensionAPI) {
       return { block: true, reason: "This agentlint command opens an interactive UI for a person and would hang. Use `rules scan` or `next --format json` instead." };
     }
     if (AGENTLINT_ACCEPT.test(command)) {
-      const approved = ctx.hasUI && (await ctx.ui.select(`El agente quiere aceptar una excepción de agentlint:\n${command}`, ["Aprobar la excepción", "Bloquear: que lo corrija"])) === "Aprobar la excepción";
+      const approved = ctx.hasUI && (await ctx.ui.select(`The agent wants to accept an agentlint exception:\n${command}`, ["Approve the exception", "Block: make it fix the code"])) === "Approve the exception";
       if (!approved) return { block: true, reason: "The user did not accept this exception. Fix the code so the finding no longer applies, or explain why it is wrong and ask the user." };
     }
   });
