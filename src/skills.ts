@@ -54,10 +54,16 @@ export async function phaseSkills(root: string, phase: Phase): Promise<string[]>
   return manifest?.skills?.[phase] ?? DEFAULT_SKILLS[phase];
 }
 
-/** Drops "call the Skill tool" / slash-invocation lines (the model has no such tool); points to bundled skills instead. */
+/** Cross-harness boilerplate that ends every pstack skill: the same ~1 KB would repeat in each phase prompt. */
+const BOILERPLATE = "## Agent integration boundary";
+
+/** Drops "call the Skill tool" / slash-invocation lines (the model has no such tool) and the boilerplate section; points to bundled skills instead. */
 function clean(text: string, bundled: string[]) {
   const out: string[] = [];
+  let boilerplate = false;
   for (const line of text.split("\n")) {
+    if (/^## /.test(line)) boilerplate = line.trim() === BOILERPLATE;
+    if (boilerplate) continue;
     if (/Skill tool|\/pstack-[\w-]+/i.test(line)) {
       const refs = bundled.filter((n) => line.includes(n) || line.includes(n.replace(/^pstack-/, "")));
       if (refs.length) out.push(`(The referenced skill ${refs.join(", ")}, if bundled, is included below.)`);
@@ -67,6 +73,7 @@ function clean(text: string, bundled: string[]) {
   }
   return out
     .join("\n")
+    .trimEnd()
     .replace(/\.claude\/skills\//g, ".pi/skills/")
     .replace(/\bClaude\b/g, "the agent");
 }
