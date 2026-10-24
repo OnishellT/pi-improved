@@ -31,7 +31,7 @@ Once per repo, with the strongest model available (`models.setup`). Its output i
 2. **Interview:** the model follows the `grilling` skill. One question at a time via `ask_user`, recommended option first, nothing the code answers. About 12 questions at most.
 3. **Documents:** `GLOSSARY.md`. `AGENTS.md` (max 150 lines: purpose, stack, commands, map, conventions, MUST/NEVER rules). `docs/adr/` for decisions the code shows or the person confirmed. `.pi/skills/domain-<area>/SKILL.md` per business area.
 4. **App verification skill:** following `pstack-create-verification-skill`, write `.pi/skills/verify-app/SKILL.md` with an executable script when the app can run without a person: headless browser (web), the binary (CLI), calls (API), the terminal (TUI). Evidence goes to `.pi/evidence/`. Stage 4 uses it to test real behavior, not only unit tests.
-5. **Rules:** if the person accepts, install agentlint and turn up to 3 `AGENTS.md` MUST/NEVER rules into agentlint rules: those a pattern can detect but a person must judge. Human authority by default. Adopt gradually. Never accept findings in bulk.
+5. **Rules (Node projects only):** if the person accepts, install agentlint and turn up to 3 `AGENTS.md` MUST/NEVER rules the person picks into agentlint rules: those a pattern can detect but a person must judge. Human authority by default. Adopt gradually. Never accept findings in bulk.
 6. **`verify`:** leave the project's verify commands ordered fastest first (compiler or typechecker, linter, tests, `verify-app`, agentlint), then call `setup_finish`. It checks in code that files exist and are well formed, runs `verify`, and asks for one approval.
 
 If the model stops early, a hook pushes it on (max 2 times per message). If `verify` fails 3 times, the person decides.
@@ -101,7 +101,7 @@ The `verify` report returns to the orchestrator with instructions. Pressure rise
 
 When `verify` passes and the diff is risky (large, new dependencies, migrations, sensitive paths, new decisions), a read-only child with the `review` model reviews the diff against the plan, ADRs and `AGENTS.md`, following `pstack-blast-radius`. One round. If it asks for changes, the cheap model makes them and `verify` checks them, not another paid review. A small diff outside sensitive areas pays no review. Without tmux, or on failure, the review is skipped and the person is told.
 
-When the person confirms the task is done, a record goes to `.pi/memory/tasks.jsonl`. It feeds the planning of future tasks (stage 2). Every 5 tasks, a retro runs with the `retro` skill and the verification skill is reviewed with `pstack-maintain-verification-skill`.
+When the person confirms the task is done, a record goes to `.pi/memory/tasks.jsonl` (versioned). It feeds the planning of future tasks (stage 2). Every 5 tasks, a retro runs with the `retro` skill and the verification skill is reviewed with `pstack-maintain-verification-skill`.
 
 ## 7. PR with static checks
 

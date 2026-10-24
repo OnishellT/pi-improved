@@ -58,11 +58,13 @@ export async function phaseSkills(root: string, phase: Phase): Promise<string[]>
 const BOILERPLATE = "## Agent integration boundary";
 
 /** Drops "call the Skill tool" / slash-invocation lines (the model has no such tool) and the boilerplate section; points to bundled skills instead. */
-function clean(text: string, bundled: string[]) {
+export function clean(text: string, bundled: string[]) {
   const out: string[] = [];
   let boilerplate = false;
+  let fenced = false;
   for (const line of text.split("\n")) {
-    if (/^## /.test(line)) boilerplate = line.trim() === BOILERPLATE;
+    if (/^\s*```/.test(line)) fenced = !fenced;
+    if (!fenced && /^## /.test(line)) boilerplate = line.trim() === BOILERPLATE;
     if (boilerplate) continue;
     if (/Skill tool|\/pstack-[\w-]+/i.test(line)) {
       const refs = bundled.filter((n) => line.includes(n) || line.includes(n.replace(/^pstack-/, "")));
