@@ -15,6 +15,7 @@ const MAX_NUDGES = 2;
 const START_TIMEOUT = 30_000;
 const MAX_VERIFY_FAILURES = 3;
 const NONE = "No more";
+const DECLINE = "Don't ask again";
 
 /** Returns what is missing from the setup output; empty means complete. */
 export async function checkOutputs(root: string, verify: string[]): Promise<string[]> {
@@ -241,8 +242,8 @@ export function registerSetup(pi: ExtensionAPI) {
     if (!(await isProject(ctx.cwd))) return;
 
     const question = manifest.startedAt ? "A setup is half done. Continue it?" : "This project has no agent setup. Do it now?";
-    const choice = await ctx.ui.select(question, ["Yes", "Later", "Don't ask again"]);
+    const choice = await ctx.ui.select(question, ["Yes", "Later", DECLINE]);
     if (choice === "Yes") pi.sendUserMessage("/setup", { expandPromptTemplates: true });
-    else if (choice === "No volver a preguntar") await updateManifest(ctx.cwd, (m) => void (m.setup = "declined"));
+    else if (choice === DECLINE) await updateManifest(ctx.cwd, (m) => void (m.setup = "declined"));
   });
 }
