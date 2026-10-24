@@ -86,9 +86,9 @@ const read = (p: string) => fs.readFile(p, "utf8").catch(() => "");
 const BLOCK = (what: string) => ({ block: true, reason: `The user rejected ${what}. Do not retry it. Choose another approach within the plan, or ask the user.` });
 
 async function approveDependency(task: Task, ctx: ExtensionContext, title: string, names: string[] | undefined, decision: string) {
-  const label = names?.join(", ") || "dependencias";
-  const pick = await ctx.ui.select(`${title}: ${label}`, ["Aprobar y registrar ADR", "Bloquear"]);
-  if (pick !== "Aprobar y registrar ADR") return BLOCK("this dependency change");
+  const label = names?.join(", ") || "dependencies";
+  const pick = await ctx.ui.select(`${title}: ${label}`, ["Approve and record ADR", "Block"]);
+  if (pick !== "Approve and record ADR") return BLOCK("this dependency change");
   await writeAdr(ctx.cwd, { title: `Add dependency ${names?.join(", ") || "(see decision)"}`, context: task.title, decision });
 }
 
@@ -103,7 +103,7 @@ export function registerTriggers(pi: ExtensionAPI) {
     if (event.toolName === "bash") {
       const command: string = event.input?.command ?? "";
       const names = addedPackagesFromCommand(command);
-      if (names.length) return approveDependency(task, ctx, "Instalar paquete nuevo", names, `\`${command}\``);
+      if (names.length) return approveDependency(task, ctx, "Install new package", names, `\`${command}\``);
       return;
     }
     if (event.toolName !== "write" && event.toolName !== "edit") return;
@@ -112,9 +112,9 @@ export function registerTriggers(pi: ExtensionAPI) {
     if (IGNORED.some((d) => file.startsWith(d))) return;
 
     if (!inScope(task, file)) {
-      const pick = await ctx.ui.select(`El agente quiere tocar un archivo fuera del plan: ${file}`, ["Permitir este archivo", "Permitir toda la carpeta", "Bloquear"]);
-      if (pick === "Permitir este archivo" || pick === "Permitir toda la carpeta") {
-        const entry = pick === "Permitir este archivo" ? file : `${path.posix.dirname(file)}/`;
+      const pick = await ctx.ui.select(`The agent wants to touch a file outside the plan: ${file}`, ["Allow this file", "Allow the whole folder", "Block"]);
+      if (pick === "Allow this file" || pick === "Allow the whole folder") {
+        const entry = pick === "Allow this file" ? file : `${path.posix.dirname(file)}/`;
         await updateTask(ctx.cwd, (t) => void t.allowedExtra.push(entry));
       } else return { block: true, reason: `${file} is outside the approved plan and the user blocked it. Stay within the plan files, or ask the user to extend the plan.` };
     }
@@ -128,12 +128,12 @@ export function registerTriggers(pi: ExtensionAPI) {
         after = next === undefined ? undefined : dependencyNames(file, next);
       }
       const added = before && after ? [...after].filter((n) => !before.has(n)) : undefined;
-      if (added === undefined || added.length) return approveDependency(task, ctx, added ? `Dependencia nueva en ${file}` : `Esta edición toca dependencias en ${file}`, added, `Edit of \`${file}\``);
+      if (added === undefined || added.length) return approveDependency(task, ctx, added ? `New dependency in ${file}` : `This edit touches dependencies in ${file}`, added, `Edit of \`${file}\``);
     }
 
     if (isMigration(file) && !approvedMigrations.has(file)) {
-      const pick = await ctx.ui.select(`Cambio de esquema o migración: ${file}`, ["Aprobar", "Bloquear"]);
-      if (pick !== "Aprobar") return BLOCK(`the schema/migration change in ${file}`);
+      const pick = await ctx.ui.select(`Schema change or migration: ${file}`, ["Approve", "Block"]);
+      if (pick !== "Approve") return BLOCK(`the schema/migration change in ${file}`);
       approvedMigrations.add(file);
     }
   });

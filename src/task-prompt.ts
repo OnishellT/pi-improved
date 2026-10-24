@@ -7,14 +7,14 @@ export const planText = (p: Plan) =>
   [
     p.summary,
     "",
-    "Pasos:",
+    "Steps:",
     ...p.steps.map((s, i) => `${i + 1}. ${s}`),
     "",
-    "Archivos:",
+    "Files:",
     ...p.files.map((f) => `- ${f}`),
-    ...(p.interface?.length ? ["", "Interfaz:", ...p.interface.map((i) => `- ${i.file}: ${[...i.exports, ...(i.signatures ?? [])].join(", ")}${i.source ? ` (${i.source})` : ""}`)] : []),
-    ...(p.seams?.length ? ["", "Seams:", ...p.seams.map((x) => `- ${x.name} → ${x.testFile}: ${x.catches}${x.misses ? ` (no cubre: ${x.misses})` : ""}`)] : []),
-    ...(p.decisions.length ? ["", "Decisiones:", ...p.decisions.map((d) => `- ${d.question} → ${d.answer ?? `ver ${d.source}`}`)] : []),
+    ...(p.interface?.length ? ["", "Interface:", ...p.interface.map((i) => `- ${i.file}: ${[...i.exports, ...(i.signatures ?? [])].join(", ")}${i.source ? ` (${i.source})` : ""}`)] : []),
+    ...(p.seams?.length ? ["", "Seams:", ...p.seams.map((x) => `- ${x.name} → ${x.testFile}: ${x.catches}${x.misses ? ` (misses: ${x.misses})` : ""}`)] : []),
+    ...(p.decisions.length ? ["", "Decisions:", ...p.decisions.map((d) => `- ${d.question} → ${d.answer ?? `see ${d.source}`}`)] : []),
   ].join("\n");
 
 export function taskPrompt(title: string, ticket: string | undefined, tracker: string | undefined, related: string[], skills = "", spec: string[] = []) {

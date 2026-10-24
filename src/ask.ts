@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-const OTHER = "✏️  Otra respuesta…";
+const OTHER = "✏️  Other answer…";
 
 const Question = Type.Object({
   question: Type.String({ description: "One concrete question" }),

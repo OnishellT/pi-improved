@@ -34,19 +34,19 @@ export async function assessRisk(exec: Exec, root: string, task: Task | undefine
   const total = [...lines.values()].reduce((a, b) => a + b, 0);
 
   const reasons: string[] = [];
-  if (total > MAX_LINES) reasons.push(`${total} líneas cambiadas`);
-  if (files.length > MAX_FILES) reasons.push(`${files.length} archivos`);
+  if (total > MAX_LINES) reasons.push(`${total} lines changed`);
+  if (files.length > MAX_FILES) reasons.push(`${files.length} files`);
   const pick = (test: (f: string) => boolean) => files.filter(test).slice(0, 3).join(", ");
   const deps = pick((f) => isManifest(f) || DEPENDENCIES.test(f));
   if (deps) reasons.push(`dependencias (${deps})`);
   const migrations = pick(isMigration);
-  if (migrations) reasons.push(`migración (${migrations})`);
+  if (migrations) reasons.push(`migration (${migrations})`);
   const globs = (rule?.paths ?? []).map(globRegex);
   const matched = pick((f) => globs.some((g) => g.test(f)));
   if (matched) reasons.push(`review.paths (${matched})`);
   const sensitive = pick((f) => SENSITIVE.test(f));
   if (sensitive) reasons.push(`zona sensible (${sensitive})`);
-  if (!task?.plan) reasons.push("sin plan");
-  else if (task.plan.decisions.some((d) => d.status === "decided")) reasons.push("decisiones nuevas del usuario");
+  if (!task?.plan) reasons.push("no plan");
+  else if (task.plan.decisions.some((d) => d.status === "decided")) reasons.push("new user decisions");
   return { review: reasons.length > 0, reasons };
 }

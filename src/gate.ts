@@ -92,12 +92,12 @@ export function registerGate(pi: ExtensionAPI) {
       if (!risk.review) {
         wanted = false;
         reviews++;
-        ctx.ui.notify(`Revisión omitida (bajo riesgo): ${risk.reasons.join("; ") || "diff pequeño y sin zonas sensibles"}`, "info");
+        ctx.ui.notify(`Review skipped (low risk): ${risk.reasons.join("; ") || "small diff outside sensitive areas"}`, "info");
         pi.events.emit(REVIEW_EVENT, { root: ctx.cwd, status: "skipped-low-risk", model: reviewModel, seconds: 0, cost: 0 } satisfies ReviewPayload);
       }
     }
     const reviewing = wanted && task && reviewModel ? review(ctx.cwd, task, reviewModel, abort.signal) : undefined;
-    if (reviewing) ctx.ui.setStatus("review", `revisando el diff con ${reviewModel}…`);
+    if (reviewing) ctx.ui.setStatus("review", `reviewing the diff with ${reviewModel}…`);
     const clearStatus = () => ctx.ui.setStatus("review", undefined);
     const { ok, report, policy } = await verify(manifest.verify, ctx.cwd, true);
     if (!ok) {
@@ -114,12 +114,12 @@ export function registerGate(pi: ExtensionAPI) {
           const content = "The user approved the agentlint exception and it is recorded. Do not change the code: finish so verify runs again.";
           return { entries: [{ type: "custom_message", customType: "verify-gate", content, display: true }], continue: true };
         }
-        if (outcome === "failed") ctx.ui.notify("No pude registrar la excepción de agentlint; el modelo sigue.", "warning");
+        if (outcome === "failed") ctx.ui.notify("Could not record the agentlint exception. The model continues.", "warning");
       }
       if (retries >= MAX_RETRIES) {
         if (!ctx.hasUI) return deescalate(ctx).then(() => undefined);
-        const choice = await ctx.ui.select("La verificación sigue fallando tras varios intentos. ¿Qué hacemos?", ["Seguir intentando", "Dejarlo así"]);
-        if (choice !== "Seguir intentando") return deescalate(ctx).then(() => undefined);
+        const choice = await ctx.ui.select("Verification still fails after several attempts. What now?", ["Keep trying", "Leave it as is"]);
+        if (choice !== "Keep trying") return deescalate(ctx).then(() => undefined);
       } else retries++;
       if (!policy) failures++;
       const target = manifest.models?.escalate ?? manifest.models?.review ?? manifest.models?.setup;
@@ -127,7 +127,7 @@ export function registerGate(pi: ExtensionAPI) {
         const switched = await switchModel(pi, ctx, target);
         if (switched) {
           escalatedFrom = switched.previous;
-          ctx.ui.notify(`verify falló ${ESCALATE_AFTER} veces: este intento lo hace ${switched.model}`, "warning");
+          ctx.ui.notify(`verify failed ${ESCALATE_AFTER} times: ${switched.model} takes this attempt`, "warning");
           pi.events.emit(ESCALATE_EVENT, { root: ctx.cwd, model: switched.model } satisfies EscalatePayload);
         }
       }
@@ -145,8 +145,8 @@ export function registerGate(pi: ExtensionAPI) {
     await deescalate(ctx);
     if (reviewing) {
       const review = await reviewing.finally(clearStatus);
-      if (review.status === "skipped") ctx.ui.notify(`Revisión omitida: ${review.report}`, "warning");
-      else ctx.ui.notify(review.status === "approved" ? "Revisión del diff: aprobada." : "Revisión del diff: pidió cambios. El agente los corrige.", review.status === "approved" ? "info" : "warning");
+      if (review.status === "skipped") ctx.ui.notify(`Review skipped: ${review.report}`, "warning");
+      else ctx.ui.notify(review.status === "approved" ? "Diff review: approved." : "Diff review: changes requested. The agent fixes them.", review.status === "approved" ? "info" : "warning");
       reviews++;
       // One round: the fixes are checked by verify, not by another paid review.
       if (review.status === "changes") {
@@ -155,7 +155,7 @@ export function registerGate(pi: ExtensionAPI) {
         return { entries: [{ type: "custom_message", customType: "diff-review", content, display: true }], continue: true };
       }
     }
-    if (task?.status === "implementing" && ctx.hasUI && (await ctx.ui.confirm("Verificación OK", `¿Terminó la tarea "${task.title}"?`))) {
+    if (task?.status === "implementing" && ctx.hasUI && (await ctx.ui.confirm("Verification OK", `Is the task "${task.title}" done?`))) {
       const done = await updateTask(ctx.cwd, (t) => {
         t.status = "done";
         t.completedAt = new Date().toISOString();
@@ -165,10 +165,10 @@ export function registerGate(pi: ExtensionAPI) {
   });
 
   pi.registerCommand("verify", {
-    description: "Ejecuta los pasos de verificación del proyecto",
+    description: "Run the project's verification steps",
     handler: async (_args, ctx) => {
       const { verify: steps } = await readManifest(ctx.cwd);
-      if (!steps.length) return ctx.ui.notify("No hay pasos de verificación configurados.", "warning");
+      if (!steps.length) return ctx.ui.notify("No verification steps configured.", "warning");
       const { ok, report } = await verify(steps, ctx.cwd);
       ctx.ui.notify(report, ok ? "info" : "error");
     },

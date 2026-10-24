@@ -14,7 +14,7 @@ import { formatVerify, runVerify } from "./verify.ts";
 const MAX_NUDGES = 2;
 const START_TIMEOUT = 30_000;
 const MAX_VERIFY_FAILURES = 3;
-const NONE = "Ninguno más";
+const NONE = "No more";
 
 /** Returns what is missing from the setup output; empty means complete. */
 export async function checkOutputs(root: string, verify: string[]): Promise<string[]> {
@@ -45,17 +45,17 @@ async function chooseConnectors(ctx: ExtensionContext, signals: ConnectorSignal[
   for (const signal of signals) {
     const c = connectorById(signal.id);
     if (!c || enabled.has(c.id)) continue;
-    if (await ctx.ui.confirm(`¿Conectar ${c.name}?`, `Lo detecté porque ${signal.evidence}.\nLo usaría en modo solo lectura para ${c.purpose}.`)) enable(c.id);
+    if (await ctx.ui.confirm(`Connect ${c.name}?`, `Detected because ${signal.evidence}.\nWould be used read-only for ${c.purpose}.`)) enable(c.id);
   }
   for (;;) {
     const rest = CATALOG.filter((c) => !enabled.has(c.id));
     if (!rest.length) break;
-    const pick = await ctx.ui.select("¿El proyecto usa algún otro servicio?", [NONE, ...rest.map((c) => c.name)]);
+    const pick = await ctx.ui.select("Does the project use any other service?", [NONE, ...rest.map((c) => c.name)]);
     if (!pick || pick === NONE) break;
     enable(rest.find((c) => c.name === pick)!.id);
   }
   for (const c of enabled.values()) {
-    if (!c.mcp) ctx.ui.notify(`${connectorById(c.id)?.name ?? c.id}: configúralo en ~/.pi/agent/mcp.json con el nombre "${c.id}" y lo usaré.`, "warning");
+    if (!c.mcp) ctx.ui.notify(`${connectorById(c.id)?.name ?? c.id}: configure it in ~/.pi/agent/mcp.json under the name "${c.id}" and it will be used.`, "warning");
   }
   return [...enabled.values()];
 }
@@ -80,10 +80,10 @@ async function chooseAgentlint(ctx: ExtensionContext, found: Discovery) {
   if (found.agentlint) return agentlintCmd(found.packageManager);
   if (!found.stacks.includes("node")) return undefined;
   const pick = await ctx.ui.select(
-    "¿Convierto las reglas más importantes de AGENTS.md en reglas de agentlint?\nBloquean el final de cada tarea hasta que se cumplan o alguien acepte la excepción con una razón. Tú eliges cuáles.",
-    ["Sí (recomendado)", "No"],
+    "Turn the most important AGENTS.md rules into agentlint rules?\nThey block the end of every task until met or someone accepts the exception with a reason. You choose which.",
+    ["Yes (recommended)", "No"],
   );
-  return pick === "Sí (recomendado)" ? agentlintCmd(found.packageManager) : undefined;
+  return pick === "Yes (recommended)" ? agentlintCmd(found.packageManager) : undefined;
 }
 
 function registerConnectors(pi: ExtensionAPI, connectors: EnabledConnector[]) {
@@ -107,17 +107,17 @@ export function registerSetup(pi: ExtensionAPI) {
   const setupRunning = async (cwd: string) => (await readManifest(cwd).catch(() => undefined))?.setup === "running";
 
   pi.registerCommand("setup", {
-    description: "Prepara el proyecto para el agente: escaneo, entrevista, conectores, docs y verify",
+    description: "Prepare the project for the agent: scan, interview, connectors, docs and verify",
     handler: async (_args, ctx) => {
-      if (!ctx.hasUI) return ctx.ui.notify("/setup necesita la interfaz interactiva.", "error");
+      if (!ctx.hasUI) return ctx.ui.notify("/setup needs the interactive UI.", "error");
       const root = ctx.cwd;
       let manifest = await readManifest(root);
-      if (manifest.setup === "done" && !(await ctx.ui.confirm("Este proyecto ya tiene setup", "¿Quieres actualizarlo?"))) return;
+      if (manifest.setup === "done" && !(await ctx.ui.confirm("This project already has setup", "Update it?"))) return;
 
       const resuming = manifest.setup !== "done" && Boolean(manifest.startedAt);
-      ctx.ui.setStatus("setup", "setup: escaneando el repo…");
+      ctx.ui.setStatus("setup", "setup: scanning the repo…");
       const found = await discover(root, run);
-      const language = manifest.language ?? (await ctx.ui.select("¿En qué idioma escribo preguntas y documentación?", ["Español", "English"]));
+      const language = manifest.language ?? (await ctx.ui.select("Which language for questions and docs?", ["Español", "English"]));
       if (!language) return ctx.ui.setStatus("setup", undefined);
       const connectors = await chooseConnectors(ctx, found.connectors, manifest.connectors);
       const agentlint = manifest.agentlint ?? (await chooseAgentlint(ctx, found));
@@ -134,7 +134,7 @@ export function registerSetup(pi: ExtensionAPI) {
       nudges = 0;
       verifyFailures = 0;
 
-      ctx.ui.setStatus("setup", "setup: el agente está documentando el proyecto…");
+      ctx.ui.setStatus("setup", "setup: the agent is documenting the project…");
       const previous = await usePhaseModel(pi, ctx, "setup");
       // sendUserMessage does not wait for the run: idle before it starts would restore the model before the first call.
       const started = new Promise<void>((resolve) => {
@@ -186,19 +186,19 @@ export function registerSetup(pi: ExtensionAPI) {
         verifyFailures++;
         const report = formatVerify(result);
         if (verifyFailures < MAX_VERIFY_FAILURES) throw new Error(`${report}\n\nFix the cause (or the verify steps, if they are wrong) and call setup_finish again.`);
-        const choice = await ctx.ui.select(`verify falló ${verifyFailures} veces. ¿Qué hago?`, ["Seguir intentando", "Terminar igual (verify queda pendiente)", "Pausar el setup"]);
-        if (choice === "Seguir intentando") throw new Error(`${report}\n\nThe user asked you to keep trying.`);
-        if (choice !== "Terminar igual (verify queda pendiente)") {
+        const choice = await ctx.ui.select(`verify failed ${verifyFailures} times. What now?`, ["Keep trying", "Finish anyway (verify stays pending)", "Pause setup"]);
+        if (choice === "Keep trying") throw new Error(`${report}\n\nThe user asked you to keep trying.`);
+        if (choice !== "Finish anyway (verify stays pending)") {
           await updateManifest(root, (m) => void (m.setup = "pending"));
           return { content: [{ type: "text", text: "The user paused setup. Stop here." }], details: undefined, terminate: true };
         }
-        verifyNote = "\n\n⚠️  verify todavía falla.";
+        verifyNote = "\n\n⚠️  verify still fails.";
       }
 
-      const changed = (await run("git", ["-C", root, "status", "--porcelain", "--untracked-files=all"])).trim() || "(sin cambios detectados por git)";
-      const approved = await ctx.ui.confirm("¿Apruebas el setup?", `${summary}${verifyNote}\n\nArchivos:\n${changed}\n\nPuedes revisarlo con git diff antes de responder.`);
+      const changed = (await run("git", ["-C", root, "status", "--porcelain", "--untracked-files=all"])).trim() || "(no changes detected by git)";
+      const approved = await ctx.ui.confirm("Approve the setup?", `${summary}${verifyNote}\n\nFiles:\n${changed}\n\nReview it with git diff before answering.`);
       if (!approved) {
-        const feedback = await ctx.ui.input("¿Qué hay que cambiar?");
+        const feedback = await ctx.ui.input("What should change?");
         throw new Error(`The user did not approve. Feedback: ${feedback || "(none)"}. Apply it and call setup_finish again.`);
       }
 
@@ -240,9 +240,9 @@ export function registerSetup(pi: ExtensionAPI) {
     if (event.reason !== "startup" || ctx.mode !== "tui" || manifest.setup === "done" || manifest.setup === "declined") return;
     if (!(await isProject(ctx.cwd))) return;
 
-    const question = manifest.startedAt ? "Hay un setup a medias. ¿Lo continúo?" : "Este proyecto no tiene setup del agente. ¿Lo hago ahora?";
-    const choice = await ctx.ui.select(question, ["Sí", "Más tarde", "No volver a preguntar"]);
-    if (choice === "Sí") pi.sendUserMessage("/setup", { expandPromptTemplates: true });
+    const question = manifest.startedAt ? "A setup is half done. Continue it?" : "This project has no agent setup. Do it now?";
+    const choice = await ctx.ui.select(question, ["Yes", "Later", "Don't ask again"]);
+    if (choice === "Yes") pi.sendUserMessage("/setup", { expandPromptTemplates: true });
     else if (choice === "No volver a preguntar") await updateManifest(ctx.cwd, (m) => void (m.setup = "declined"));
   });
 }

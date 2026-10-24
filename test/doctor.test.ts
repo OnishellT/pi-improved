@@ -32,7 +32,7 @@ test("session_start warns once, only with a UI, and only when something is missi
   const t = await setup(() => ({ code: 0 }));
   await t.emit("session_start", { reason: "startup" }, t.ctx);
   assert.equal(t.notes.length, 1);
-  assert.match(t.notes[0].msg, /Modelos/);
+  assert.match(t.notes[0].msg, /Models/);
   await t.emit("session_start", { reason: "startup" }, t.ctx);
   assert.equal(t.notes.length, 1);
 });

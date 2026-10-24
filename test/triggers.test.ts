@@ -66,7 +66,7 @@ test("in-scope write and ignored paths: no prompt", async () => {
 });
 
 test("out-of-scope: allow file, allow folder, block", async () => {
-  const s = await setup({}, ["Permitir este archivo", "Permitir toda la carpeta", "Bloquear"]);
+  const s = await setup({}, ["Allow this file", "Allow the whole folder", "Block"]);
   assert.equal(await s.run("write", { path: "src/b.ts", content: "" }), undefined);
   assert.deepEqual((await readTask(s.root))!.allowedExtra, ["src/b.ts"]);
   assert.equal(await s.run("write", { path: path.join(s.root, "lib/c.ts"), content: "" }), undefined);
@@ -77,7 +77,7 @@ test("out-of-scope: allow file, allow folder, block", async () => {
 });
 
 test("npm add: ADR on approve, block otherwise", async () => {
-  const s = await setup({}, ["Aprobar y registrar ADR", "Bloquear"]);
+  const s = await setup({}, ["Approve and record ADR", "Block"]);
   assert.equal(await s.run("bash", { command: "npm add zod" }), undefined);
   const adr = (await fs.readdir(path.join(s.root, "docs/adr")))[0];
   assert.match(await fs.readFile(path.join(s.root, "docs/adr", adr), "utf8"), /Add dependency zod[\s\S]*Add thing[\s\S]*npm add zod/);
@@ -87,7 +87,7 @@ test("npm add: ADR on approve, block otherwise", async () => {
 
 test("package.json edits: new dep prompts, unchanged deps do not", async () => {
   const pkg = JSON.stringify({ dependencies: { a: "1" } });
-  const s = await setup({ "package.json": pkg }, ["Permitir este archivo", "Aprobar y registrar ADR", "Bloquear"]);
+  const s = await setup({ "package.json": pkg }, ["Allow this file", "Approve and record ADR", "Block"]);
   const write = (deps: object) => s.run("write", { path: "package.json", content: JSON.stringify({ dependencies: deps }) });
   assert.equal(await write({ a: "1", b: "2" }), undefined);
   assert.equal((await fs.readdir(path.join(s.root, "docs/adr"))).length, 1);
@@ -100,7 +100,7 @@ test("package.json edits: new dep prompts, unchanged deps do not", async () => {
 });
 
 test("migration asks once per file", async () => {
-  const s = await setup({}, ["Permitir este archivo", "Aprobar", "Permitir este archivo", "Bloquear"]);
+  const s = await setup({}, ["Allow this file", "Approve", "Allow this file", "Block"]);
   assert.equal(await s.run("write", { path: "db/migrate/1.rb", content: "" }), undefined);
   assert.equal(await s.run("write", { path: "db/migrate/1.rb", content: "x" }), undefined);
   assert.equal(s.ui.asked.length, 2);

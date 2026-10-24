@@ -112,12 +112,12 @@ export async function runSubagent(exec: Exec, root: string, opts: { name: string
   const { model, signal } = opts;
   const waitSeconds = opts.waitSeconds ?? WAIT_SECONDS;
   const slash = model.indexOf("/");
-  if (slash < 1 || slash === model.length - 1) return { ok: false, reason: `Modelo inválido: "${model}" (usa provider/model-id)` };
+  if (slash < 1 || slash === model.length - 1) return { ok: false, reason: `Invalid model: "${model}" (use provider/model-id)` };
   const [provider, id] = [model.slice(0, slash), model.slice(slash + 1)];
   let dir: string | undefined;
   let handle: string | undefined;
   let cost: number | undefined;
-  const cancelled = (): SubagentRun => ({ ok: false, reason: "cancelado", cancelled: true });
+  const cancelled = (): SubagentRun => ({ ok: false, reason: "cancelled", cancelled: true });
   const fail = (reason: string): SubagentRun => ({ ok: false, reason });
   const result = await attempt();
   return cost === undefined ? result : { ...result, cost };
@@ -134,17 +134,17 @@ export async function runSubagent(exec: Exec, root: string, opts: { name: string
       ["spawn", "--name", opts.name, "--provider", provider, "--model", id, "--thinking", "medium", "--tools", "read,grep,find,ls", "--cwd", root, "--file", brief, "--prompt", opts.prompt],
       { cwd: root, timeout: 60_000 },
     );
-    if (spawn.code !== 0) return fail(`No se pudo lanzar el subagente: ${(spawn.stderr || spawn.stdout).trim().slice(0, 300) || `código ${spawn.code}`}`);
+    if (spawn.code !== 0) return fail(`Could not launch the subagent: ${(spawn.stderr || spawn.stdout).trim().slice(0, 300) || `code ${spawn.code}`}`);
     handle = /\(([0-9a-f]+)\)/.exec(spawn.stdout)?.[1] ?? /Spawned (\S+)/.exec(spawn.stdout)?.[1];
-    if (!handle) return fail("No se pudo leer el identificador del subagente.");
+    if (!handle) return fail("Could not read the subagent handle.");
     if (signal?.aborted) return cancelled();
 
     const wait = await exec(resolveBin("subagent"), ["wait", handle, "--timeout", String(waitSeconds)], { cwd: root, timeout: (waitSeconds + 30) * 1000, signal });
     if (signal?.aborted) return cancelled();
-    if (wait.code !== 0 || wait.killed) return fail(`El subagente falló: ${(wait.stderr || wait.stdout).trim().slice(0, 300) || "sin respuesta"}`);
+    if (wait.code !== 0 || wait.killed) return fail(`The subagent failed: ${(wait.stderr || wait.stdout).trim().slice(0, 300) || "no response"}`);
     return { ok: true, output: wait.stdout };
   } catch (error: any) {
-    return signal?.aborted ? cancelled() : fail(`No se pudo ejecutar: ${error?.message ?? error}`);
+    return signal?.aborted ? cancelled() : fail(`Could not run: ${error?.message ?? error}`);
   } finally {
     if (handle) {
       cost = await subagentCost(handle);
@@ -161,9 +161,9 @@ export async function reviewDiff(exec: Exec, root: string, task: Task, model: st
   try {
     diff = await collectDiff(exec, root);
   } catch (error: any) {
-    return skipped(`La revisión no se pudo ejecutar: ${error?.message ?? error}`);
+    return skipped(`The review could not run: ${error?.message ?? error}`);
   }
-  if (!diff.diff.trim() && !diff.untracked.length) return skipped("No hay cambios que revisar.");
+  if (!diff.diff.trim() && !diff.untracked.length) return skipped("No changes to review.");
   const run = await runSubagent(exec, root, {
     name: "review",
     model,
@@ -172,6 +172,6 @@ export async function reviewDiff(exec: Exec, root: string, task: Task, model: st
     prompt: "Review the diff in the attached brief. End with VERDICT: APPROVED or VERDICT: CHANGES and a numbered findings list.",
   });
   const withCost = (r: ReviewResult): ReviewResult => (run.cost === undefined ? r : { ...r, cost: run.cost });
-  if (!run.ok) return withCost(run.cancelled ? { status: "skipped", report: "Revisión cancelada: el diff cambió.", cancelled: true } : skipped(`La revisión falló: ${run.reason}`));
-  return withCost(parseVerdict(run.output) ?? skipped("La revisión no incluyó un veredicto."));
+  if (!run.ok) return withCost(run.cancelled ? { status: "skipped", report: "Review cancelled: the diff changed.", cancelled: true } : skipped(`The review failed: ${run.reason}`));
+  return withCost(parseVerdict(run.output) ?? skipped("The review did not include a verdict."));
 }

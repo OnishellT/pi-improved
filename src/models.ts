@@ -3,12 +3,12 @@ import { readManifest, updateManifest, type PhaseModels } from "./manifest.ts";
 
 const PHASES = [
   ["setup", "Setup"],
-  ["implement", "Implementación"],
-  ["review", "Revisión"],
-  ["escalate", "Cuando verify se traba"],
+  ["implement", "Implement"],
+  ["review", "Review"],
+  ["escalate", "When verify gets stuck"],
 ] as const satisfies readonly (readonly [keyof PhaseModels, string])[];
-const SESSION = "Usar el modelo de la sesión";
-const KEEP = "Sin cambios";
+const SESSION = "Use the session model";
+const KEEP = "No changes";
 const MAX_FLAT = 15;
 
 const idOf = (m: { provider: string; id: string }) => `${m.provider}/${m.id}`;
@@ -24,17 +24,17 @@ export async function usePhaseModel(pi: ExtensionAPI, ctx: ExtensionContext, pha
     const slash = wanted.indexOf("/");
     const model = slash > 0 ? registry.find(wanted.slice(0, slash), wanted.slice(slash + 1)) : undefined;
     if (!model || !registry.getAvailable().some((m) => idOf(m) === wanted)) {
-      ctx.ui.notify(`Modelo para ${phase}: ${wanted} no está disponible (¿falta iniciar sesión?). Sigo con el modelo actual.`, "warning");
+      ctx.ui.notify(`Model for ${phase}: ${wanted} is not available (not logged in?). Continuing with the current model.`, "warning");
       return undefined;
     }
     if (!(await pi.setModel(model))) {
-      ctx.ui.notify(`No pude cambiar a ${wanted}. Sigo con el modelo actual.`, "warning");
+      ctx.ui.notify(`Could not switch to ${wanted}. Continuing with the current model.`, "warning");
       return undefined;
     }
-    ctx.ui.notify(`Modelo para ${phase}: ${wanted}`, "info");
+    ctx.ui.notify(`Model for ${phase}: ${wanted}`, "info");
     return current ? idOf(current) : undefined;
   } catch (error: any) {
-    ctx.ui.notify(`No pude elegir el modelo para ${phase}: ${error.message}`, "warning");
+    ctx.ui.notify(`Could not pick the model for ${phase}: ${error.message}`, "warning");
     return undefined;
   }
 }
@@ -65,27 +65,27 @@ async function pickModel(ctx: ExtensionContext, label: string, ids: string[]) {
   let list = ids;
   if (ids.length > MAX_FLAT) {
     const providers = [...new Set(ids.map((id) => id.split("/")[0]))];
-    const provider = await ctx.ui.select(`${label}: ¿de qué proveedor?`, [KEEP, SESSION, ...providers]);
+    const provider = await ctx.ui.select(`${label}: which provider?`, [KEEP, SESSION, ...providers]);
     if (!provider || provider === KEEP || provider === SESSION) return provider;
     list = ids.filter((id) => id.startsWith(`${provider}/`));
   }
-  return ctx.ui.select(`${label}: ¿qué modelo?`, [KEEP, SESSION, ...list]);
+  return ctx.ui.select(`${label}: which model?`, [KEEP, SESSION, ...list]);
 }
 
 export function registerModels(pi: ExtensionAPI) {
   pi.registerCommand("models", {
-    description: "Elige el modelo de cada fase: setup, implementación y revisión",
+    description: "Pick the model for each phase: setup, implement, review and escalate",
     handler: async (_args, ctx) => {
       const root = ctx.cwd;
       const current = (await readManifest(root)).models ?? {};
       const available = ctx.modelRegistry?.getAvailable().map(idOf).sort() ?? [];
-      if (!available.length) return ctx.ui.notify("No hay modelos disponibles. Inicia sesión con /login.", "error");
-      const summary = PHASES.map(([key, name]) => `${name}: ${current[key] ?? "modelo de la sesión"}`).join("\n");
+      if (!available.length) return ctx.ui.notify("No models available. Log in with /login.", "error");
+      const summary = PHASES.map(([key, name]) => `${name}: ${current[key] ?? "session model"}`).join("\n");
       ctx.ui.notify(summary, "info");
 
       const next: PhaseModels = { ...current };
       for (const [key, name] of PHASES) {
-        const pick = await pickModel(ctx, `${name} (ahora: ${current[key] ?? "modelo de la sesión"})`, available);
+        const pick = await pickModel(ctx, `${name} (now: ${current[key] ?? "session model"})`, available);
         if (!pick || pick === KEEP) continue;
         if (pick === SESSION) delete next[key];
         else next[key] = pick;
@@ -94,7 +94,7 @@ export function registerModels(pi: ExtensionAPI) {
         if (Object.keys(next).length) m.models = next;
         else delete m.models;
       });
-      ctx.ui.notify(PHASES.map(([key, name]) => `${name}: ${next[key] ?? "modelo de la sesión"}`).join("\n"), "info");
+      ctx.ui.notify(PHASES.map(([key, name]) => `${name}: ${next[key] ?? "session model"}`).join("\n"), "info");
     },
   });
 }

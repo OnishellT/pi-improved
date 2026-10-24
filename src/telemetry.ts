@@ -49,7 +49,7 @@ async function readRecords(root: string): Promise<any[]> {
 
 export async function metricsReport(root: string): Promise<string> {
   const records = (await readRecords(root)).filter((r) => r.metrics);
-  if (!records.length) return "Sin métricas todavía: se guardan al terminar cada tarea.";
+  if (!records.length) return "No metrics yet: they are saved when each task ends.";
   const rows = records.slice(-10).map((r) => {
     const phases = Object.values<any>(r.metrics.phases ?? {});
     const sum = (k: string) => phases.reduce((s, p) => s + (p[k] ?? 0), 0);
@@ -64,7 +64,7 @@ export async function metricsReport(root: string): Promise<string> {
   const paid = all.filter((x) => x.status !== "skipped-low-risk" && !String(x.status).startsWith("plan-") && x.cost !== undefined);
   const avoided = all.filter((x) => x.status === "skipped-low-risk").length;
   const mean = paid.length ? paid.reduce((s, x) => s + x.cost, 0) / paid.length : 0;
-  return [`Últimas ${rows.length} tareas (id, coste, tokens in+out, segundos, fallos de verify, revisiones):`, ...lines, `Coste medio por tarea: $${avg.toFixed(3)}`, `Revisiones evitadas: ${avoided} (≈ $${(avoided * mean).toFixed(2)} ahorrados)`].join("\n");
+  return [`Last ${rows.length} tasks (id, cost, tokens in+out, seconds, verify failures, reviews):`, ...lines, `Mean cost per task: $${avg.toFixed(3)}`, `Reviews avoided: ${avoided} (≈ $${(avoided * mean).toFixed(2)} saved)`].join("\n");
 }
 
 /**
@@ -127,7 +127,7 @@ export function registerTelemetry(pi: ExtensionAPI) {
   pi.events?.on(ESCALATE_EVENT, (d) => bump((d as EscalatePayload).root, (m) => void m.escalations++));
 
   pi.registerCommand("metrics", {
-    description: "Coste, tokens y tiempo de las últimas tareas",
+    description: "Cost, tokens and time of the latest tasks",
     handler: async (_args, ctx) => ctx.ui.notify(await metricsReport(ctx.cwd), "info"),
   });
 }

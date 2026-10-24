@@ -96,8 +96,8 @@ test("an agentlint exception needs the user's approval", async () => {
   registerGuards(pi);
   const call = (answer: string) =>
     emit("tool_call", { toolName: "bash", input: { command: 'npm exec agentlint -- accept 1 --reason "ok"' } }, { cwd: "/", hasUI: true, ui: fakeUI([answer]) });
-  assert.equal((await call("Bloquear: que lo corrija"))?.block, true);
-  assert.equal(await call("Aprobar la excepción"), undefined);
+  assert.equal((await call("Block: make it fix the code"))?.block, true);
+  assert.equal(await call("Approve the exception"), undefined);
 });
 
 test("the model cannot rewrite the workflow state files", async () => {
