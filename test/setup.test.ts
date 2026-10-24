@@ -136,3 +136,14 @@ test("ask_user batches questions and supports a free-text answer", async () => {
   );
   assert.deepEqual(result.details.answers.map((a: any) => a.answer), ["Postgres", "Equipo de pagos"]);
 });
+
+test("the startup offer: \"Don't ask again\" declines setup for good, \"Later\" does not, \"Yes\" runs /setup", async () => {
+  for (const [choice, declined, sent] of [["Don't ask again", true, 0], ["Later", false, 0], ["Yes", false, 1]] as const) {
+    const root = await tempProject({ ".git/HEAD": "ref: refs/heads/main\n" });
+    const { pi, emit, sent: messages } = fakePi();
+    registerSetup(pi);
+    await emit("session_start", { reason: "startup" }, ctxFor(root, [choice]).ctx);
+    assert.equal((await readManifest(root)).setup === "declined", declined, choice);
+    assert.equal(messages.length, sent, choice);
+  }
+});
