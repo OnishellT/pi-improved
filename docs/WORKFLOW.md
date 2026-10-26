@@ -52,7 +52,7 @@ It then calls `task_plan` with:
 Two checks run before the person is asked to approve:
 
 - **Verified names** (`src/contract.ts`). Each `interface` name must appear literally, as a word, in its cited source: ticket text read via MCP, spec files named in `/task`, docs, or existing code. A new file needs every word of its name in that source. Anything absent counts as invented and is asked. Plain text, any language.
-- **Plan check** (`src/plan-check.ts`). A read-only child with the `review` (or `setup`) model reads the ticket, interface and sibling files. It returns `VERDICT: OK` or a fix list: names that break the folder convention, argument shapes that differ from the ticket's, existing helpers being duplicated, invalid inputs left uncovered. Once per task. On fixes, the orchestrator corrects the plan and calls `task_plan` again. `"review": { "plan": false }` turns it off.
+- **Plan check** (`src/plan-check.ts`). A read-only child with the `review` (or `setup`) model reads the ticket, interface and sibling files. It returns `VERDICT: OK` or a fix list: names that break the folder convention, argument shapes that differ from the ticket's, existing helpers being duplicated, invalid inputs left uncovered. Once per task. Off by default: it runs only with `"review": { "plan": true }`, `review.always`, or `review.minLevel` `low`/`high` when the plan touches high-risk files (dependencies, migrations, `review.paths`, sensitive zones). `"plan": false` turns it off; `always` beats `never`. On fixes, the orchestrator corrects the plan and calls `task_plan` again.
 
 The person approves the plan once. `.pi/task.json` becomes `implementing`.
 
@@ -77,7 +77,7 @@ When the agent calls the task done, code does not believe it. In `agent_before_s
 1. **Interface contract.** Each plan export must appear in its file. If one is missing, the task returns to the agent without spending verify time or review money.
 2. **`verify`.** Commands from `.pi/workflow.json` run in order: fast ones first (compiler, typechecker, linter), then tests, then `verify-app`. `verify-app` exercises the functionality in the real environment with the tools setup left: open the screen in the headless browser, run the CLI command, call the endpoint, walk the TUI. Evidence goes to `.pi/evidence/`.
 
-The agent cannot close the task while `verify` is red. It gets 3 automatic retries, then the person decides. `/verify` runs it by hand. Commands come from the project, so the same flow serves TypeScript, Python, Go or anything else.
+The agent cannot close the task while `verify` is red. It gets 2 automatic retries (fix once, then escalate), then the person decides. `/verify` runs it by hand. Commands come from the project, so the same flow serves TypeScript, Python, Go or anything else.
 
 ## 5. agentlint
 
@@ -96,10 +96,10 @@ The `verify` report returns to the orchestrator with instructions. Pressure rise
 |---------|--------------|
 | 1st | "Fix it and finish." |
 | 2nd | `diagnosing-bugs` skill injected: reproduce, isolate, hypothesize, then touch code. |
-| 3rd | Switch to the `escalate` model (or `review`, or `setup`) for that attempt. |
-| More | The person decides: continue or drop. |
+| 2nd, too | Switch to the `escalate` model (or `review`, or `setup`) for that attempt. |
+| 3rd | The person decides: continue or drop. |
 
-When `verify` passes and the diff is risky (large, new dependencies, migrations, sensitive paths, new decisions), a read-only child with the `review` model reviews the diff against the plan, ADRs and `AGENTS.md`, following `pstack-blast-radius`. One round. If it asks for changes, the cheap model makes them and `verify` checks them, not another paid review. A small diff outside sensitive areas pays no review. Without tmux, or on failure, the review is skipped and the person is told.
+Risk is measured on every pass against the task's `baseCommit` (HEAD when it entered implementing, so commits the agent made still count): `git diff <base>` plus untracked files, falling back to `HEAD` without it. The level is `none`, `low` (over 200 lines or 6 files, no plan, new user decisions) or `high` (over 600 lines or 15 files, dependencies, migrations, `review.paths`, sensitive zones); `review.maxLines`, `maxFiles`, `highLines`, `highFiles` tune it. Level and reasons appear in the gate's final summary. A model review is requested only when the manifest opts in with `review.minLevel` `low` or `high` (default `off`) or `review.always`; `always` beats `never`. When requested, a read-only child with the `review` model reviews the diff against the plan, ADRs and `AGENTS.md`, following `pstack-blast-radius`. One round. If it asks for changes, the cheap model makes them and `verify` checks them, not another paid review. Below the configured level, no review is paid. Without tmux, or on failure, the review is skipped and the person is told.
 
 When the person confirms the task is done, a record goes to `.pi/memory/tasks.jsonl` (versioned). It feeds the planning of future tasks (stage 2). Every 5 tasks, a retro runs with the `retro` skill and the verification skill is reviewed with `pstack-maintain-verification-skill`.
 

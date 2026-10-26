@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { updateManifest } from "../src/manifest.ts";
 import { readTask, writeTask } from "../src/task-state.ts";
-import { registerTask } from "../src/task.ts";
+import { planCheckWanted, registerTask } from "../src/task.ts";
 import { fakePi, fakeUI, tempProject } from "./helpers.ts";
 
 const plan = (decisions: any[] = [], extra: any = {}) => ({
@@ -211,6 +211,7 @@ test("plan check: FIX sends the findings back once, the retry skips the paid che
   await updateManifest(root, (m) => {
     m.setup = "done";
     m.models = { review: "openai/gpt-6-astra" };
+    m.review = { plan: true };
   });
   const ctxFor = (answers: unknown[]) => {
     const ui = fakeUI(answers);
@@ -246,4 +247,28 @@ test("MCP tool results read while planning count as ticket evidence", async () =
   const { ctx, ui } = ctxFor([true]);
   await tools.get("task_plan").execute("1", plan([], { interface: [{ file: "src/fee.ts", exports: ["computeTotal"], source: "ticket" }] }), undefined, undefined, ctx);
   assert.equal(ui.asked.length, 1);
+});
+
+test("plan check is off by default and follows review.plan, review.always and risky plan files", () => {
+  const on = (review: any, files: string[] = ["src/fee.ts"]) => planCheckWanted({ version: 1, setup: "done", verify: [], connectors: [], review } as any, files);
+  assert.equal(on(undefined), false);
+  assert.equal(on({ minLevel: "off" }, ["package.json"]), false);
+  assert.equal(on({ minLevel: "high" }, ["package.json"]), true);
+  assert.equal(on({ minLevel: "high" }), false);
+  assert.equal(on({ plan: true }), true);
+  assert.equal(on({ plan: false, minLevel: "high" }, ["package.json"]), false);
+  assert.equal(on({ always: true, never: true, plan: false }), true);
+});
+
+test("approving the plan stores the HEAD commit as baseCommit", async () => {
+  const hash = "a".repeat(40);
+  const h = fakePi((cmd, args) => (cmd === "git" && args[0] === "rev-parse" ? { code: 0, stdout: `${hash}\n` } : { code: 0 }));
+  registerTask(h.pi);
+  const root = await tempProject({ "src/money.ts": "export const m = 1;\n" });
+  await updateManifest(root, (m) => void (m.setup = "done"));
+  const ui = fakeUI(["Accept the proposed names", true]);
+  const ctx = { cwd: root, hasUI: true, ui, waitForIdle: async () => {} } as any;
+  await h.commands.get("task").handler("Add fee", ctx);
+  await h.tools.get("task_plan").execute("1", { ...plan(), interface: [{ file: "src/fee.ts", exports: ["fee"], source: "user" }] }, undefined, undefined, ctx);
+  assert.equal((await readTask(root))!.baseCommit, hash);
 });

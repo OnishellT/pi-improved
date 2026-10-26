@@ -39,9 +39,10 @@ export interface Manifest {
   models?: PhaseModels;
   /** Bundled skill names per phase; a missing phase uses DEFAULT_SKILLS. */
   skills?: Partial<Record<Phase, string[]>>;
-  /** When the strong-model diff review runs. Default: only if the diff looks risky (size, dependencies, migrations, sensitive paths, new decisions).
-   *  `plan` (default true): one short strong-model check of the plan's interface before the user approves it. */
-  review?: { paths?: string[]; always?: boolean; never?: boolean; plan?: boolean };
+  /** Risk policy. The model review runs only when asked: `always`, or `minLevel` "low" (any risk) / "high" (high risk only); default "off".
+   *  `always` beats `never`. `plan` true adds the plan check for any plan, false turns it off (otherwise it runs only when risk asks for it).
+   *  `maxLines`/`maxFiles` set where "low" starts, `highLines`/`highFiles` where "high" starts. */
+  review?: { paths?: string[]; always?: boolean; never?: boolean; plan?: boolean; minLevel?: "off" | "low" | "high"; maxLines?: number; maxFiles?: number; highLines?: number; highFiles?: number };
 }
 
 export interface PhaseModels {

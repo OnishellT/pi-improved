@@ -47,6 +47,18 @@ test("approved verdict; brief has plan and diff; read-only spawn; run is stopped
   assert.ok(f.calls.some((c) => c.args[0] === "stop" && c.args[1] === "a1b2c3"));
 });
 
+test("the diff is taken against the task's baseCommit, HEAD without one", async () => {
+  const hash = "c".repeat(40);
+  const diffArgs = (calls: { cmd: string; args: string[] }[]) => calls.find((c) => c.cmd === "git" && c.args[0] === "diff")!.args[1];
+  const withBase = fakeExec();
+  await reviewDiff(withBase.exec, "/repo", { ...task, baseCommit: hash } as any, "p/m");
+  assert.equal(diffArgs(withBase.calls), hash);
+  assert.match(withBase.brief(), new RegExp(`## Diff \\(git diff ${hash}\\)`));
+  const without = fakeExec();
+  await reviewDiff(without.exec, "/repo", task as any, "p/m");
+  assert.equal(diffArgs(without.calls), "HEAD");
+});
+
 test("changes verdict keeps the findings", async () => {
   const f = fakeExec({ wait: { stdout: "h finished\n\nthinking\nVERDICT: CHANGES\n1. src/a.ts: null deref\n", stderr: "", code: 0, killed: false } });
   const r = await reviewDiff(f.exec, "/repo", task, "p/m");

@@ -5,6 +5,7 @@ import * as path from "node:path";
 import { resolveBin } from "./bin.ts";
 import type { Task } from "./task-state.ts";
 import { ensureTrusted } from "./subagent-ext.ts";
+import { diffBase } from "./risk.ts";
 import type { Exec } from "./verify.ts";
 
 export type ReviewStatus = "approved" | "changes" | "skipped";
@@ -21,12 +22,13 @@ const WAIT_SECONDS = 600;
 
 const skipped = (reason: string): ReviewResult => ({ status: "skipped", report: reason });
 
-async function collectDiff(exec: Exec, root: string) {
+async function collectDiff(exec: Exec, root: string, task?: Pick<Task, "baseCommit">) {
   const git = async (args: string[]) => (await exec("git", args, { cwd: root, timeout: 30_000 })).stdout;
-  const diff = await git(["diff", "HEAD"]);
+  const base = await diffBase(exec, root, task);
+  const diff = await git(["diff", base]);
   const untracked = (await git(["ls-files", "--others", "--exclude-standard"])).split("\n").filter((f) => f && f !== ".pi/task.json");
   const truncated = diff.length > MAX_DIFF;
-  // New files are not in `git diff HEAD`: inline them while the budget lasts so the reviewer does not spend turns reading them.
+  // New files are not in `git diff <base>`: inline them while the budget lasts so the reviewer does not spend turns reading them.
   const contents: Record<string, string> = {};
   let budget = MAX_DIFF - Math.min(diff.length, MAX_DIFF);
   for (const file of untracked) {
@@ -35,10 +37,10 @@ async function collectDiff(exec: Exec, root: string) {
     contents[file] = text;
     budget -= text.length;
   }
-  return { diff: truncated ? diff.slice(0, MAX_DIFF) : diff, truncated, untracked, contents };
+  return { diff: truncated ? diff.slice(0, MAX_DIFF) : diff, truncated, untracked, contents, base };
 }
 
-export function buildBrief(task: Task, d: { diff: string; truncated: boolean; untracked: string[]; contents?: Record<string, string> }, skills = "") {
+export function buildBrief(task: Task, d: { diff: string; truncated: boolean; untracked: string[]; contents?: Record<string, string>; base?: string }, skills = "") {
   const plan = task.plan;
   const list = (items: string[]) => (items.length ? items.map((i) => `- ${i}`).join("\n") : "- (none)");
   return [
@@ -63,7 +65,7 @@ export function buildBrief(task: Task, d: { diff: string; truncated: boolean; un
     ...(plan?.seams?.length ? plan.seams.map((x) => `- ${x.name} → ${x.testFile}: catches ${x.catches}${x.misses ? `; misses ${x.misses}` : ""}`) : ["- (none)"]),
     "## New files",
     ...(d.untracked.length ? d.untracked.map((f) => (d.contents?.[f] === undefined ? `- ${f} (read it directly)` : `### ${f}\n\`\`\`\n${d.contents[f]}\n\`\`\``)) : ["- (none)"]),
-    `## Diff (git diff HEAD)${d.truncated ? `\nTRUNCATED to the first ${MAX_DIFF} characters; inspect the rest with your tools.` : ""}`,
+    `## Diff (git diff ${d.base ?? "HEAD"})${d.truncated ? `\nTRUNCATED to the first ${MAX_DIFF} characters; inspect the rest with your tools.` : ""}`,
     "```diff",
     d.diff || "(empty)",
     "```",
@@ -159,7 +161,7 @@ export async function runSubagent(exec: Exec, root: string, opts: { name: string
 export async function reviewDiff(exec: Exec, root: string, task: Task, model: string, signal?: AbortSignal, skills?: string): Promise<ReviewResult> {
   let diff: Awaited<ReturnType<typeof collectDiff>>;
   try {
-    diff = await collectDiff(exec, root);
+    diff = await collectDiff(exec, root, task);
   } catch (error: any) {
     return skipped(`The review could not run: ${error?.message ?? error}`);
   }

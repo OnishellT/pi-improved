@@ -13,9 +13,9 @@ import { skillsBlock } from "./skills.ts";
 import { readTask, updateTask } from "./task-state.ts";
 import { formatVerify, isPolicyFailure, runVerify } from "./verify.ts";
 
-const MAX_RETRIES = 3;
+const MAX_RETRIES = 2;
 const MAX_REVIEWS = 1;
-const ESCALATE_AFTER = 3;
+const ESCALATE_AFTER = 2;
 const DIAGNOSE_AT = 2;
 
 export function registerGate(pi: ExtensionAPI) {
@@ -87,12 +87,13 @@ export function registerGate(pi: ExtensionAPI) {
     const reviewModel = manifest.models?.review;
     const abort = new AbortController();
     let wanted = task?.status === "implementing" && !!reviewModel && reviews < MAX_REVIEWS;
-    if (wanted && reviewModel) {
-      const risk = await assessRisk(pi.exec.bind(pi), ctx.cwd, task, manifest);
+    // The level is always measured and reported; whether it asks for a model review is the manifest's policy.
+    const risk = task?.status === "implementing" ? await assessRisk(pi.exec.bind(pi), ctx.cwd, task, manifest) : undefined;
+    if (wanted && reviewModel && risk) {
       if (!risk.review) {
         wanted = false;
         reviews++;
-        ctx.ui.notify(`Review skipped (low risk): ${risk.reasons.join("; ") || "small diff outside sensitive areas"}`, "info");
+        ctx.ui.notify(`Review skipped (risk ${risk.level}): ${risk.reasons.join("; ") || "small diff outside sensitive areas"}`, "info");
         pi.events.emit(REVIEW_EVENT, { root: ctx.cwd, status: "skipped-low-risk", model: reviewModel, seconds: 0, cost: 0 } satisfies ReviewPayload);
       }
     }
@@ -143,6 +144,7 @@ export function registerGate(pi: ExtensionAPI) {
 
     verified = state;
     await deescalate(ctx);
+    if (risk) ctx.ui.notify(`Risk ${risk.level}${risk.reasons.length ? `: ${risk.reasons.join("; ")}` : ""}${risk.review ? " (review requested)" : ""}`, "info");
     if (reviewing) {
       const review = await reviewing.finally(clearStatus);
       if (review.status === "skipped") ctx.ui.notify(`Review skipped: ${review.report}`, "warning");
