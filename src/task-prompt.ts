@@ -19,25 +19,22 @@ export const planText = (p: Plan) =>
 
 export function taskPrompt(title: string, ticket: string | undefined, tracker: string | undefined, related: string[], skills = "", spec: string[] = []) {
   const steps = [
-    ticket && tracker
-      ? `Read ticket ${ticket} with the ${tracker} tools (find them with tool_search). Read only, never modify the ticket.`
-      : ticket && `Ticket ${ticket} has no connector enabled. Work from the title.`,
-    spec.length && `Read the spec file(s) named in the request in full: ${spec.join(", ")}.`,
-    "Read the ticket, GLOSSARY.md (if present), AGENTS.md, the .pi/skills/* skills and docs/adr/* decisions that relate to the task.",
-    "Read the files you will touch and explore the code around them, including the files next to them (their names and exports are the convention to follow). Do not edit any file yet.",
-    "Call task_plan with: summary, steps, files (repo-relative, directories end with /), decisions, interface and seams.",
+    ticket && tracker ? `Read ticket ${ticket} with the ${tracker} tools (tool_search finds them). Read only.` : ticket && `Ticket ${ticket} has no connector enabled. Work from the title.`,
+    spec.length && `Read in full: ${spec.join(", ")}.`,
+    "Read GLOSSARY.md, AGENTS.md, the .pi/skills/* skills and docs/adr/* decisions that relate to the task.",
+    "Read the files you will touch and their siblings (their names and exports are the convention). Edit nothing yet.",
+    "Call task_plan: summary, steps, files (repo-relative, directories end with /), decisions, interface, seams.",
   ].filter(Boolean);
   return [
     ...(skills ? [skills, ""] : []),
     `New task: ${title}`,
     "",
     ...(related.length ? ["Similar past tasks:", ...related.map((r) => `- ${r}`), ""] : []),
-    "Follow these steps in order:",
     ...steps.map((s, i) => `${i + 1}. ${s}`),
     "",
-    "Put in decisions only real choices the code and docs do not settle. If an ADR, doc or skill already settles one, set source to its path (path#section allowed). Each decision has 2-4 options, recommended first.",
-    "interface pins the file and export names (and signatures) the tests will import. Derive them from the ticket, the docs or existing code and cite the source ('ticket', or the doc/GLOSSARY.md/existing file path). The code checks that every name appears literally in the cited source: a name that is not there counts as invented and the user is asked. If a name is not given anywhere, set source to 'user'; never invent silently.",
-    "New files: name them like their siblings in the same directory (same casing and separators) after the noun the ticket uses; one module per ticket noun, not a new catch-all file. Signatures: copy the argument shape the ticket or existing callers use (an object with named fields stays an object). Reuse existing helpers (validators, parsers, types) instead of adding parallel ones.",
-    "seams are the test attachment points, chosen per the tdd skill: each has a test file (listed in files), what it catches and what it misses. At least one. Every acceptance criterion in the ticket, including the invalid-input ones, must be covered by a seam.",
+    "decisions: only real choices the code and docs leave open; if an ADR, doc or skill settles one, set source to its path (path#section allowed). 2-4 options, recommended first.",
+    "interface: file and export names (and signatures) the tests import, each with a source ('ticket', or a doc/GLOSSARY.md/code path). Code checks every name appears literally in that source; otherwise it counts as invented and the user is asked. Names nobody gave: source 'user', never invent silently.",
+    "Name new files like their siblings, after the ticket's noun; one module per noun. Copy argument shapes from the ticket or existing callers. Reuse existing helpers.",
+    "seams: test attachment points per the tdd skill: test file (in files), what it catches and misses. At least one; every acceptance criterion, invalid inputs included, needs a seam.",
   ].join("\n");
 }

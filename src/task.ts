@@ -7,6 +7,7 @@ import { missingNames } from "./contract.ts";
 import { REVIEW_EVENT, type ReviewPayload } from "./events.ts";
 import { relatedTasks } from "./learn.ts";
 import { usePhaseModel } from "./models.ts";
+import { planRiskReasons } from "./risk.ts";
 import { checkPlan } from "./plan-check.ts";
 import { skillsBlock } from "./skills.ts";
 import { readManifest, type Manifest } from "./manifest.ts";
@@ -195,7 +196,11 @@ export function registerTask(pi: ExtensionAPI) {
         } else ctx.ui.notify("Plan check: OK.", "info");
       }
 
-      if (!(await ctx.ui.confirm("Approve the plan?", planText(plan)))) {
+      // Fast path: a small plan with no risk trigger already passed the same deterministic gates above; the dialog adds only cost.
+      const risk = planRiskReasons(plan, manifest);
+      if (risk.length) ctx.ui.notify(`Plan needs your approval: ${risk.join("; ")}.`, "info");
+      else ctx.ui.notify(`Small plan, gates passed: no approval needed.\n\n${planText(plan)}`, "info");
+      if (risk.length && !(await ctx.ui.confirm("Approve the plan?", planText(plan)))) {
         const feedback = await ctx.ui.input("What should change?");
         throw new Error(`The user did not approve the plan. Feedback: ${feedback || "(none)"}. Revise it and call task_plan again.`);
       }

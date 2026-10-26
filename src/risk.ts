@@ -13,6 +13,28 @@ const SENSITIVE = /(^|\/)(auth\w*|payments?|billing|security|crypto\w*|migration
 const globRegex = (glob: string) =>
   new RegExp(`^${glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*\/|\*\*/g, (m) => (m.endsWith("/") ? "\u0000" : "\u0001")).replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]").replace(/\u0000/g, "(?:.*/)?").replace(/\u0001/g, ".*")}$`);
 
+/** Fast path of /task: a small plan (files, interface entries, decisions) with no risk trigger skips the human approval dialog. */
+export const SMALL_PLAN = { files: 8, interface: 6, decisions: 2 };
+
+/** Why a plan is not small enough to skip approval; empty = fast path. Cheap: counts and regexes on the planned paths. */
+export function planRiskReasons(plan: { files: string[]; interface: unknown[]; decisions: unknown[] }, manifest: Manifest): string[] {
+  const reasons: string[] = [];
+  if (manifest.review?.always) reasons.push("review.always");
+  if (plan.files.length > SMALL_PLAN.files) reasons.push(`${plan.files.length} files`);
+  if (plan.interface.length > SMALL_PLAN.interface) reasons.push(`${plan.interface.length} interface entries`);
+  if (plan.decisions.length > SMALL_PLAN.decisions) reasons.push(`${plan.decisions.length} decisions`);
+  const globs = (manifest.review?.paths ?? []).map(globRegex);
+  const hit = (name: string, test: (f: string) => boolean) => {
+    const found = plan.files.filter(test).slice(0, 3).join(", ");
+    if (found) reasons.push(`${name} (${found})`);
+  };
+  hit("dependencies", (f) => isManifest(f) || DEPENDENCIES.test(f));
+  hit("migration", isMigration);
+  hit("review.paths", (f) => globs.some((g) => g.test(f)));
+  hit("sensitive area", (f) => SENSITIVE.test(f));
+  return reasons;
+}
+
 /** Whether the diff needs the paid strong-model review. Cheap: git and regexes, no LLM. */
 export async function assessRisk(exec: Exec, root: string, task: Task | undefined, manifest: Manifest): Promise<{ review: boolean; reasons: string[] }> {
   const rule = manifest.review;

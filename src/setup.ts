@@ -130,6 +130,7 @@ export function registerSetup(pi: ExtensionAPI) {
         m.connectors = connectors;
         m.agentlint = agentlint;
         if (!m.verify.length) m.verify = found.verify;
+        m.mode ??= "direct";
       });
       registerConnectors(pi, connectors);
       nudges = 0;
@@ -208,6 +209,7 @@ export function registerSetup(pi: ExtensionAPI) {
       await updateManifest(root, (m) => {
         m.setup = "done";
         m.verify = verify;
+        m.mode ??= "direct";
         m.completedAt = new Date().toISOString();
       });
       return { content: [{ type: "text", text: "Setup complete and approved. Stop here." }], details: { verify }, terminate: true };
@@ -241,7 +243,9 @@ export function registerSetup(pi: ExtensionAPI) {
     if (event.reason !== "startup" || ctx.mode !== "tui" || manifest.setup === "done" || manifest.setup === "declined") return;
     if (!(await isProject(ctx.cwd))) return;
 
-    const question = manifest.startedAt ? "A setup is half done. Continue it?" : "This project has no agent setup. Do it now?";
+    const question = manifest.startedAt
+      ? "A setup is half done. Continue it?"
+      : "This project has no agent setup. Do it now? (default mode: direct, work from AGENTS.md; /task is optional and recommended for risky changes)";
     const choice = await ctx.ui.select(question, ["Yes", "Later", DECLINE]);
     if (choice === "Yes") pi.sendUserMessage("/setup", { expandPromptTemplates: true });
     else if (choice === DECLINE) await updateManifest(ctx.cwd, (m) => void (m.setup = "declined"));

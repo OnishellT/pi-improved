@@ -54,7 +54,9 @@ Two checks run before the person is asked to approve:
 - **Verified names** (`src/contract.ts`). Each `interface` name must appear literally, as a word, in its cited source: ticket text read via MCP, spec files named in `/task`, docs, or existing code. A new file needs every word of its name in that source. Anything absent counts as invented and is asked. Plain text, any language.
 - **Plan check** (`src/plan-check.ts`). A read-only child with the `review` (or `setup`) model reads the ticket, interface and sibling files. It returns `VERDICT: OK` or a fix list: names that break the folder convention, argument shapes that differ from the ticket's, existing helpers being duplicated, invalid inputs left uncovered. Once per task. On fixes, the orchestrator corrects the plan and calls `task_plan` again. `"review": { "plan": false }` turns it off.
 
-The person approves the plan once. `.pi/task.json` becomes `implementing`.
+**Fast path.** A small plan skips the approval dialog: at most 8 files, 6 interface entries and 2 decisions, and no risk trigger (dependency files, migrations, sensitive areas, `review.paths`, `review.always`; `planRiskReasons` in `src/risk.ts`). It still passes the same gates above (verified names, seams in scope, decisions, plan check when enabled); the plan is shown as a notice. Anything bigger or riskier gets the normal approval: the person approves the plan once. `.pi/task.json` becomes `implementing`.
+
+**Mode.** `mode` in `.pi/workflow.json` is `"direct"` (default when absent) or `"flow"`. In `direct` the agent works from `AGENTS.md` and the skills, and `/task` is optional. In `flow`, `/task` is the recommended route. `/setup` writes `direct` if unset and has the model add two short `AGENTS.md` sections: "Before finishing" (the `verify` commands) and "When to use /task" (dependencies, migrations, `review.paths`, big changes). No gate runs without an active task. `/doctor` validates `mode`.
 
 ## 3. Implementation with specific context
 
@@ -121,7 +123,7 @@ Out of package, on purpose. A person has the last word on functionality in the d
 
 ## Internals
 
-**State.** `.pi/workflow.json` is project state (versioned): setup, `verify`, `models`, `skills`, `connectors`, `review`, `agentlint`. `.pi/task.json` is the active task (local, in `.gitignore`): `status` (`planning` | `implementing` | `done`), `plan`, `spec`, `planChecks`, `allowedExtra`.
+**State.** `.pi/workflow.json` is project state (versioned): setup, `verify`, `mode`, `models`, `skills`, `connectors`, `review`, `agentlint`. `.pi/task.json` is the active task (local, in `.gitignore`): `status` (`planning` | `implementing` | `done`), `plan`, `spec`, `planChecks`, `allowedExtra`.
 
 **Models per phase.** `/models` sets `setup`, `implement`, `review` and `escalate` as `provider/model`. A missing phase uses the session model. The strong model runs once in setup, in the plan check, in the diff review when risky, and on the third fix attempt. Everything else uses the cheap model.
 

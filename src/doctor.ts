@@ -41,6 +41,9 @@ export async function runDoctor(pi: ExtensionAPI, ctx: ExtensionContext, version
   const gitOk = await probe("git", ["--version"]);
   checks.push({ name: "git", ok: gitOk, detail: gitOk ? "ok" : "not installed" });
 
+  const mode = (await readManifest(ctx.cwd).catch(() => undefined))?.mode;
+  if (mode !== undefined) checks.push({ name: "Mode", ok: mode === "direct" || mode === "flow", detail: mode === "direct" || mode === "flow" ? mode : `"${String(mode)}" is not valid in .pi/workflow.json: use "direct" or "flow"` });
+
   const wanted = Object.values((await readManifest(ctx.cwd).catch(() => undefined))?.models ?? {}).filter((m): m is string => Boolean(m));
   if (wanted.length && ctx.modelRegistry) {
     const available = new Set(ctx.modelRegistry.getAvailable().map((m) => `${m.provider}/${m.id}`));

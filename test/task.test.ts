@@ -17,9 +17,10 @@ const plan = (decisions: any[] = [], extra: any = {}) => ({
   ...extra,
 });
 
-async function setup(done = true) {
+/** `fast: false` (default) marks the project as always-review, which keeps the human approval dialog in these tests. */
+async function setup(done = true, fast = false) {
   const root = await tempProject({ "docs/adr/0001-money.md": "# money\n", "src/money.ts": "export const m = 1;\n" });
-  if (done) await updateManifest(root, (m) => void (m.setup = "done"));
+  if (done) await updateManifest(root, (m) => void ((m.setup = "done"), !fast && (m.review = { always: true })));
   const h = fakePi();
   registerTask(h.pi);
   const ctxFor = (answers: unknown[]) => {
@@ -211,6 +212,7 @@ test("plan check: FIX sends the findings back once, the retry skips the paid che
   await updateManifest(root, (m) => {
     m.setup = "done";
     m.models = { review: "openai/gpt-6-astra" };
+    m.review = { always: true };
   });
   const ctxFor = (answers: unknown[]) => {
     const ui = fakeUI(answers);
@@ -233,7 +235,7 @@ test("plan check: FIX sends the findings back once, the retry skips the paid che
   assert.equal(emitted.at(-1).payload.status, "plan-ok");
 
   // review.plan = false disables it
-  await updateManifest(root, (m) => void (m.review = { plan: false }));
+  await updateManifest(root, (m) => void (m.review = { plan: false, always: true }));
   await h.commands.get("task").handler("Third", ctxFor(["Replace it"]).ctx);
   await h.tools.get("task_plan").execute("1", { ...plan(), interface: [{ file: "src/fee.ts", exports: ["fee"], source: "user" }] }, undefined, undefined, ctxFor(["Accept the proposed names", true]).ctx);
   assert.equal(spawns.length, 2);
@@ -246,4 +248,33 @@ test("MCP tool results read while planning count as ticket evidence", async () =
   const { ctx, ui } = ctxFor([true]);
   await tools.get("task_plan").execute("1", plan([], { interface: [{ file: "src/fee.ts", exports: ["computeTotal"], source: "ticket" }] }), undefined, undefined, ctx);
   assert.equal(ui.asked.length, 1);
+});
+
+test("fast path: a small plan with no risk trigger skips the approval dialog but still runs the gates", async () => {
+  const { commands, tools, ctxFor, root } = await setup(true, true);
+  await commands.get("task").handler("Add fee", ctxFor([]).ctx);
+  const { ui, ctx } = ctxFor([]);
+  const result = await tools.get("task_plan").execute("1", plan(), undefined, undefined, ctx);
+  assert.equal((await readTask(root))?.status, "implementing");
+  assert.match(result.content[0].text, /Plan approved/);
+  const bad = plan([], { interface: [{ file: "src/fee.ts", exports: ["computeTotal"], source: "ticket" }] });
+  await commands.get("task").handler("Add fee", ctxFor(["Replace it"]).ctx);
+  await assert.rejects(tools.get("task_plan").execute("1", bad, undefined, undefined, ctxFor([undefined]).ctx), /not approved/);
+  assert.ok(ui);
+});
+
+test("fast path is closed by size and by risk triggers", async () => {
+  const { planRiskReasons } = await import("../src/risk.ts");
+  const m: any = { review: {} };
+  const base = { files: ["src/a.ts", "test/a.test.ts"], interface: [], decisions: [] };
+  assert.deepEqual(planRiskReasons(base, m), []);
+  assert.deepEqual(planRiskReasons({ ...base, files: Array.from({ length: 8 }, (_, i) => `src/f${i}.ts`) }, m), []);
+  assert.match(planRiskReasons({ ...base, files: Array.from({ length: 9 }, (_, i) => `src/f${i}.ts`) }, m)[0], /9 files/);
+  assert.match(planRiskReasons({ ...base, interface: new Array(7).fill({}) }, m)[0], /7 interface/);
+  assert.match(planRiskReasons({ ...base, decisions: [1, 2, 3] }, m)[0], /3 decisions/);
+  assert.match(planRiskReasons({ ...base, files: ["package.json"] }, m)[0], /dependencies/);
+  assert.match(planRiskReasons({ ...base, files: ["db/migrations/001.sql"] }, m)[0], /migration/);
+  assert.match(planRiskReasons({ ...base, files: ["src/auth/login.ts"] }, m)[0], /sensitive/);
+  assert.match(planRiskReasons(base, { review: { paths: ["src/**"] } } as any)[0], /review.paths/);
+  assert.deepEqual(planRiskReasons(base, { review: { always: true } } as any), ["review.always"]);
 });
