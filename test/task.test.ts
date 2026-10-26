@@ -235,7 +235,7 @@ test("plan check: FIX sends the findings back once, the retry skips the paid che
   assert.equal(emitted.at(-1).payload.status, "plan-ok");
 
   // review.plan = false disables it
-  await updateManifest(root, (m) => void (m.review = { plan: false, always: true }));
+  await updateManifest(root, (m) => void (m.review = { plan: false }));
   await h.commands.get("task").handler("Third", ctxFor(["Replace it"]).ctx);
   await h.tools.get("task_plan").execute("1", { ...plan(), interface: [{ file: "src/fee.ts", exports: ["fee"], source: "user" }] }, undefined, undefined, ctxFor(["Accept the proposed names", true]).ctx);
   assert.equal(spawns.length, 2);
