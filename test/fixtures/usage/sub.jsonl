@@ -1,0 +1,1 @@
+{"type":"message","id":"b1","timestamp":"2026-10-02T12:00:00Z","message":{"role":"assistant","model":"m2","usage":{"input":100,"output":10,"cacheRead":60000,"cacheWrite":0,"cost":{"total":0.25}}}}
