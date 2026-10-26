@@ -37,6 +37,13 @@ Optional `"mode": "direct" | "flow"` (default `direct`): in `direct`, `/task` is
 
 `.pi/task.json` is the active task. It is local, and setup adds it to `.gitignore`.
 
+## Measuring cost
+
+`node scripts/usage-report.mjs [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--root ~/.pi/agent]` sums
+`usage.cost.total` from the Pi session files and prints cost per day, per model and per subagent, plus the share
+of turns by context size (big contexts are where cost hides). Unreadable or unpriced data is listed as warnings,
+never as an error. Compare two periods with `--since/--until`.
+
 ## Development
 
 ```sh
