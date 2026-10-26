@@ -8,8 +8,8 @@ export type Phase = "setup" | "plan" | "implement" | "diagnose" | "review" | "le
 /** Bundled skills (vendor/skills) injected into each phase's prompt; the model never picks one. */
 export const DEFAULT_SKILLS: Record<Phase, string[]> = {
   setup: ["grilling", "domain-modeling", "pstack-technical-writing", "pstack-create-verification-skill"],
-  plan: ["tdd"],
-  implement: ["tdd"],
+  plan: ["tdd", "contract-first"],
+  implement: ["tdd", "contract-first"],
   diagnose: ["diagnosing-bugs"],
   review: ["pstack-blast-radius"],
   learn: ["retro", "pstack-maintain-verification-skill"],

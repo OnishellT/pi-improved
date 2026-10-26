@@ -24,6 +24,9 @@ export interface Skill {
   files: { name: string; content: string }[];
 }
 
+/** Root of this package, so a skill can point at its scripts through the `{{package}}` placeholder. */
+const packageDir = () => path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
+
 export const skillsDir = () => path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "vendor", "skills");
 
 export async function listSkills(): Promise<string[]> {
@@ -77,7 +80,8 @@ export function clean(text: string, bundled: string[]) {
     .join("\n")
     .trimEnd()
     .replace(/\.claude\/skills\//g, ".pi/skills/")
-    .replace(/\bClaude\b/g, "the agent");
+    .replace(/\bClaude\b/g, "the agent")
+    .replace(/\{\{package\}\}/g, packageDir());
 }
 
 const cap = (text: string) => (text.length > MAX_BODY ? `${text.slice(0, MAX_BODY)}\n\n[truncated]` : text);
