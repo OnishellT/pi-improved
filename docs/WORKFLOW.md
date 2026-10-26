@@ -14,7 +14,7 @@ Everything is **language- and framework-agnostic**. No stack-specific gates ship
 | 4 | Real verification in the expected environment | Code (`verify`) | `verify-app` (browser, CLI, API or TUI), compiler, linter, tests | Covered |
 | 5 | agentlint | Code (`verify`) | Rules in `.agentlint/config.ts` | Covered |
 | 6 | Error correction | Orchestrator. 3rd failure: `escalate` model | `verify` gate, `diagnosing-bugs` skill, diff review | Covered |
-| 7 | PR with static checks | Orchestrator | Setup skills and tools | Pending |
+| 7 | PR with static checks | Orchestrator | `/pr`, `gh`, the repo's PR template | Covered |
 | 8 | PR review in CI | Project CI | Linters, tests, agentlint | Out of package |
 | 9 | Deploy | Project CI/CD | Project pipeline | Out of package |
 | 10 | Manual verification | Person | Deployed environment | Out of package |
@@ -107,7 +107,7 @@ When the person confirms the task is done, a record goes to `.pi/memory/tasks.js
 
 ## 7. PR with static checks
 
-Pending. Expected: on closing the task, the orchestrator prepares the branch and PR with the tools setup identified (hosting CLI, the repo's PR template). It attaches the static check results: `verify` commands, agentlint findings, plan summary, new ADRs, and `verify-app` evidence when it exists. Nothing is pushed without the person's order.
+`/pr [base]` prepares the branch and the PR with `gh` and the repo's PR template. It attaches the static check results: `verify` commands, agentlint findings, plan summary, new ADRs, the risk assessment and `verify-app` evidence when it exists. Nothing is pushed and no PR is opened without the person's explicit confirmation. PR text never names an AI tool.
 
 ## 8. PR review in CI
 

@@ -6,6 +6,7 @@ import { registerGuards } from "./guards.ts";
 import { registerLearn } from "./learn.ts";
 import { registerModels } from "./models.ts";
 import { registerPhaseTools } from "./phase-tools.ts";
+import { registerPr } from "./pr.ts";
 import { registerSkills } from "./skills.ts";
 import { registerSetup } from "./setup.ts";
 import { loadBundledSubagent } from "./subagent-ext.ts";
@@ -30,6 +31,7 @@ export default async function (pi: ExtensionAPI) {
   registerGate(pi);
   registerLearn(pi);
   registerPhaseTools(pi);
+  registerPr(pi);
   registerGuards(pi);
   registerTelemetry(pi);
 }
