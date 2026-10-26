@@ -20,6 +20,21 @@ type ReviewPolicy = NonNullable<Manifest["review"]>;
 const globRegex = (glob: string) =>
   new RegExp(`^${glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*\/|\*\*/g, (m) => (m.endsWith("/") ? "\u0000" : "\u0001")).replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]").replace(/\u0000/g, "(?:.*/)?").replace(/\u0001/g, ".*")}$`);
 
+/** Fast path of /task: a small plan (files, interface entries, decisions) with no risk trigger skips the human approval dialog. */
+export const SMALL_PLAN = { files: 8, interface: 6, decisions: 2 };
+
+/** Why a plan is not small enough to skip approval; empty = fast path. Cheap: counts and regexes on the planned paths. */
+export function planRiskReasons(plan: { files: string[]; interface: unknown[]; decisions: unknown[] }, manifest: Manifest): string[] {
+  const reasons: string[] = [];
+  if (manifest.review?.always) reasons.push("review.always");
+  if (plan.files.length > SMALL_PLAN.files) reasons.push(`${plan.files.length} files`);
+  if (plan.interface.length > SMALL_PLAN.interface) reasons.push(`${plan.interface.length} interface entries`);
+  if (plan.decisions.length > SMALL_PLAN.decisions) reasons.push(`${plan.decisions.length} decisions`);
+  reasons.push(...highRiskReasons(plan.files, manifest.review));
+  return reasons;
+}
+
+
 const git = async (exec: Exec, root: string, args: string[]) => (await exec("git", args, { cwd: root, timeout: 30_000 }).catch(() => undefined))?.stdout ?? "";
 
 /** Current HEAD commit, or undefined without git, repo or commit. */

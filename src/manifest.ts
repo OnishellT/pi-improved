@@ -35,6 +35,8 @@ export interface Manifest {
   /** agentlint command prefix when the project enforces agentlint rules, e.g. "pnpm agentlint". */
   agentlint?: string;
   connectors: EnabledConnector[];
+  /** Working mode. `direct` (default when absent): the agent works from AGENTS.md and skills, /task is optional. `flow`: /task with its gates is the recommended route. */
+  mode?: "direct" | "flow";
   /** Model per phase as "provider/model-id"; a missing phase keeps the session model. */
   models?: PhaseModels;
   /** Bundled skill names per phase; a missing phase uses DEFAULT_SKILLS. */

@@ -5,6 +5,7 @@ import { test } from "node:test";
 import { registerAskUser } from "../src/ask.ts";
 import { readManifest, updateManifest } from "../src/manifest.ts";
 import { checkOutputs, registerSetup } from "../src/setup.ts";
+import { setupPrompt } from "../src/prompt.ts";
 import { fakePi, fakeUI, tempProject } from "./helpers.ts";
 
 const SKILL = "---\nname: domain-billing\ndescription: Billing rules\n---\n# Billing\n";
@@ -96,6 +97,7 @@ test("setup_finish sends verify failures back to the model, then completes after
   assert.equal(result.terminate, true);
   const manifest = await readManifest(root);
   assert.equal(manifest.setup, "done");
+  assert.equal(manifest.mode, "direct");
   assert.deepEqual(manifest.verify, ["npm test"]);
 });
 
@@ -146,4 +148,9 @@ test("the startup offer: \"Don't ask again\" declines setup for good, \"Later\" 
     assert.equal((await readManifest(root)).setup === "declined", declined, choice);
     assert.equal(messages.length, sent, choice);
   }
+});
+test("setup prompt asks for the before-finishing and /task sections with the verify commands", () => {
+  const text = setupPrompt({} as any, { version: 1, setup: "running", verify: ["npm test"], connectors: [], language: "English" }, false);
+  assert.match(text, /Before finishing[\s\S]*`npm test`/);
+  assert.match(text, /When to use \/task[\s\S]*migrations/);
 });
