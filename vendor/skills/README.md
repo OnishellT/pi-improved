@@ -2,5 +2,6 @@
 
 - mattpocock/skills @ 5beb35b040e3 (MIT): grilling, domain-modeling, tdd, diagnosing-bugs, retro
 - pstack (MIT, Lauren Tan): technical-writing, create-verification-skill, maintain-verification-skill, blast-radius
+- contract-first (original, not upstream; ported from cc-improved D-015): pin names, signatures and invalid-input behavior before editing, checked by `scripts/contract-check.mjs`. The `{{package}}` placeholder becomes the package path on injection.
 
 Update by re-copying; the workflow injects these per phase (see src/skills.ts). Injection drops each skill's `## Agent integration boundary` section. Keep the vendored files identical to upstream.

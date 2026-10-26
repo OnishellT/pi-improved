@@ -203,7 +203,7 @@ export function registerSetup(pi: ExtensionAPI) {
         throw new Error(`The user did not approve. Feedback: ${feedback || "(none)"}. Apply it and call setup_finish again.`);
       }
 
-      await ensureIgnored(root, [TASK_PATH, ".pi/metrics/", ".pi/evidence/", ...((await fs.access(path.join(root, "package.json")).then(() => true, () => false)) ? ["node_modules/"] : [])]);
+      await ensureIgnored(root, [TASK_PATH, ".pi/contract.json", ".pi/metrics/", ".pi/evidence/", ...((await fs.access(path.join(root, "package.json")).then(() => true, () => false)) ? ["node_modules/"] : [])]);
 
       await updateManifest(root, (m) => {
         m.setup = "done";
