@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
-import { Image, Text } from "@earendil-works/pi-tui";
+import { Image, resetCapabilitiesCache, setCapabilities, Text } from "@earendil-works/pi-tui";
 import { findBrowser, pageFor, registerShow, type Run } from "../src/show.ts";
 import { fakePi, tempDir, withEnv } from "./helpers.ts";
 
@@ -105,19 +105,39 @@ test("show renders an HTML file without leaving its page behind, and fails clear
   });
 });
 
-test("the result draws the picture once, or says why not", async () => {
+test("the call gets a box colored by its state, and the picture goes below it", async () => {
+  const { tool } = await setup(fakeBrowser().exec);
+  assert.equal(tool.renderShell, "self", "inside pi's box, a picture whose top has scrolled off is left out");
+  const paint = { ...theme, bg: (c: string, s: string) => `<${c}>${s}`, bold: (s: string) => s };
+  const header = (args: object, context: object) => tool.renderCall(args, paint, { outputPad: 1, isError: false, isPartial: false, ...context }).render(40);
+  assert.match(header({ file: "mock.html" }, { isPartial: true })[1], /^<toolPendingBg> show mock\.html/);
+  assert.match(header({ html: "<p>" }, {})[1], /^<toolSuccessBg> show markup/);
+  assert.match(header({ file: "x.png" }, { isError: true })[1], /^<toolErrorBg>/);
+});
+
+test("the result draws the picture once, with empty rows under it, or says why not", async () => {
   const { tool, root } = await setup(fakeBrowser().exec);
   const file = path.join(root, "plot.png");
   await fs.writeFile(file, "png");
   const result = (details?: object) => ({ content: [{ type: "text", text: "Shown to the user: plot.png" }], details });
   const draw = (details?: object, context: object = {}) =>
-    tool.renderResult(result(details), { isPartial: false }, theme, { showImages: true, state: {}, lastComponent: undefined, ...context });
-  const image = draw({ file, mimeType: "image/png" });
+    tool.renderResult(result(details), { isPartial: false }, theme, { showImages: true, state: {}, outputPad: 1, isError: false, ...context });
+  const text = (view: any) => view.render(80).join("");
+  const state = {};
+  const view = draw({ file, mimeType: "image/png" }, { state });
+  const image = view.children[1];
   assert.ok(image instanceof Image);
-  assert.equal(draw({ file }, { state: { file }, lastComponent: image }), image, "a redraw keeps the picture already sent");
-  assert.ok(draw({ file }, { showImages: false }) instanceof Text, "pi's image setting is off");
-  const gone = draw({ file: path.join(root, "old.png") });
-  assert.ok(gone instanceof Text);
-  assert.match(gone.render(80).join(""), /old\.png is gone/);
-  assert.match(draw().render(80).join(""), /Shown to the user/);
+  assert.equal(draw({ file }, { state }).children[1], image, "a redraw keeps the picture already sent");
+  setCapabilities({ images: "kitty", trueColor: true, hyperlinks: false });
+  try {
+    const [spacer, anchor, ...covered] = view.render(80);
+    assert.equal(spacer, "");
+    assert.match(anchor, /^\x1b_G/);
+    assert.ok(covered.length > 0 && covered.every((line: string) => line === ""), "pi-tui finds a picture scrolled past its top through empty rows only");
+  } finally {
+    resetCapabilitiesCache();
+  }
+  assert.ok(draw({ file }, { showImages: false }).children[1] instanceof Text, "pi's image setting is off");
+  assert.match(text(draw({ file: path.join(root, "old.png") })), /old\.png is gone/);
+  assert.match(text(draw()), /Shown to the user/);
 });
