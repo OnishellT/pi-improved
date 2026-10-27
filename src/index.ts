@@ -2,6 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerAskUser } from "./ask.ts";
 import { registerDoctor } from "./doctor.ts";
 import { registerGate } from "./gate.ts";
+import { registerContextGuard } from "./context-guard.ts";
 import { registerGuards } from "./guards.ts";
 import { registerLearn } from "./learn.ts";
 import { registerModels } from "./models.ts";
@@ -34,4 +35,5 @@ export default async function (pi: ExtensionAPI) {
   registerPr(pi);
   registerGuards(pi);
   registerTelemetry(pi);
+  registerContextGuard(pi);
 }

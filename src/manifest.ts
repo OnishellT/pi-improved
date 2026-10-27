@@ -41,6 +41,10 @@ export interface Manifest {
   models?: PhaseModels;
   /** Bundled skill names per phase; a missing phase uses DEFAULT_SKILLS. */
   skills?: Partial<Record<Phase, string[]>>;
+  /** Characters of failing-step output kept in a verify report (default 4000, minimum 200). Smaller is cheaper on every retry. */
+  maxReport?: number;
+  /** Context size in tokens at which a one-time notice suggests /compact or a new session (default 150000; 0 turns it off). */
+  contextWarn?: number;
   /** Risk policy. The model review runs only when asked: `always`, or `minLevel` "low" (any risk) / "high" (high risk only); default "off".
    *  `always` beats `never`. `plan` true adds the plan check for any plan, false turns it off (otherwise it runs only when risk asks for it).
    *  `maxLines`/`maxFiles` set where "low" starts, `highLines`/`highFiles` where "high" starts. */

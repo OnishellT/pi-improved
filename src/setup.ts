@@ -16,6 +16,7 @@ const START_TIMEOUT = 30_000;
 const MAX_VERIFY_FAILURES = 3;
 const NONE = "No more";
 const DECLINE = "Don't ask again";
+export const REPEAT_WARNING = "Repeating it reruns the interview and the docs on the strong setup model, which costs far more than a normal task. Do it only if the project changed a lot. Update it?";
 
 /** Returns what is missing from the setup output; empty means complete. */
 export async function checkOutputs(root: string, verify: string[]): Promise<string[]> {
@@ -113,7 +114,7 @@ export function registerSetup(pi: ExtensionAPI) {
       if (!ctx.hasUI) return ctx.ui.notify("/setup needs the interactive UI.", "error");
       const root = ctx.cwd;
       let manifest = await readManifest(root);
-      if (manifest.setup === "done" && !(await ctx.ui.confirm("This project already has setup", "Update it?"))) return;
+      if (manifest.setup === "done" && !(await ctx.ui.confirm("This project already has setup", REPEAT_WARNING))) return;
 
       const resuming = manifest.setup !== "done" && Boolean(manifest.startedAt);
       ctx.ui.setStatus("setup", "setup: scanning the repo…");
