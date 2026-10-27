@@ -1,0 +1,42 @@
+# Computer use
+
+Optional second extension (`src/computer/`). It lets the agent drive a browser and a desktop. Off until you choose.
+
+## Use
+
+`/computer` lists the browsers installed, marks those with remote debugging on, and saves your pick to `computer.json` in the Pi agent dir (`~/.pi/agent`, or `PI_CODING_AGENT_DIR`). User level on purpose: logins belong to you, not to a repo. It applies at once, with no restart.
+
+## Config
+
+```json
+{ "browser": "auto", "desktop": "on" }
+```
+
+| Key | Values |
+|-----|--------|
+| `browser` | `off` (default). `auto`: the first browser with remote debugging on (helium, chrome, chromium, brave, edge, vivaldi). A preset id. `{ "portFile": "/abs/path/DevToolsActivePort", "name": "Mine" }` for any other Chromium browser. `{ "mcp": { "command": "npx", "args": ["@playwright/mcp@latest"] } }` for any MCP server, used as given. |
+| `desktop` | `off` (default), `on` |
+
+The browser is always registered as the MCP server `browser`, the desktop as `desktop`. A server of the same name in the agent dir's `mcp.json` wins, even a disabled one: the extension then registers nothing and warns, so remove that entry to use the bundled one. (Project-level MCP config is not checked.)
+
+## Browser
+
+The bundled server (Node >= 22, like the rest of the package) attaches to a browser you already use, with its logins, through remote debugging (`chrome://inspect/#remote-debugging`). The first `open` needs your approval in that browser. If you deny it or it times out, later calls fail with "disconnected" instead of asking again; reconnect the MCP server to retry. Several candidates (`auto`) are tried in order; a debugging file left by a browser that is gone is skipped. A browser that is running but refuses the connection is the answer: no other browser is asked.
+
+The rules below hold for the bundled server only. An `{ "mcp": … }` server is used as given, with whatever rules it has.
+
+- Works only in a new window it creates. Never lists or attaches to your tabs, never reads cookies or passwords, never closes the browser.
+- http(s) and `about:blank` only, no credentials in URLs.
+- Subagents get `status` only.
+
+Verified end to end with Helium. The other presets share its code path and folder layout. The macOS folders are unverified.
+
+## Desktop
+
+A private nested 1280x800 Hyprland session with its own cursor, keyboard and session bus. Input is confined to windows it launched. Subagents are read-only. Needs Linux, Hyprland, dbus (`dbus-run-session`), python3 and [`hypruse`](https://pypi.org/project/hypruse/) (`uv tool install hypruse`).
+
+It refuses to attach to a compositor started from another `hyprland.lua`: the check pins the config path, so it also trips after the package is moved or reinstalled elsewhere. The error names the process to stop. Moving from a hand-made setup: remove the `desktop` entry from `mcp.json` and stop the old private compositor first.
+
+## Verification
+
+Gates run shell commands and trust exit codes, so only command line tools can gate. With the desktop on, `/setup` tells the model it may use the `pi-desktop` shell verbs in the `verify-app` script. The script calls `${PI_DESKTOP:-pi-desktop}`: `/computer` exports `PI_DESKTOP` for the bundled one, otherwise a `pi-desktop` on your PATH is used. The script never carries an absolute path, because it is committed and runs on other machines. MCP-only drivers, including the browser above, are for the model's own exploration, not for a gate.
