@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { registerAbortCleanup } from "./abort.ts";
 import { registerAskUser } from "./ask.ts";
 import { registerBasePrompt } from "./base-prompt.ts";
 import { registerDoctor } from "./doctor.ts";
@@ -21,6 +22,7 @@ export default async function (pi: ExtensionAPI) {
   // Children work for the parent (pi-subagent sets this in every child): no setup offers, gates or prompts nobody can answer.
   if (process.env.PI_SUBAGENT_RUN_DIR) return;
   registerAskUser(pi);
+  registerAbortCleanup(pi);
   registerDoctor(pi);
   registerBasePrompt(pi);
   registerModels(pi);
