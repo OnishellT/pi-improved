@@ -21,7 +21,7 @@ In your project:
 3. `/task <description or PAY-142>`: plan, approve once, implement. Code gates the end on `verify`, then a read-only review runs if the diff is risky.
 4. `/doctor`: check Node, subagent, agentlint, tmux, git, and that the configured models are available. If one is missing, run `/login <provider>`.
 
-`/verify` runs verification by hand. `/skills` picks the skills injected per phase.
+`/verify` runs verification by hand. `/skills` picks the skills injected per phase. `/computer` picks the browser and desktop the agent can drive, off until you choose ([docs/COMPUTER.md](docs/COMPUTER.md)).
 
 Stages, gates, checks and internals: [docs/WORKFLOW.md](docs/WORKFLOW.md).
 
