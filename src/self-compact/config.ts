@@ -18,7 +18,9 @@ export const DEFAULTS = {
   warning: "85%",
   force: "90%",
   buffer: 0,
-  prompt: "Preserve the user's goal, constraints, decisions, completed work, current state, and next action. Do not restart completed work.",
+  // Added to pi's summary format, which already keeps the goal, constraints, progress, decisions and next steps.
+  prompt:
+    "Keep the user's latest request word for word. Keep what was tried and failed, and why, so it is not tried again. Drop what the work has used up: file contents, command output and search results it already acted on; keep only the facts taken from them. Do not restart completed work.",
 };
 
 export function profileForModel(file: ProfileFile, provider: string, modelId: string): ProfileValues {

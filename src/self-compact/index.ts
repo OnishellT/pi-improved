@@ -141,7 +141,9 @@ export default function (pi: ExtensionAPI) {
     label: "Self-compact",
     description: "Compact the conversation now. Add an optional handoff note with the goal, decisions, current state, and next action to preserve across compaction.",
     promptSnippet: "self_compact: preserve progress and continue after context compaction",
-    promptGuidelines: ["Use self_compact at a useful stopping point when context is approaching the configured warning threshold. Include a concise handoff note."],
+    promptGuidelines: [
+      "Use self_compact when context nears the warning threshold, between steps: once a step is finished and checked (tests pass, a commit is made), not in the middle of an edit or while you still need a tool's output. In the handoff note, give the next action and what must not be redone.",
+    ],
     parameters: Type.Object({ note: Type.Optional(Type.String({ description: "Continuation state to preserve in the compaction summary" })) }),
     execute: async (_id, { note }, _signal, _update, ctx) => {
       const running = compacting;
@@ -170,7 +172,7 @@ export default function (pi: ExtensionAPI) {
           type: "custom_message",
           customType: "self_compact_threshold",
           content: state === "notice"
-            ? `Context notice threshold reached (${usage.tokens!.toLocaleString()} of ${usage.effectiveWindow.toLocaleString()} tokens). Continue working, and consider self_compact at a natural stopping point.`
+            ? `Context notice threshold reached (${usage.tokens!.toLocaleString()} of ${usage.effectiveWindow.toLocaleString()} tokens). Continue working, and call self_compact once the current step is finished.`
             : `Context warning threshold reached (${usage.tokens!.toLocaleString()} of ${usage.effectiveWindow.toLocaleString()} tokens). Wrap up the current step and call self_compact with a handoff note soon.`,
           display: true,
         }],
