@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { updateManifest } from "../src/manifest.ts";
 import { readTask, writeTask } from "../src/task-state.ts";
 import { planCheckWanted, registerTask } from "../src/task.ts";
-import { fakePi, fakeUI, tempProject } from "./helpers.ts";
+import { fakePi, fakeUI, isSubagent, tempProject } from "./helpers.ts";
 
 const plan = (decisions: any[] = [], extra: any = {}) => ({
   summary: "Add fee",
@@ -197,7 +197,7 @@ test("plan check: FIX sends the findings back once, the retry skips the paid che
   const verdicts: string[] = [];
   const spawns: string[] = [];
   const h = fakePi((cmd, args) => {
-    if (!/subagent$/.test(cmd)) return { code: 0 };
+    if (!isSubagent(cmd)) return { code: 0 };
     if (args[0] === "spawn") {
       spawns.push(args[args.indexOf("--model") + 1]);
       return { code: 0, stdout: "Spawned plan-check (abc)\n" };

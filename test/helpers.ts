@@ -58,4 +58,4 @@ export function fakePi(exec: (cmd: string, args: string[]) => { code: number; st
 }
 
 /** The subagent CLI may be invoked by bare name or by its bundled absolute path. */
-export const isSubagent = (cmd: string) => cmd === "subagent" || cmd.endsWith("/subagent");
+export const isSubagent = (cmd: string) => cmd === "subagent" || /(^|\/)subagent(\.ts)?$/.test(cmd);
