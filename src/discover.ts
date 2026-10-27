@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { resolveBin } from "./bin.ts";
 import { detectConnectors, type ConnectorSignal } from "./connectors.ts";
+import { detectUiDrivers } from "./ui-driver.ts";
 
 /** Runs a command and returns stdout, or "" when it fails. */
 export type Run = (command: string, args: string[]) => Promise<string>;
@@ -23,6 +24,8 @@ export interface Discovery {
   glossary: boolean;
   /** docs/agents/ exists. */
   agentDocs: boolean;
+  /** Ids of the GUI drivers the verify-app script can use (on PATH, or the desktop /computer turned on). Absent when none. */
+  uiDrivers?: string[];
 }
 
 const STACK_MARKERS: [string, string][] = [
@@ -117,7 +120,7 @@ async function agentlintStep(root: string, pm: string | undefined) {
 }
 
 /** Deterministic repository scan: no model involved. */
-export async function discover(root: string, run: Run): Promise<Discovery> {
+export async function discover(root: string, run: Run, pathEnv?: string): Promise<Discovery> {
   const markers = await present(root, STACK_MARKERS.map(([f]) => f));
   const stacks = [...new Set(STACK_MARKERS.filter(([f]) => markers.includes(f)).map(([, stack]) => stack))];
   const lockfile = stacks.includes("node") ? (await present(root, LOCKFILES.map(([f]) => f)))[0] : undefined;
@@ -138,7 +141,8 @@ export async function discover(root: string, run: Run): Promise<Discovery> {
   });
 
   const agentlint = await hasAgentlintConfig(root);
-  return { stacks, packageManager, verify: await proposeVerify(root, stacks, packageManager), ci, docs, agentFiles, agentlint, agentlintInstalled: agentlint || (await hasAgentlintDep(root)), connectors, glossary: await exists(path.join(root, "GLOSSARY.md")), agentDocs: await exists(path.join(root, "docs/agents")) };
+  const uiDrivers = await detectUiDrivers(pathEnv);
+  return { stacks, packageManager, verify: await proposeVerify(root, stacks, packageManager), ci, docs, agentFiles, agentlint, agentlintInstalled: agentlint || (await hasAgentlintDep(root)), connectors, glossary: await exists(path.join(root, "GLOSSARY.md")), agentDocs: await exists(path.join(root, "docs/agents")), ...(uiDrivers.length ? { uiDrivers } : {}) };
 }
 
 /** A directory looks like a project when it is a git repo or has a stack marker. */
