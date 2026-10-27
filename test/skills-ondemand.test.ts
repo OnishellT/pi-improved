@@ -69,7 +69,7 @@ test("index descriptions are one line and cut at 160 characters", async () => {
 });
 
 test("skill sub-directories are never injected", async () => {
-  const dir = join(skillsDir(), "tdd", "references");
+  const dir = join(skillsDir(), "tdd", "references-test");
   await mkdir(dir, { recursive: true });
   try {
     await writeFile(join(dir, "deep.md"), "SUBDIR-MARKER\n");
