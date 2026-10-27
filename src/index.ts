@@ -8,7 +8,6 @@ import { registerContextGuard } from "./context-guard.ts";
 import { registerGuards } from "./guards.ts";
 import { registerLearn } from "./learn.ts";
 import { registerModels } from "./models.ts";
-import { registerPhaseTools } from "./phase-tools.ts";
 import { registerPr } from "./pr.ts";
 import { registerSkills } from "./skills.ts";
 import { registerSetup } from "./setup.ts";
@@ -34,7 +33,12 @@ export default async function (pi: ExtensionAPI) {
   registerTriggers(pi);
   registerGate(pi);
   registerLearn(pi);
-  registerPhaseTools(pi);
+  // Sessions saved when these tools were toggled per phase resume with them inactive; turn them on once. New sessions already have them.
+  pi.on("session_start", () => {
+    const active = pi.getActiveTools();
+    const missing = ["setup_finish", "task_plan"].filter((t) => !active.includes(t));
+    if (missing.length) pi.setActiveTools([...active, ...missing]);
+  });
   registerPr(pi);
   registerTelemetry(pi);
   registerContextGuard(pi);

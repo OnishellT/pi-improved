@@ -60,6 +60,20 @@ test("base prompt is appended once, and not when basePrompt is false", async () 
 
 test("the main session registers its commands", async () => {
   const { pi, commands } = fakePi();
-  await withEnv({ PI_SUBAGENT_RUN_DIR: undefined }, () => extension(pi));
+  const agent = await tempProject({ "extensions/subagent/index.ts": "export default () => {}" }); // a global subagent, so the bundled one is not loaded
+  await withEnv({ PI_SUBAGENT_RUN_DIR: undefined, PI_CODING_AGENT_DIR: agent }, () => extension(pi));
   for (const name of ["setup", "task", "skills", "pr", "cost", "metrics", "models"]) assert.ok(commands.has(name), name);
+});
+
+test("a session saved with the phase tools inactive gets them back once", async () => {
+  const { pi, emit } = fakePi();
+  let active = ["read"];
+  const sets: string[][] = [];
+  pi.getActiveTools = () => active;
+  pi.setActiveTools = (names: string[]) => void sets.push((active = names));
+  const agent = await tempProject({ "extensions/subagent/index.ts": "export default () => {}" }); // a global subagent, so the bundled one is not loaded
+  await withEnv({ PI_SUBAGENT_RUN_DIR: undefined, PI_CODING_AGENT_DIR: agent }, () => extension(pi));
+  await emit("session_start", { reason: "resume" }, { cwd: "/" });
+  await emit("session_start", { reason: "reload" }, { cwd: "/" });
+  assert.deepEqual(sets, [["read", "setup_finish", "task_plan"]]);
 });
