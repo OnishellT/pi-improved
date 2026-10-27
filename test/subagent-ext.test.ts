@@ -46,3 +46,23 @@ test("the extension registers nothing inside a subagent child", async () => {
   await withEnv({ PI_SUBAGENT_RUN_DIR: "/tmp/run", PI_CODING_AGENT_DIR: agent }, () => extension(pi));
   assert.equal(tools.size + commands.size, 0);
 });
+
+test("the bundled pi-subagent keeps its commands and events, but not its /subagent or its widget", async () => {
+  const { pi, commands, emit } = fakePi();
+  const ext = await import("../src/subagent-ext.ts");
+  const host = ext.subagentHost(pi);
+  const widgets: string[] = [];
+  const notes: string[] = [];
+  host.registerCommand("subagent", { handler: async () => {} } as any);
+  host.registerCommand("other", { handler: async () => {} } as any);
+  host.on("session_start", (_e: any, ctx: any) => {
+    ctx.ui.setWidget("subagents", ["x"]);
+    ctx.ui.notify("hi");
+    widgets.push(ctx.sessionManager.getSessionId());
+  });
+  assert.deepEqual([...commands.keys()], ["other"]);
+  assert.ok(ext.bundledCommand);
+  await emit("session_start", {}, { sessionManager: { getSessionId: () => "s1" }, ui: { setWidget: (k: string) => widgets.push(k), notify: (t: string) => notes.push(t) } });
+  assert.deepEqual(widgets, ["s1"]);
+  assert.deepEqual(notes, ["hi"]);
+});
