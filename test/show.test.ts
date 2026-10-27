@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { test } from "node:test";
+import { pathToFileURL } from "node:url";
 import { Image, Text } from "@earendil-works/pi-tui";
 import { findBrowser, pageFor, registerShow, type Run } from "../src/show.ts";
 import { fakePi, tempDir, withEnv } from "./helpers.ts";
@@ -45,11 +46,14 @@ test("findBrowser looks up Chromium or Chrome on the PATH", async () => {
 test("pageFor wraps a fragment, keeps a document, and points a file's page at its folder", async () => {
   assert.match(pageFor({ html: "<table></table>" }), /^<!doctype html><meta charset="utf-8"><body><table><\/table><\/body><script>/);
   assert.match(pageFor({ html: "<html><body>x</body></html>" }), /^<html><body>x<\/body><\/html><script>/);
-  const dir = await tempDir();
+  const dir = path.join(await tempDir(), "my $& mocks");
+  await fs.mkdir(dir);
   const file = path.join(dir, "mock.html");
   await fs.writeFile(file, "<!DOCTYPE html><link rel=stylesheet href=app.css>");
-  assert.match(pageFor({ file }), new RegExp(`^<!DOCTYPE html><base href="file://${dir}/"><link`));
-  assert.match(pageFor({ file: path.join(dir, "chart.svg") }), new RegExp(`<img src="file://${dir}/chart.svg">`));
+  assert.ok(pageFor({ file }).startsWith(`<!DOCTYPE html><base href="${pathToFileURL(dir).href}/"><link`));
+  await fs.writeFile(file, "<p>no doctype</p>");
+  assert.ok(pageFor({ file }).startsWith(`<base href="${pathToFileURL(dir).href}/"><p>`));
+  assert.ok(pageFor({ file: path.join(dir, "chart.svg") }).includes(`<img src="${pathToFileURL(path.join(dir, "chart.svg")).href}">`));
 });
 
 test("show passes an image file through without a browser", async () => {
@@ -97,6 +101,7 @@ test("show renders an HTML file without leaving its page behind, and fails clear
 
     await assert.rejects((await setup(fakeBrowser("").exec)).call({ html: "<p>" }), /did not finish loading/);
     await assert.rejects((await setup(exec, () => undefined)).call({ html: "<p>" }), /No Chromium or Chrome/);
+    assert.deepEqual(await fs.readdir(path.join(agent, "renders")), [path.basename(r.details.file)], "a failed render leaves no page");
   });
 });
 
