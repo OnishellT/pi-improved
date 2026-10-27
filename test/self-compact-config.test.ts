@@ -7,6 +7,10 @@ test("parses absolute, suffixed, and percentage thresholds", () => {
   assert.equal(parseThreshold("120").value, 120);
   assert.equal(parseThreshold("2.5k").value, 2500);
   assert.equal(parseThreshold("1m").value, 1_000_000);
+  assert.equal(parseThreshold("1.001k").value, 1_001);
+  assert.equal(parseThreshold("2.01m").value, 2_010_000);
+  assert.throws(() => parseThreshold("2.5"));
+  assert.throws(() => parseThreshold("1.0001k"));
   assert.equal(parseThreshold("35%").value, 0.35);
   assert.throws(() => parseThreshold("91%"));
   assert.throws(() => parseThreshold("0"));

@@ -39,7 +39,10 @@ export function parseThreshold(input: string | number): Threshold {
     if (match[2] || n > 90) throw new Error("Percentage threshold must be at most 90%");
     return { value: n / 100, percent: true, label: `${n}%` };
   }
-  const value = n * (match[2]?.toLowerCase() === "k" ? 1_000 : match[2]?.toLowerCase() === "m" ? 1_000_000 : 1);
+  // Shift the decimal point in the text: in floating point, 2.01 * 1_000_000 is 2009999.9999999998.
+  const digits = !match[2] ? 0 : match[2].toLowerCase() === "k" ? 3 : 6;
+  const [whole, fraction = ""] = match[1].split(".");
+  const value = fraction.length <= digits ? Number(whole + fraction.padEnd(digits, "0")) : NaN;
   if (!Number.isSafeInteger(value)) throw new Error("Threshold is outside the safe token range");
   return { value, percent: false, label: value.toLocaleString() };
 }
