@@ -16,6 +16,7 @@ const START_TIMEOUT = 30_000;
 const MAX_VERIFY_FAILURES = 3;
 const NONE = "No more";
 const DECLINE = "Don't ask again";
+export const REPEAT_WARNING = "Repeating it reruns the interview and the docs on the strong setup model, which costs far more than a normal task. Do it only if the project changed a lot. Update it?";
 
 /** Returns what is missing from the setup output; empty means complete. */
 export async function checkOutputs(root: string, verify: string[]): Promise<string[]> {
@@ -113,7 +114,7 @@ export function registerSetup(pi: ExtensionAPI) {
       if (!ctx.hasUI) return ctx.ui.notify("/setup needs the interactive UI.", "error");
       const root = ctx.cwd;
       let manifest = await readManifest(root);
-      if (manifest.setup === "done" && !(await ctx.ui.confirm("This project already has setup", "Update it?"))) return;
+      if (manifest.setup === "done" && !(await ctx.ui.confirm("This project already has setup", REPEAT_WARNING))) return;
 
       const resuming = manifest.setup !== "done" && Boolean(manifest.startedAt);
       ctx.ui.setStatus("setup", "setup: scanning the repo…");
@@ -130,6 +131,7 @@ export function registerSetup(pi: ExtensionAPI) {
         m.connectors = connectors;
         m.agentlint = agentlint;
         if (!m.verify.length) m.verify = found.verify;
+        m.mode ??= "direct";
       });
       registerConnectors(pi, connectors);
       nudges = 0;
@@ -203,11 +205,12 @@ export function registerSetup(pi: ExtensionAPI) {
         throw new Error(`The user did not approve. Feedback: ${feedback || "(none)"}. Apply it and call setup_finish again.`);
       }
 
-      await ensureIgnored(root, [TASK_PATH, ".pi/metrics/", ".pi/evidence/", ...((await fs.access(path.join(root, "package.json")).then(() => true, () => false)) ? ["node_modules/"] : [])]);
+      await ensureIgnored(root, [TASK_PATH, ".pi/contract.json", ".pi/metrics/", ".pi/evidence/", ...((await fs.access(path.join(root, "package.json")).then(() => true, () => false)) ? ["node_modules/"] : [])]);
 
       await updateManifest(root, (m) => {
         m.setup = "done";
         m.verify = verify;
+        m.mode ??= "direct";
         m.completedAt = new Date().toISOString();
       });
       return { content: [{ type: "text", text: "Setup complete and approved. Stop here." }], details: { verify }, terminate: true };
@@ -241,7 +244,9 @@ export function registerSetup(pi: ExtensionAPI) {
     if (event.reason !== "startup" || ctx.mode !== "tui" || manifest.setup === "done" || manifest.setup === "declined") return;
     if (!(await isProject(ctx.cwd))) return;
 
-    const question = manifest.startedAt ? "A setup is half done. Continue it?" : "This project has no agent setup. Do it now?";
+    const question = manifest.startedAt
+      ? "A setup is half done. Continue it?"
+      : "This project has no agent setup. Do it now? (default mode: direct, work from AGENTS.md; /task is optional and recommended for risky changes)";
     const choice = await ctx.ui.select(question, ["Yes", "Later", DECLINE]);
     if (choice === "Yes") pi.sendUserMessage("/setup", { expandPromptTemplates: true });
     else if (choice === DECLINE) await updateManifest(ctx.cwd, (m) => void (m.setup = "declined"));

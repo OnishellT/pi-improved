@@ -1,0 +1,31 @@
+import assert from "node:assert/strict";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
+import { test } from "node:test";
+import { listSkills, loadSkill, skillsDir } from "../src/skills.ts";
+
+const CAPS: Record<string, number> = { tdd: 1800, "contract-first": 2400, "diagnosing-bugs": 3800, "pstack-blast-radius": 2800 };
+
+test("every vendored SKILL.md has name and description frontmatter", async () => {
+  for (const name of await listSkills()) {
+    const text = await fs.readFile(path.join(skillsDir(), name, "SKILL.md"), "utf8");
+    const front = text.match(/^---\n([\s\S]*?)\n---\n/)?.[1] ?? "";
+    assert.equal(front.match(/^name:\s*(.+)$/m)?.[1].trim(), name, `${name}: name`);
+    assert.ok((await loadSkill(name)).description.length > 0, `${name}: description`);
+  }
+});
+
+test("compressed skills stay under their size caps and inject no companion files", async () => {
+  for (const [name, cap] of Object.entries(CAPS)) {
+    const skill = await loadSkill(name);
+    assert.ok(skill.body.length <= cap, `${name} body is ${skill.body.length} chars, cap ${cap}`);
+    assert.deepEqual(skill.files, [], `${name} must not inject companion files`);
+  }
+});
+
+test("contract-first keeps the contract file, the check step and the five input cases", async () => {
+  const { body } = await loadSkill("contract-first");
+  for (const needle of ["contract.json", "contract-check.mjs", "Wrong type", "null", "Empty", "Out of range", "Duplicates"]) {
+    assert.ok(body.includes(needle), `contract-first lost "${needle}"`);
+  }
+});

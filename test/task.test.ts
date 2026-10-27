@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { updateManifest } from "../src/manifest.ts";
 import { readTask, writeTask } from "../src/task-state.ts";
-import { registerTask } from "../src/task.ts";
+import { planCheckWanted, registerTask } from "../src/task.ts";
 import { fakePi, fakeUI, isSubagent, tempProject } from "./helpers.ts";
 
 const plan = (decisions: any[] = [], extra: any = {}) => ({
@@ -17,9 +17,10 @@ const plan = (decisions: any[] = [], extra: any = {}) => ({
   ...extra,
 });
 
-async function setup(done = true) {
+/** `fast: false` (default) marks the project as always-review, which keeps the human approval dialog in these tests. */
+async function setup(done = true, fast = false) {
   const root = await tempProject({ "docs/adr/0001-money.md": "# money\n", "src/money.ts": "export const m = 1;\n" });
-  if (done) await updateManifest(root, (m) => void (m.setup = "done"));
+  if (done) await updateManifest(root, (m) => void ((m.setup = "done"), !fast && (m.review = { always: true })));
   const h = fakePi();
   registerTask(h.pi);
   const ctxFor = (answers: unknown[]) => {
@@ -211,6 +212,7 @@ test("plan check: FIX sends the findings back once, the retry skips the paid che
   await updateManifest(root, (m) => {
     m.setup = "done";
     m.models = { review: "openai/gpt-6-astra" };
+    m.review = { plan: true, always: true };
   });
   const ctxFor = (answers: unknown[]) => {
     const ui = fakeUI(answers);
@@ -246,4 +248,57 @@ test("MCP tool results read while planning count as ticket evidence", async () =
   const { ctx, ui } = ctxFor([true]);
   await tools.get("task_plan").execute("1", plan([], { interface: [{ file: "src/fee.ts", exports: ["computeTotal"], source: "ticket" }] }), undefined, undefined, ctx);
   assert.equal(ui.asked.length, 1);
+});
+
+test("plan check is off by default and follows review.plan, review.always and risky plan files", () => {
+  const on = (review: any, files: string[] = ["src/fee.ts"]) => planCheckWanted({ version: 1, setup: "done", verify: [], connectors: [], review } as any, files);
+  assert.equal(on(undefined), false);
+  assert.equal(on({ minLevel: "off" }, ["package.json"]), false);
+  assert.equal(on({ minLevel: "high" }, ["package.json"]), true);
+  assert.equal(on({ minLevel: "high" }), false);
+  assert.equal(on({ plan: true }), true);
+  assert.equal(on({ plan: false, minLevel: "high" }, ["package.json"]), false);
+  assert.equal(on({ always: true, never: true, plan: false }), true);
+});
+
+test("approving the plan stores the HEAD commit as baseCommit", async () => {
+  const hash = "a".repeat(40);
+  const h = fakePi((cmd, args) => (cmd === "git" && args[0] === "rev-parse" ? { code: 0, stdout: `${hash}\n` } : { code: 0 }));
+  registerTask(h.pi);
+  const root = await tempProject({ "src/money.ts": "export const m = 1;\n" });
+  await updateManifest(root, (m) => void (m.setup = "done"));
+  const ui = fakeUI(["Accept the proposed names", true]);
+  const ctx = { cwd: root, hasUI: true, ui, waitForIdle: async () => {} } as any;
+  await h.commands.get("task").handler("Add fee", ctx);
+  await h.tools.get("task_plan").execute("1", { ...plan(), interface: [{ file: "src/fee.ts", exports: ["fee"], source: "user" }] }, undefined, undefined, ctx);
+  assert.equal((await readTask(root))!.baseCommit, hash);
+});
+
+test("fast path: a small plan with no risk trigger skips the approval dialog but still runs the gates", async () => {
+  const { commands, tools, ctxFor, root } = await setup(true, true);
+  await commands.get("task").handler("Add fee", ctxFor([]).ctx);
+  const { ui, ctx } = ctxFor([]);
+  const result = await tools.get("task_plan").execute("1", plan(), undefined, undefined, ctx);
+  assert.equal((await readTask(root))?.status, "implementing");
+  assert.match(result.content[0].text, /Plan approved/);
+  const bad = plan([], { interface: [{ file: "src/fee.ts", exports: ["computeTotal"], source: "ticket" }] });
+  await commands.get("task").handler("Add fee", ctxFor(["Replace it"]).ctx);
+  await assert.rejects(tools.get("task_plan").execute("1", bad, undefined, undefined, ctxFor([undefined]).ctx), /not approved/);
+  assert.ok(ui);
+});
+
+test("fast path is closed by size and by risk triggers", async () => {
+  const { planRiskReasons } = await import("../src/risk.ts");
+  const m: any = { review: {} };
+  const base = { files: ["src/a.ts", "test/a.test.ts"], interface: [], decisions: [] };
+  assert.deepEqual(planRiskReasons(base, m), []);
+  assert.deepEqual(planRiskReasons({ ...base, files: Array.from({ length: 8 }, (_, i) => `src/f${i}.ts`) }, m), []);
+  assert.match(planRiskReasons({ ...base, files: Array.from({ length: 9 }, (_, i) => `src/f${i}.ts`) }, m)[0], /9 files/);
+  assert.match(planRiskReasons({ ...base, interface: new Array(7).fill({}) }, m)[0], /7 interface/);
+  assert.match(planRiskReasons({ ...base, decisions: [1, 2, 3] }, m)[0], /3 decisions/);
+  assert.match(planRiskReasons({ ...base, files: ["package.json"] }, m)[0], /dependencies/);
+  assert.match(planRiskReasons({ ...base, files: ["db/migrations/001.sql"] }, m)[0], /migration/);
+  assert.match(planRiskReasons({ ...base, files: ["src/auth/login.ts"] }, m)[0], /sensitive/);
+  assert.match(planRiskReasons(base, { review: { paths: ["src/**"] } } as any)[0], /review.paths/);
+  assert.deepEqual(planRiskReasons(base, { review: { always: true } } as any), ["review.always"]);
 });

@@ -38,6 +38,8 @@ export interface Task {
   spec?: string[];
   /** Strong-model plan spot checks already spent on this task (bounded to keep the cost flat). */
   planChecks?: number;
+  /** HEAD when the task entered implementing: risk and review measure the diff against it. */
+  baseCommit?: string;
   startedAt: string;
   completedAt?: string;
 }

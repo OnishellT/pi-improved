@@ -13,7 +13,7 @@ const task = { id: "t1", title: "Do it", status: "implementing", allowedExtra: [
 
 async function setup(opts: { setup?: string; task?: boolean; pass?: boolean; answers?: unknown[]; review?: string } = {}) {
   const files: Record<string, string> = { ".pi/workflow.json": manifest(opts.setup ?? "done") };
-  if (opts.review) files[".pi/workflow.json"] = JSON.stringify({ version: 1, setup: "done", verify: ["check"], connectors: [], models: { review: "p/m" } });
+  if (opts.review) files[".pi/workflow.json"] = JSON.stringify({ version: 1, setup: "done", verify: ["check"], connectors: [], models: { review: "p/m" }, review: { minLevel: "low" } });
   if (opts.task) files[".pi/task.json"] = JSON.stringify(task);
   const root = await tempProject(files);
   let diff = "";
@@ -66,7 +66,7 @@ test("failure continues with the report; a write tool alone counts as change", a
 test("retry cap asks the user, then stops", async () => {
   const t = await setup({ answers: ["Keep trying", "Leave it as is"] });
   await t.run();
-  for (let i = 0; i < 3; i++) assert.equal((await t.settle()).continue, true);
+  for (let i = 0; i < 2; i++) assert.equal((await t.settle()).continue, true);
   assert.equal(t.ui.asked.length, 0);
   assert.equal((await t.settle()).continue, true);
   assert.equal(await t.settle(), undefined);
@@ -120,7 +120,7 @@ test("review skipped notifies and still confirms; no review model never spawns",
   t.ctx.ui.notify = (m: string) => notes.push(m);
   await t.run();
   await t.settle();
-  assert.match(notes[0], /Review skipped/);
+  assert.ok(notes.some((n) => /^Review skipped/.test(n)));
   assert.equal((await readTask(t.root))?.status, "done");
   const n = await setup({ pass: true, task: true, answers: [true] });
   await n.run();
@@ -136,7 +136,7 @@ function deferred<T = void>() {
 
 async function parallel(models: object, answers: unknown[] = [], verifyOut = "") {
   const root = await tempProject({
-    ".pi/workflow.json": JSON.stringify({ version: 1, setup: "done", verify: ["check"], connectors: [], models }),
+    ".pi/workflow.json": JSON.stringify({ version: 1, setup: "done", verify: ["check"], connectors: [], models, review: { minLevel: "low" } }),
     ".pi/task.json": JSON.stringify(task),
   });
   const gate = deferred();
@@ -201,7 +201,7 @@ test("verify pass handles the parallel review as before and emits both events", 
   assert.deepEqual([rev.status, rev.model, rev.root], ["changes", "p/strong", t.ctx.cwd]);
 });
 
-test("2nd failure diagnoses on the same model; the 3rd escalates and pass restores the model", async () => {
+test("1st failure fixes, the 2nd diagnoses and escalates, pass restores the model", async () => {
   const t = await parallel({ escalate: "p/strong" }, [false]);
   t.gate.resolve();
   const first = await t.settle();
@@ -209,11 +209,8 @@ test("2nd failure diagnoses on the same model; the 3rd escalates and pass restor
   const second = await t.settle();
   assert.equal(second.entries[0].customType, "verify-diagnose");
   assert.match(second.entries[0].content, /Apply the diagnosing-bugs method[\s\S]*reproduce, isolate, state the hypothesis, then fix\./);
-  assert.deepEqual(t.set, []);
-  const third = await t.settle();
-  assert.equal(third.entries[0].customType, "verify-gate");
   assert.deepEqual(t.set, ["p/strong"]);
-  assert.ok(t.notes.some((n) => n.includes("verify failed 3 times: p/strong takes this attempt")));
+  assert.ok(t.notes.some((n) => n.includes("verify failed 2 times: p/strong takes this attempt")));
   assert.deepEqual(t.emitted.find((e) => e.name === ESCALATE_EVENT).payload, { root: t.ctx.cwd, model: "p/strong" });
   t.setCode(0);
   t.ctx.model = { provider: "p", id: "strong" };
@@ -229,7 +226,7 @@ test("low-risk diff skips the paid review, notifies and emits skipped-low-risk",
   await t.run();
   assert.equal(await t.settle(), undefined);
   assert.equal(t.subagent.length, 0);
-  assert.ok(notes.some((n) => n.startsWith("Review skipped (low risk)")));
+  assert.ok(notes.some((n) => n.startsWith("Review skipped (risk none)")));
   assert.equal(t.emitted.find((e) => e.name === REVIEW_EVENT).payload.status, "skipped-low-risk");
   assert.equal((await readTask(t.root))?.status, "done");
 });
@@ -237,7 +234,7 @@ test("low-risk diff skips the paid review, notifies and emits skipped-low-risk",
 test("no escalation without a configured model", async () => {
   const t = await parallel({});
   t.gate.resolve();
-  for (let i = 0; i < 3; i++) await t.settle();
+  for (let i = 0; i < 2; i++) await t.settle();
   assert.deepEqual(t.set, []);
   assert.equal(t.emitted.some((e) => e.name === ESCALATE_EVENT), false);
 });
@@ -246,7 +243,7 @@ test("an agentlint failure never escalates and tells the model how to record an 
   const t = await parallel({ escalate: "p/strong" }, ["Make the model fix it", "Make the model fix it"], "facturas/tax-review src/invoice.js:11\n2 unresolved findings — gate closed");
   t.gate.resolve();
   let last: any;
-  for (let i = 0; i < 3; i++) last = await t.settle();
+  for (let i = 0; i < 2; i++) last = await t.settle();
   assert.deepEqual(t.set, []);
   assert.equal(t.emitted.some((e) => e.name === ESCALATE_EVENT), false);
   assert.match(last.entries[0].content, /the user will be asked to approve/);

@@ -8,8 +8,9 @@ import { fakePi, fakeUI, tempProject } from "./helpers.ts";
 
 test("listSkills finds the bundled skills", async () => {
   assert.deepEqual(await listSkills(), [
-    "diagnosing-bugs", "domain-modeling", "grilling", "pstack-blast-radius", "pstack-create-verification-skill",
-    "pstack-maintain-verification-skill", "pstack-technical-writing", "retro", "tdd",
+    "architect", "code-review", "codebase-design", "contract-first", "correct", "diagnosing-bugs", "domain-modeling", "grilling", "handoff", "how",
+    "interrogate", "pr", "principles-diagnose", "principles-implement", "principles-review", "pstack-blast-radius", "pstack-create-verification-skill",
+    "pstack-maintain-verification-skill", "pstack-technical-writing", "reflect", "research", "retro", "tdd", "unslop", "why", "writing-for-agents",
   ]);
 });
 
@@ -17,14 +18,14 @@ test("loadSkill reads frontmatter, body and companion files", async () => {
   const tdd = await loadSkill("tdd");
   assert.match(tdd.description, /Test-driven/);
   assert.ok(!tdd.body.startsWith("---"));
-  assert.deepEqual(tdd.files.map((f) => f.name), ["mocking.md", "tests.md"]);
+  assert.deepEqual(tdd.files, []);
 });
 
 test("skillsBlock strips Skill tool lines, rewrites Claude and is deterministic", async () => {
   const root = await tempProject({});
   const block = await skillsBlock(root, "plan");
   assert.match(block, /^## Skill: tdd/);
-  assert.match(block, /### tests\.md/);
+  assert.doesNotMatch(block, /### tests\.md/);
   assert.doesNotMatch(block, /Skill tool/);
   assert.equal(block, await skillsBlock(root, "plan"));
   const learn = await skillsBlock(root, "learn");
@@ -36,12 +37,13 @@ test("skillsBlock drops the pstack boilerplate section and keeps the skill body"
   for (const phase of ["setup", "review", "learn"] as const) {
     assert.doesNotMatch(await skillsBlock(root, phase), /Agent integration boundary|not an enforcement layer/);
   }
-  assert.match(await skillsBlock(root, "review"), /\*\*Reply:\*\*[^\n]*\n*$/);
+  await updateManifest(root, (m) => void (m.skills = { review: ["pstack-blast-radius"] }));
+  assert.match(await skillsBlock(root, "review"), /Reply[^\n]*\n*$/);
 });
 
 test("phaseSkills honors the manifest override", async () => {
   const root = await tempProject({});
-  assert.deepEqual(await phaseSkills(root, "plan"), ["tdd"]);
+  assert.deepEqual(await phaseSkills(root, "plan"), ["tdd", "contract-first"]);
   await updateManifest(root, (m) => void (m.skills = { plan: ["retro"] }));
   assert.deepEqual(await phaseSkills(root, "plan"), ["retro"]);
   assert.match(await skillsBlock(root, "plan"), /^## Skill: retro/);
@@ -66,7 +68,7 @@ test("/skills saves a per-phase selection", async () => {
   // setup: keep; plan: toggle retro then done; the other four phases: keep.
   const ui = fakeUI(["No changes", "· retro", "Done", "No changes", "No changes", "No changes", "No changes"]);
   await commands.get("skills").handler("", { cwd: root, ui });
-  assert.deepEqual((await readManifest(root)).skills, { plan: ["tdd", "retro"] });
+  assert.deepEqual((await readManifest(root)).skills, { plan: ["tdd", "contract-first", "retro"] });
 });
 
 test("clean ignores a ## line inside a code fence when looking for the boilerplate section", () => {

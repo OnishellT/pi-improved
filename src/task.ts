@@ -7,7 +7,9 @@ import { missingNames } from "./contract.ts";
 import { REVIEW_EVENT, type ReviewPayload } from "./events.ts";
 import { relatedTasks } from "./learn.ts";
 import { usePhaseModel } from "./models.ts";
+import { planRiskReasons } from "./risk.ts";
 import { checkPlan } from "./plan-check.ts";
+import { gitHead, highRiskReasons } from "./risk.ts";
 import { skillsBlock } from "./skills.ts";
 import { readManifest, type Manifest } from "./manifest.ts";
 import { inScope, readTask, updateTask, writeTask, type Decision, type Task } from "./task-state.ts";
@@ -24,6 +26,15 @@ const SPEC_FILE = /(?:^|[\s:(\[`"'])((?:\.{1,2}\/|\/|[\w.-]+\/)?[\w.-]+(?:\/[\w.
 const exists = (file: string) => fs.access(file).then(() => true, () => false);
 
 const tracker = (manifest: Manifest) => manifest.connectors.find((c) => TRACKERS.includes(c.id))?.id;
+
+/** The plan check costs a model call: off unless `review.always`, `review.plan` true, or a risk policy is set and the plan touches high-risk files. `always` beats `never`. */
+export function planCheckWanted(manifest: Manifest, files: string[]): boolean {
+  const rule = manifest.review;
+  if (rule?.always) return true;
+  if (rule?.never || rule?.plan === false) return false;
+  if (rule?.plan === true) return true;
+  return !!rule?.minLevel && rule.minLevel !== "off" && highRiskReasons(files, rule).length > 0;
+}
 
 /** Existing spec files named in a /task request, repo-relative when inside the repo. */
 export async function specFiles(root: string, text: string): Promise<string[]> {
@@ -182,7 +193,7 @@ export function registerTask(pi: ExtensionAPI) {
       // One short strong-model read of the plan: cheaper than reviewing the diff it produces, and it fixes names before they exist.
       const manifest = await readManifest(root);
       const checker = manifest.models?.review ?? manifest.models?.setup;
-      if (checker && manifest.review?.plan !== false && (task.planChecks ?? 0) < MAX_PLAN_CHECKS) {
+      if (checker && planCheckWanted(manifest, plan.files) && (task.planChecks ?? 0) < MAX_PLAN_CHECKS) {
         await updateTask(root, (t) => void (t.planChecks = (t.planChecks ?? 0) + 1));
         ctx.ui.setStatus("plan-check", `checking the plan with ${checker}…`);
         const t0 = Date.now();
@@ -195,14 +206,20 @@ export function registerTask(pi: ExtensionAPI) {
         } else ctx.ui.notify("Plan check: OK.", "info");
       }
 
-      if (!(await ctx.ui.confirm("Approve the plan?", planText(plan)))) {
+      // Fast path: a small plan with no risk trigger already passed the same deterministic gates above; the dialog adds only cost.
+      const risk = planRiskReasons(plan, manifest);
+      if (risk.length) ctx.ui.notify(`Plan needs your approval: ${risk.join("; ")}.`, "info");
+      else ctx.ui.notify(`Small plan, gates passed: no approval needed.\n\n${planText(plan)}`, "info");
+      if (risk.length && !(await ctx.ui.confirm("Approve the plan?", planText(plan)))) {
         const feedback = await ctx.ui.input("What should change?");
         throw new Error(`The user did not approve the plan. Feedback: ${feedback || "(none)"}. Revise it and call task_plan again.`);
       }
 
+      const baseCommit = task.baseCommit ?? (await gitHead(pi.exec.bind(pi), root));
       await updateTask(root, (t) => {
         t.plan = plan;
         t.status = "implementing";
+        if (baseCommit) t.baseCommit = baseCommit;
       });
       ticketText.delete(root);
       const decided = (plan.decisions ?? []).filter((d: any) => d.answer).map((d: any) => `- ${d.question} -> ${d.answer}`);

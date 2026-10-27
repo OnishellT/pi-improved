@@ -6,16 +6,18 @@ export interface StepResult {
   output: string;
 }
 
-const TAIL = 4000;
-const tail = (text: string) => (text.length > TAIL ? `…${text.slice(-TAIL)}` : text);
+export const DEFAULT_MAX_REPORT = 4000;
+/** A manifest `maxReport` counts only when it is a number of at least 200; anything else keeps the default. */
+export const validCap = (n: unknown) => (typeof n === "number" && Number.isFinite(n) && n >= 200 ? Math.floor(n) : undefined);
+const tail = (text: string, max: number) => (text.length > max ? `…${text.slice(-max)}` : text);
 
-/** Runs verify steps in order and stops at the first failure. */
-export async function runVerify(steps: string[], exec: Exec, cwd: string, timeout = 10 * 60_000) {
+/** Runs verify steps in order and stops at the first failure. Each step keeps the last `maxReport` characters of its output. */
+export async function runVerify(steps: string[], exec: Exec, cwd: string, timeout = 10 * 60_000, maxReport = DEFAULT_MAX_REPORT) {
   const results: StepResult[] = [];
   for (const step of steps) {
     const { stdout, stderr, code, killed } = await exec("bash", ["-lc", step], { cwd, timeout });
     const ok = code === 0 && !killed;
-    results.push({ step, ok, output: tail(`${stdout}\n${stderr}`.trim()) });
+    results.push({ step, ok, output: tail(`${stdout}\n${stderr}`.trim(), maxReport) });
     if (!ok) break;
   }
   return { ok: results.length === steps.length && results.every((r) => r.ok), results };
