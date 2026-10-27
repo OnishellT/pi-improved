@@ -67,6 +67,20 @@ export async function metricsReport(root: string): Promise<string> {
   return [`Last ${rows.length} tasks (id, cost, tokens in+out, seconds, verify failures, reviews):`, ...lines, `Mean cost per task: $${avg.toFixed(3)}`, `Reviews avoided: ${avoided} (≈ $${(avoided * mean).toFixed(2)} saved)`].join("\n");
 }
 
+/** The active task's phase, cost and tokens per phase, and the last risk verdict, from the persisted metrics. */
+export async function costReport(root: string): Promise<string> {
+  const task = await readTask(root).catch(() => undefined);
+  if (!task || task.status === "done") return "No active task. /metrics shows the latest finished ones.";
+  const data = await loadMetrics(root, task.id);
+  if (!data) return `${task.id}: ${task.status}, nothing recorded yet.`;
+  const rows = Object.entries(data.phases).map(([name, p]) => `  ${name.padEnd(13)} $${p.cost.toFixed(3).padStart(7)} ${String(p.input + p.output).padStart(9)} tok (${p.cacheRead} cached) ${String(Math.round(p.seconds)).padStart(5)} s`);
+  const reviewCost = data.reviews.reduce((s, r) => s + (r.cost ?? 0), 0);
+  const total = Object.values(data.phases).reduce((s, p) => s + p.cost, 0) + reviewCost;
+  const verdict = [...data.reviews].reverse().find((r) => !r.status.startsWith("plan-"));
+  const risk = !verdict ? "not assessed yet" : verdict.status === "skipped-low-risk" ? "low (review skipped)" : "high (review ran)";
+  return [`${task.id}: phase ${task.status}`, ...rows, `  review        $${reviewCost.toFixed(3).padStart(7)}`, `Total $${total.toFixed(3)} | last risk: ${risk} | verify runs ${data.verifyRuns} (${data.verifyFailures} failed)`].join("\n");
+}
+
 /**
  * Seconds are wall-clock deltas between consecutive message_end events (the first one counts from
  * agent_start), charged to the task phase current at that moment.
@@ -126,6 +140,10 @@ export function registerTelemetry(pi: ExtensionAPI) {
   });
   pi.events?.on(ESCALATE_EVENT, (d) => bump((d as EscalatePayload).root, (m) => void m.escalations++));
 
+  pi.registerCommand("cost", {
+    description: "Phase, cost and tokens of the active task, and its last risk level",
+    handler: async (_args, ctx) => ctx.ui.notify(await costReport(ctx.cwd), "info"),
+  });
   pi.registerCommand("metrics", {
     description: "Cost, tokens and time of the latest tasks",
     handler: async (_args, ctx) => ctx.ui.notify(await metricsReport(ctx.cwd), "info"),
