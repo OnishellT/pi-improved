@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -9,6 +9,10 @@ const created: string[] = [];
 after(async () => {
   await Promise.all(created.map((dir) => fs.rm(dir, { recursive: true, force: true })));
 });
+
+// Tests must never touch the real ~/.pi/agent (trust.json, subagent runs): point it at a temp dir for this test file.
+process.env.PI_CODING_AGENT_DIR = mkdtempSync(path.join(os.tmpdir(), "pi-improved-agent-"));
+created.push(process.env.PI_CODING_AGENT_DIR);
 
 export async function tempDir(prefix = "pi-improved-") {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));

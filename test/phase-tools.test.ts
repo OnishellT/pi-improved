@@ -33,7 +33,8 @@ test("phase tools are visible only during their phase", async () => {
 
 test("the extension registers nothing inside a subagent child", async () => {
   const { pi, tools, commands } = fakePi();
-  await withEnv({ PI_SUBAGENT_RUN_DIR: "/tmp/run" }, () => extension(pi));
+  const agent = await tempProject({ "extensions/subagent/index.ts": "export default () => {}" }); // a global subagent, so the bundled one is not loaded
+  await withEnv({ PI_SUBAGENT_RUN_DIR: "/tmp/run", PI_CODING_AGENT_DIR: agent }, () => extension(pi));
   assert.equal(tools.size + commands.size, 0);
 });
 
