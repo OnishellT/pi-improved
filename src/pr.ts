@@ -11,7 +11,7 @@ import { formatVerify, runVerify } from "./verify.ts";
 const TEMPLATES = [".github/pull_request_template.md", ".github/PULL_REQUEST_TEMPLATE.md", "docs/pull_request_template.md", "pull_request_template.md"];
 const EVIDENCE_SKILL = ".pi/skills/verify-app/SKILL.md";
 const ADR_DIR = "docs/adr/";
-const ATTRIBUTION = /co-authored-by|generated (with|by)\b.*\b(claude code|claude|anthropic|chatgpt|copilot|gemini)\b/i;
+const ATTRIBUTION = /co-authored-by|\b(generated|written|created|authored|assisted) (with|by)\b.*\b(claude code|claude|anthropic|chatgpt|copilot|gemini)\b/i;
 
 export interface PrFacts {
   branch: string;
@@ -31,7 +31,7 @@ export interface PrFacts {
 export const scrub = (text: string) => text.split("\n").filter((l) => !ATTRIBUTION.test(l)).join("\n");
 
 /** Branch names never carry the agent's vendor (the owner's attribution rule); other product names are the work's subject and stay. */
-const VENDOR = /^(claude|anthropic)$/;
+const VENDOR = /claude|anthropic/;
 
 const slug = (text: string) => text.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 50);
 
