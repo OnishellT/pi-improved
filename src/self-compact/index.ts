@@ -234,10 +234,12 @@ export default function (pi: ExtensionAPI) {
   pi.registerCommand("self-compact-info", {
     description: "Show self-compaction thresholds and current context usage",
     handler: async (_args, ctx) => {
+      // Right after a compaction pi knows the window but not the tokens, which a bad buffer must not hide.
       const usage = usageFor(ctx);
-      const current = usage ? `${usage.tokens?.toLocaleString()} / ${usage.effectiveWindow.toLocaleString()} tokens` : "usage unknown";
-      if (!usage) return ctx.ui.notify("Context usage unknown; thresholds depend on the context window.", "info");
-      const limit = usage.effectiveWindow;
+      const window = activeContextWindow ?? ctx.getContextUsage()?.contextWindow ?? ctx.model?.contextWindow;
+      if (!window) return ctx.ui.notify("Context window unknown; thresholds depend on it.", "info");
+      const limit = window - config.buffer;
+      const current = `${usage ? usage.tokens!.toLocaleString() : "?"} / ${limit.toLocaleString()} tokens`;
       const problem = checkThresholds(config, limit);
       ctx.ui.notify(`Context ${current}. Notice ${thresholdTokens(config.notice, limit).toLocaleString()}, warning ${thresholdTokens(config.warning, limit).toLocaleString()}, force ${thresholdTokens(config.force, limit).toLocaleString()} tokens.${problem ? ` ${problem}: enforcement is off.` : ""}`, "info");
     },
