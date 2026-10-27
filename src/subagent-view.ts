@@ -49,7 +49,8 @@ export function sessionRuns(sessionId: string, live: Set<string>, dir = path.joi
   }
   const runs = names.flatMap((name) => {
     try {
-      return [JSON.parse(fs.readFileSync(path.join(dir, name, "metadata.json"), "utf8"))];
+      const m = JSON.parse(fs.readFileSync(path.join(dir, name, "metadata.json"), "utf8"));
+      return m && typeof m === "object" ? [m] : [];
     } catch {
       return [];
     }
@@ -195,8 +196,11 @@ export function registerSubagentView(pi: ExtensionAPI, view: boolean, run: Tern 
   let lock = Promise.resolve();
   let queued = false;
   let frame = 0;
+  // A `/subagent` pick that comes back after shutdown opens no pane: nothing would close it.
+  let stopped = false;
 
   pi.on("session_start", (_event, ctx) => {
+    stopped = false;
     if (!ctx.hasUI) return;
     clearInterval(timer);
     const paint: Paint = (color, text) => ctx.ui.theme.fg(color, text);
@@ -218,6 +222,7 @@ export function registerSubagentView(pi: ExtensionAPI, view: boolean, run: Tern 
     timer.unref();
   });
   pi.on("session_shutdown", async (_event, ctx) => {
+    stopped = true;
     clearInterval(timer);
     timer = undefined;
     if (view && ctx.hasUI) ctx.ui.setWidget(WIDGET, undefined);
@@ -236,8 +241,8 @@ export function registerSubagentView(pi: ExtensionAPI, view: boolean, run: Tern 
       const picked = runs[labels.indexOf((await ctx.ui.select("Show subagent", labels)) ?? "")];
       if (!picked) return;
       let shown = false;
-      await (lock = lock.then(async () => void (shown = await showPane(panes, picked, anchor, run))));
-      if (!shown) ctx.ui.notify(`Could not open a pane for ${picked.name}`, "error");
+      await (lock = lock.then(async () => void (shown = !stopped && (await showPane(panes, picked, anchor, run)))));
+      if (!shown && !stopped) ctx.ui.notify(`Could not open a pane for ${picked.name}`, "error");
     },
   });
 }

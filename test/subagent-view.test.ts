@@ -44,6 +44,8 @@ test("sessionRuns lists this session's live children, and the ones runSubagent s
   await writeRun(dir, "d4", { parentSessionId: "other", state: "busy", createdAt: "2026-10-27T00" });
   await writeRun(dir, "e5", { state: "busy", createdAt: "2026-10-27T03" });
   await fs.mkdir(path.join(dir, "broken"));
+  await fs.mkdir(path.join(dir, "null"));
+  await fs.writeFile(path.join(dir, "null", "metadata.json"), "null");
   const live = new Set(["pi-subagent-a1", "pi-subagent-b2", "pi-subagent-d4", "pi-subagent-e5"]);
   assert.deepEqual(sessionRuns("s1", live, dir).map((r) => [r.handle, r.name, r.state, r.model]), [
     ["a1", "a1", "idle", "m·low"],
@@ -180,6 +182,16 @@ test("/subagent opens the picked child's pane in Tern and falls back to pi-subag
     calls.length = 0;
     await h.commands.get("subagent").handler("", ctx(() => undefined));
     assert.deepEqual(calls, [], "cancelling opens nothing");
+
+    let pick!: () => void;
+    const late = h.commands.get("subagent").handler("", ctx((l) => new Promise((resolve) => (pick = () => resolve(l[0]))) as any));
+    await new Promise(setImmediate);
+    await h.emit("session_shutdown", {}, { hasUI: false });
+    calls.length = 0;
+    pick();
+    await late;
+    assert.deepEqual(calls, [], "a pick that comes back after shutdown opens no pane");
+    assert.equal(notes.length, 0);
   });
 
   const plain = fakePi();
