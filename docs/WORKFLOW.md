@@ -125,6 +125,8 @@ Out of package, on purpose. A person has the last word on functionality in the d
 
 **State.** `.pi/workflow.json` is project state (versioned): setup, `verify`, `mode`, `models`, `skills`, `connectors`, `review`, `agentlint`. `.pi/task.json` is the active task (local, in `.gitignore`): `status` (`planning` | `implementing` | `done`), `plan`, `spec`, `planChecks`, `allowedExtra`.
 
+**Cost controls.** `/cost` shows the active task's phase, cost and tokens per phase, and the last risk level; `/metrics` covers finished tasks. A one-time notice suggests `/compact` or a new session when the context passes `contextWarn` tokens (default 150000, `0` turns it off). `maxReport` caps the failing-step output in a verify report (default 4000 characters, minimum 200). Running `/setup` again on a finished setup warns about the strong-model cost and asks before repeating; the startup offer never fires then.
+
 **Models per phase.** `/models` sets `setup`, `implement`, `review` and `escalate` as `provider/model`. A missing phase uses the session model. The strong model runs once in setup, in the plan check, in the diff review when risky, and on the third fix attempt. Everything else uses the cheap model.
 
 **Skills per phase.** Skills live in `vendor/skills/` and are injected into each phase prompt (`/skills` changes them). setup = grilling, domain-modeling, technical-writing, create-verification-skill. plan and implement = tdd. diagnose = diagnosing-bugs. review = blast-radius. learn = retro, maintain-verification-skill. The model never picks a skill.
