@@ -73,7 +73,10 @@ test("a session saved with the phase tools inactive gets them back once", async 
   pi.setActiveTools = (names: string[]) => void sets.push((active = names));
   const agent = await tempProject({ "extensions/subagent/index.ts": "export default () => {}" }); // a global subagent, so the bundled one is not loaded
   await withEnv({ PI_SUBAGENT_RUN_DIR: undefined, PI_CODING_AGENT_DIR: agent }, () => extension(pi));
+  await emit("session_start", { reason: "startup" }, { cwd: "/" });
+  assert.deepEqual(sets, [], "a startup tool list stays as given");
   await emit("session_start", { reason: "resume" }, { cwd: "/" });
+  await emit("session_start", { reason: "fork" }, { cwd: "/" });
   await emit("session_start", { reason: "reload" }, { cwd: "/" });
   assert.deepEqual(sets, [["read", "setup_finish", "task_plan"]]);
 });
