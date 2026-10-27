@@ -13,10 +13,6 @@ export interface ProfileFile {
   models?: Record<string, ProfileValues>;
 }
 
-/**
- * Remove carriage returns, newlines, and tabs from text, replacing them with spaces and trimming.
- * Used to clean status text for single-line footer display.
- */
 export const DEFAULTS = {
   notice: "75%",
   warning: "85%",
@@ -89,6 +85,10 @@ export function thresholdState(usage: number, limit: number, config: Config): "b
   return "below";
 }
 
+/**
+ * Remove carriage returns, newlines, and tabs from text, replacing them with spaces and trimming.
+ * Used to clean status text for single-line footer display.
+ */
 export function sanitizeStatus(text: string): string {
   return text.replace(/[\r\n\t]+/g, " ").trim();
 }
