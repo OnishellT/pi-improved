@@ -11,24 +11,27 @@ const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 test("no on-demand skills: no index, output unchanged", async () => {
   const root = await tempProject({});
-  const block = await skillsBlock(root, "plan");
+  const block = await skillsBlock(root, "review");
   assert.doesNotMatch(block, /Skills on request/);
-  assert.ok(block.startsWith("## Skill: tdd"));
-  await updateManifest(root, onDemand("plan", []));
-  assert.equal(await skillsBlock(root, "plan"), block);
+  assert.ok(block.startsWith("## Skill: code-review"));
+  await updateManifest(root, onDemand("review", []));
+  assert.equal(await skillsBlock(root, "review"), block);
 });
 
-test("DEFAULT_ON_DEMAND is empty for every phase and OPT_IN lists the opt-in skills", () => {
-  for (const names of Object.values(DEFAULT_ON_DEMAND)) assert.deepEqual(names, []);
+test("DEFAULT_ON_DEMAND lists the per-phase on-request skills and OPT_IN the opt-in ones", () => {
+  assert.deepEqual(DEFAULT_ON_DEMAND, {
+    setup: ["research"], plan: ["how", "architect", "codebase-design"], implement: ["handoff"], diagnose: ["why"], review: [], learn: [],
+  });
   assert.deepEqual(OPT_IN, ["interrogate", "reflect"]);
 });
 
 test("on-demand skills are listed in an index after the injected ones, deterministically", async () => {
   const root = await tempProject({});
+  await updateManifest(root, onDemand("plan", []));
   const plain = await skillsBlock(root, "plan");
   await updateManifest(root, onDemand("plan", ["retro", "grilling"]));
   assert.deepEqual(await phaseOnDemand(root, "plan"), ["retro", "grilling"]);
-  assert.deepEqual(await phaseOnDemand(root, "setup"), []);
+  assert.deepEqual(await phaseOnDemand(root, "setup"), ["research"]);
   const block = await skillsBlock(root, "plan");
   assert.ok(block.startsWith(plain));
   const index = block.slice(plain.length);
@@ -70,7 +73,7 @@ test("skill sub-directories are never injected", async () => {
   await mkdir(dir, { recursive: true });
   try {
     await writeFile(join(dir, "deep.md"), "SUBDIR-MARKER\n");
-    assert.deepEqual((await loadSkill("tdd")).files.map((f) => f.name), ["mocking.md", "tests.md"]);
+    assert.deepEqual((await loadSkill("tdd")).files.map((f) => f.name), []);
     assert.doesNotMatch(await skillsBlock(await tempProject({}), "plan"), /SUBDIR-MARKER/);
   } finally {
     await rm(dir, { recursive: true, force: true });
@@ -90,7 +93,7 @@ function run(root: string, answers: unknown[]) {
 test("/skills toggles on-demand per phase", async () => {
   const root = await tempProject({});
   const seen = await run(root, ["No changes", "◇ retro (on request)", "Done", "No changes", "No changes", "No changes", "No changes"]);
-  assert.deepEqual((await readManifest(root)).skillsOnDemand, { plan: ["retro"] });
+  assert.deepEqual((await readManifest(root)).skillsOnDemand, { plan: ["how", "architect", "codebase-design", "retro"] });
   assert.ok(seen[1].includes("◇ retro (on request)") && seen[1].includes("· retro"));
 });
 

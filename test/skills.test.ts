@@ -8,8 +8,9 @@ import { fakePi, fakeUI, tempProject } from "./helpers.ts";
 
 test("listSkills finds the bundled skills", async () => {
   assert.deepEqual(await listSkills(), [
-    "contract-first", "diagnosing-bugs", "domain-modeling", "grilling", "pstack-blast-radius", "pstack-create-verification-skill",
-    "pstack-maintain-verification-skill", "pstack-technical-writing", "retro", "tdd",
+    "architect", "code-review", "codebase-design", "contract-first", "correct", "diagnosing-bugs", "domain-modeling", "grilling", "handoff", "how",
+    "interrogate", "pr", "principles-diagnose", "principles-implement", "principles-review", "pstack-blast-radius", "pstack-create-verification-skill",
+    "pstack-maintain-verification-skill", "pstack-technical-writing", "reflect", "research", "retro", "tdd", "unslop", "why", "writing-for-agents",
   ]);
 });
 
@@ -36,7 +37,8 @@ test("skillsBlock drops the pstack boilerplate section and keeps the skill body"
   for (const phase of ["setup", "review", "learn"] as const) {
     assert.doesNotMatch(await skillsBlock(root, phase), /Agent integration boundary|not an enforcement layer/);
   }
-  assert.match(await skillsBlock(root, "review"), /\*\*Reply:\*\*[^\n]*\n*$/);
+  await updateManifest(root, (m) => void (m.skills = { review: ["pstack-blast-radius"] }));
+  assert.match(await skillsBlock(root, "review"), /Reply[^\n]*\n*$/);
 });
 
 test("phaseSkills honors the manifest override", async () => {
