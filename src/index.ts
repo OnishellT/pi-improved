@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerAskUser } from "./ask.ts";
+import { registerBasePrompt } from "./base-prompt.ts";
 import { registerDoctor } from "./doctor.ts";
 import { registerGate } from "./gate.ts";
 import { registerContextGuard } from "./context-guard.ts";
@@ -24,6 +25,7 @@ export default async function (pi: ExtensionAPI) {
   if (isSubagentChild()) return;
   registerAskUser(pi);
   registerDoctor(pi);
+  registerBasePrompt(pi);
   registerModels(pi);
   registerSkills(pi);
   registerSetup(pi);

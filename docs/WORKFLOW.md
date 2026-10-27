@@ -129,7 +129,20 @@ Out of package, on purpose. A person has the last word on functionality in the d
 
 **Models per phase.** `/models` sets `setup`, `implement`, `review` and `escalate` as `provider/model`. A missing phase uses the session model. The strong model runs once in setup, in the plan check, in the diff review when risky, and on the third fix attempt. Everything else uses the cheap model.
 
-**Skills per phase.** Skills live in `vendor/skills/` and are injected into each phase prompt (`/skills` changes them). setup = grilling, domain-modeling, technical-writing, create-verification-skill. plan and implement = tdd. diagnose = diagnosing-bugs. review = blast-radius. learn = retro, maintain-verification-skill. The model never picks a skill.
+**Skills per phase.** Skills live in `vendor/skills/` and each role gets only the ones it uses (`/skills` changes them; a missing skill is ignored). Injected skills are in the prompt; on-demand skills may be read when the work needs them. The model never picks an injected skill.
+
+| Role | Injected | On demand |
+|---|---|---|
+| setup | grilling, domain-modeling, pstack-technical-writing, writing-for-agents, pstack-create-verification-skill | research |
+| plan | tdd, contract-first | how, architect, codebase-design |
+| implement | tdd, contract-first, principles-implement | handoff |
+| diagnose | diagnosing-bugs, principles-diagnose | why |
+| review (read-only subagent) | code-review, pstack-blast-radius, principles-review | none |
+| learn | retro, correct, pstack-maintain-verification-skill | none |
+| plan check (subagent) | a 3-line naming rule, no skills | none |
+| /pr | none: the body is built in code | none |
+
+`interrogate` and `reflect` are opt-in only. The main session also gets a base prompt: the `unslop` skill (when bundled) and two working-style lines. Subagents never get it. `basePrompt: false` in `.pi/workflow.json` turns it off.
 
 **Gates.** All blocking happens in code, on pi events: `agent_before_settle` (contract, verify, review, close), `tool_result` (write count, MCP text as ticket evidence) and `tool_call` (files outside the plan, dependencies, migrations, interactive agentlint commands). `setup_finish` and `task_plan` are visible only in their phase.
 
