@@ -107,7 +107,7 @@ export const ok = (stdout = "") => ({ stdout, stderr: "", code: 0, killed: false
  * exec double for a subagent review: spawn records the brief file, wait answers `opts.wait`.
  * `git` answers git calls by their args (default: empty output).
  */
-export function fakeSubagentExec(opts: { spawn?: any; wait?: any; git?: (args: string[]) => string } = {}) {
+export function fakeSubagentExec(opts: { spawn?: any; wait?: any; stop?: any; git?: (args: string[]) => string } = {}) {
   const calls: { cmd: string; args: string[] }[] = [];
   let brief = "";
   const exec: any = async (cmd: string, args: string[]) => {
@@ -118,6 +118,7 @@ export function fakeSubagentExec(opts: { spawn?: any; wait?: any; git?: (args: s
       return opts.spawn ?? ok("Spawned review (a1b2c3)\nState: busy\n");
     }
     if (args[0] === "wait") return opts.wait ?? ok();
+    if (args[0] === "stop") return opts.stop ?? ok();
     return ok();
   };
   return { exec, calls, brief: () => brief };

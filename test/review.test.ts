@@ -3,6 +3,7 @@ import * as path from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { buildBrief, parseVerdict, reviewDiff, subagentCost } from "../src/review.ts";
+import { ownRuns } from "../src/subagent-view.ts";
 import type { Task } from "../src/task-state.ts";
 import { fakeSubagentExec, isSubagent, ok, tempDir } from "./helpers.ts";
 
@@ -15,7 +16,7 @@ const task: Task = {
   plan: { summary: "Login form summary", steps: ["step one"], files: ["src/login.ts"], decisions: [{ id: "d1", question: "Which hash?", options: [], status: "decided", answer: "argon2" }], interface: [], seams: [] },
 };
 
-const fakeExec = (opts: { spawn?: any; wait?: any } = {}) =>
+const fakeExec = (opts: { spawn?: any; wait?: any; stop?: any } = {}) =>
   fakeSubagentExec({ ...opts, git: (args) => (args[0] === "diff" ? "+const x = 1;" : "new.ts\0.pi/task.json\0.pi/skills/x/SKILL.md\0") });
 
 test("approved verdict; brief has plan and diff; read-only spawn; run is stopped", async () => {
@@ -29,6 +30,17 @@ test("approved verdict; brief has plan and diff; read-only spawn; run is stopped
   assert.match(f.brief(), /Add login[\s\S]*Login form summary[\s\S]*step one[\s\S]*src\/login\.ts[\s\S]*argon2[\s\S]*new\.ts[\s\S]*\+const x = 1;/);
   assert.doesNotMatch(f.brief(), /task\.json|SKILL\.md/);
   assert.ok(f.calls.some((c) => c.args[0] === "stop" && c.args[1] === "a1b2c3"));
+  assert.ok(!ownRuns.has("a1b2c3"));
+});
+
+test("a run that would not stop stays listed as this session's", async () => {
+  const f = fakeExec({ wait: ok("VERDICT: APPROVED\n"), stop: { ...ok(), code: 1 } });
+  await reviewDiff(f.exec, "/repo", task, "anthropic/claude-opus-4");
+  try {
+    assert.ok(ownRuns.has("a1b2c3"));
+  } finally {
+    ownRuns.delete("a1b2c3");
+  }
 });
 
 test("the diff is taken against the task's baseCommit, HEAD without one", async () => {
