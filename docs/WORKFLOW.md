@@ -145,7 +145,9 @@ Out of package, on purpose. A person has the last word on functionality in the d
 
 **Subagents.** Children launch via pi-subagent in tmux, read-only (`read,grep,find,ls` plus `codemode`, whose scripts reach only those four: the `mcp__none` entry keeps MCP tools out), with a brief file and a time limit. Inside a child (`PI_SUBAGENT_RUN_DIR`) the extension registers nothing: no setup offers, blocks or questions nobody can see. Their cost goes to the task telemetry. Above the editor, one line per child of the session, plan check and review included: state, current tool, turns, tool calls, model, context tokens and time. A child leaves it 5 minutes after it finishes; `/subagent` still lists it. In Tern, Stencil's terminal (`TERN_PANE` set), each child gets a pane beside pi attached to its tmux session while it works, so you can watch it or type to steer it; focus stays on pi and the pane closes when the child goes idle or stops. `/subagent` picks a child and focuses its pane, or opens one that stays until the child stops; outside Tern it attaches like pi-subagent's. Both replace pi-subagent's own widget and `/subagent`, unless pi-subagent is installed in pi itself.
 
-**Portability.** `pi install git:github.com/OnishellT/pi-improved` is enough. pi-subagent and agentlint are bundled. System requirements that cannot be packaged: Node >= 22.18, git, tmux. `/doctor` checks them.
+**Pictures.** The `show` tool draws a picture in the chat through the terminal's image protocol (Kitty or iTerm2: Tern, Kitty, Ghostty, WezTerm, iTerm2; elsewhere a one-line placeholder). It takes a PNG, JPEG, GIF or WebP file as is, and renders an SVG file, an HTML file or HTML/SVG markup (mockups, styled tables) with headless Chromium or Chrome: the page is measured, then saved as a PNG at twice its size in `~/.pi/agent/renders/`. The model gets only the path, so a picture costs no image tokens. For charts the tool description tells it to plot to a PNG first (matplotlib or similar); for diagrams, to write a ```` ```mermaid ```` block, which pi itself draws as text (flowchart, sequence, class, state, ER).
+
+**Portability.** `pi install git:github.com/OnishellT/pi-improved` is enough. pi-subagent and agentlint are bundled. System requirements that cannot be packaged: Node >= 22.18, git, tmux. Chromium or Chrome only for `show` on HTML and SVG. `/doctor` checks them.
 
 **Module map** (`src/`).
 
@@ -164,7 +166,7 @@ Out of package, on purpose. A person has the last word on functionality in the d
 | State | `manifest.ts`, `task-state.ts` | `.pi/workflow.json`, `.pi/task.json`, task memory, defaults |
 | | `learn.ts`, `adr.ts`, `events.ts` | task records and retro; ADR files; events between modules |
 | | `discover.ts`, `connectors.ts`, `ui-driver.ts` | repo scan; vetted connectors; GUI driver detection |
-| | `ask.ts`, `base-prompt.ts`, `git.ts` | `ask_user`; main-prompt additions; git helper |
+| | `ask.ts`, `show.ts`, `base-prompt.ts`, `git.ts` | `ask_user`; `show`; main-prompt additions; git helper |
 | Subagents | `bin.ts`, `subagent-ext.ts`, `subagent-view.ts` | bundled CLIs; loading pi-subagent; children widget, Tern panes, `/subagent` |
 | Computer | `computer/` | `/computer`, browser and desktop MCP servers ([COMPUTER.md](COMPUTER.md)) |
 

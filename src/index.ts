@@ -11,6 +11,7 @@ import { registerModels } from "./models.ts";
 import { registerPr } from "./pr.ts";
 import { registerSkills } from "./skills.ts";
 import { registerSetup } from "./setup.ts";
+import { registerShow } from "./show.ts";
 import { loadBundledSubagent } from "./subagent-ext.ts";
 import { registerSubagentView } from "./subagent-view.ts";
 import { registerTask } from "./task.ts";
@@ -22,6 +23,7 @@ export default async function (pi: ExtensionAPI) {
   // Children work for the parent (pi-subagent sets this in every child): no setup offers, gates or prompts nobody can answer.
   if (process.env.PI_SUBAGENT_RUN_DIR) return;
   registerAskUser(pi);
+  registerShow(pi);
   registerAbortCleanup(pi);
   registerSubagentView(pi, subagent === "bundled");
   registerDoctor(pi);
