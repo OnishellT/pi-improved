@@ -17,14 +17,14 @@ test("loadSkill reads frontmatter, body and companion files", async () => {
   const tdd = await loadSkill("tdd");
   assert.match(tdd.description, /Test-driven/);
   assert.ok(!tdd.body.startsWith("---"));
-  assert.deepEqual(tdd.files.map((f) => f.name), ["mocking.md", "tests.md"]);
+  assert.deepEqual(tdd.files, []);
 });
 
 test("skillsBlock strips Skill tool lines, rewrites Claude and is deterministic", async () => {
   const root = await tempProject({});
   const block = await skillsBlock(root, "plan");
   assert.match(block, /^## Skill: tdd/);
-  assert.match(block, /### tests\.md/);
+  assert.doesNotMatch(block, /### tests\.md/);
   assert.doesNotMatch(block, /Skill tool/);
   assert.equal(block, await skillsBlock(root, "plan"));
   const learn = await skillsBlock(root, "learn");

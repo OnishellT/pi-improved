@@ -5,17 +5,11 @@ description: "Pin the contract before editing code: exact names, files, signatur
 
 # Contract first
 
-Hidden tests fail on wrong names, wrong argument shapes and unchecked input far more often than on logic. Decide them first, then write code.
+Hidden tests fail on wrong names, argument shapes and unchecked input far more than on logic. Decide them first.
 
-## 1. Before editing: write the contract
+## 1. Before editing
 
-For each thing you add or change, fix:
-
-- **File and exact name** of every function, class, command or endpoint. Use the ticket's spelling letter for letter.
-- **Signature**: parameters in order, positional or one options object, defaults, return value (type, shape, sync or async).
-- **Behavior on invalid input** (section 2).
-
-If the ticket gives no name or shape, copy the conventions of the sibling files (same folder, same layer, their tests): naming case, export style, error type, how they report failure. Record each guess as an assumption in `notes`; never present a guess as a requirement.
+Fix every name, signature and return shape in `task_plan`'s `interface` field, spelled letter for letter as the ticket does; with no ticket detail, copy the sibling files' conventions and record each guess as an assumption in `notes`.
 
 Save it as `.pi/contract.json` (plain JSON, any language):
 
@@ -35,11 +29,11 @@ For every public entry point, decide each case, implement it and test it. A skip
 - **Out of range**: zero, negative, above a maximum, NaN or infinity, off-by-one at both ends, very large input.
 - **Duplicates**: repeated items or keys; the same call twice (idempotence).
 
-Per case: reject (the error the siblings use), normalize (say how) or accept. Follow the siblings unless the ticket says otherwise; note non-obvious choices.
+Per case: reject (the error the siblings use), normalize (say how) or accept.
 
 ## 3. Implement
 
-Write one test per decided behavior, invalid-input cases included, using exactly the contract's names and shapes. If the contract must change, edit `contract.json` and say why in your final message.
+One test per decided behavior, invalid-input cases included, using the contract's exact names. If the contract changes, edit `contract.json` and say why in your final message.
 
 ## 4. Before calling it done
 
