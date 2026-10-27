@@ -90,7 +90,8 @@ test("ask_user answers given while planning become decisions with ADRs and are n
   await commands.get("task").handler("Add fee", ctxFor([]).ctx);
   const input = { questions: [{ question: "Rounding?", options: ["half-up", "banker"] }, { question: "Negative amounts?", options: ["throw", "zero"] }] };
   const details = { answers: [{ question: "Rounding?", answer: "half-up" }, { question: "Negative amounts?", answer: "throw" }] };
-  await emit("tool_result", { toolName: "ask_user", input, details }, ctxFor([]).ctx);
+  const result = await emit("tool_result", { toolName: "ask_user", input, details, content: [{ type: "text", text: "Q: Rounding?" }] }, ctxFor([]).ctx);
+  assert.match(result.content.at(-1).text, /already recorded as plan decisions/);
   const { ctx, ui } = ctxFor([true]);
   await tools.get("task_plan").execute("1", plan([{ question: "Rounding?", options: ["half-up", "banker"] }]), undefined, undefined, ctx);
   assert.equal(ui.asked.length, 1);
@@ -101,7 +102,8 @@ test("ask_user answers given while planning become decisions with ADRs and are n
 
 test("ask_user answers outside planning are not plan decisions", async () => {
   const { commands, tools, ctxFor, emit, root } = await setup();
-  await emit("tool_result", { toolName: "ask_user", input: { questions: [{ question: "Q?", options: ["a", "b"] }] }, details: { answers: [{ question: "Q?", answer: "a" }] } }, ctxFor([]).ctx);
+  const result = await emit("tool_result", { toolName: "ask_user", input: { questions: [{ question: "Q?", options: ["a", "b"] }] }, details: { answers: [{ question: "Q?", answer: "a" }] }, content: [] }, ctxFor([]).ctx);
+  assert.equal(result, undefined);
   await commands.get("task").handler("Add fee", ctxFor([]).ctx);
   await tools.get("task_plan").execute("1", plan(), undefined, undefined, ctxFor([true]).ctx);
   assert.equal((await readTask(root))!.plan!.decisions.length, 0);

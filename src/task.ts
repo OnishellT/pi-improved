@@ -230,6 +230,7 @@ export function registerTask(pi: ExtensionAPI) {
           options: Type.Array(Type.String(), { minItems: 2, maxItems: 4, description: "Recommended first" }),
           source: Type.Optional(Type.String({ description: "ADR/doc/skill path that already settles it, optionally path#section" })),
         }),
+        { description: "Only choices still open: what the user answered through ask_user is recorded already" },
       ),
       interface: Type.Array(
         Type.Object({
@@ -292,12 +293,15 @@ export function registerTask(pi: ExtensionAPI) {
   pi.on("tool_result", async (event, ctx) => {
     if (event.toolName !== "ask_user" || (await readTask(ctx.cwd).catch(() => undefined))?.status !== "planning") return;
     const questions = (event.input.questions ?? []) as { question: string; options: string[] }[];
+    const given = ((event as any).details?.answers ?? []) as { question: string; answer: string }[];
     // Answers come back in question order; a cancel drops the rest.
-    for (const [i, a] of (((event as any).details?.answers ?? []) as { question: string; answer: string }[]).entries()) {
+    for (const [i, a] of given.entries()) {
       const options = questions[i]?.options ?? [];
       asked.set(a.question, { question: a.question, options, answer: a.answer });
       answers.set(JSON.stringify([a.question, options]), a.answer);
     }
+    // A cheap planner otherwise lists the same topics again, reworded, as task_plan decisions.
+    if (given.length) return { content: [...event.content, { type: "text" as const, text: "These answers are already recorded as plan decisions. Do not list these topics again in task_plan decisions." }] };
   });
   pi.on("tool_result", async (event, ctx) => {
     if (!event.toolName.startsWith("mcp__")) return;
