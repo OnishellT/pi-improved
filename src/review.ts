@@ -164,8 +164,9 @@ export async function runSubagent(exec: Exec, root: string, opts: { name: string
     } finally {
       if (handle) {
         cost = await subagentCost(handle);
-        await exec(resolveBin("subagent"), ["stop", handle], { cwd: root, timeout: 30_000 }).catch(() => {});
-        ownRuns.delete(handle);
+        const stop = await exec(resolveBin("subagent"), ["stop", handle], { cwd: root, timeout: 30_000 }).catch(() => undefined);
+        // A child that would not stop stays in the widget and `/subagent`, where it can be found and stopped by hand.
+        if (stop?.code === 0 && !stop.killed) ownRuns.delete(handle);
       }
       if (dir) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
     }
