@@ -25,9 +25,12 @@ const MIN_WIDTH = 500; // headless Chromium lays pages out at least this wide
 const MAX_WIDTH = 2400;
 const MAX_HEIGHT = 4000;
 const MAX_BYTES = 10e6;
-// Puts the content's size in the title, where `--dump-dom` can read it: the viewport would pad a short page.
+// Puts the content's size in the title, where `--dump-dom` can read it: the viewport would pad a short page. The range
+// covers text straight in the body, which no element bounds.
 const MEASURE = `<script>addEventListener("load", () => setTimeout(() => {
-  const boxes = [...document.body.querySelectorAll("*")].map((e) => e.getBoundingClientRect());
+  const range = document.createRange();
+  range.selectNodeContents(document.body);
+  const boxes = [range, ...document.body.querySelectorAll("*")].map((e) => e.getBoundingClientRect());
   const edge = (side) => Math.ceil(Math.max(0, ...boxes.map((b) => b[side])) + 8);
   document.title = "size:" + edge("right") + "x" + edge("bottom");
 }))</script>`;
