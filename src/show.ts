@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { Image, Text } from "@earendil-works/pi-tui";
+import { Box, Container, Image, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { which } from "./computer/which.ts";
 import { agentDir } from "./subagent-ext.ts";
@@ -112,19 +112,37 @@ export function registerShow(pi: ExtensionAPI, exec: Run = run, browser = findBr
       const kept = abs ? "" : ` (page: ${page})`;
       return { content: [{ type: "text", text: `Shown to the user (${w}x${h}): ${out}${kept}` }], details: { file: out, mimeType: "image/png" } };
     },
+    // The picture goes below the call's colored box, where pi puts its own pictures: inside the box, the padding fills
+    // the rows the picture covers, and pi-tui then leaves out a picture whose top has scrolled off the screen.
+    renderShell: "self",
+    renderCall({ file }, theme, context) {
+      const bg = context.isError ? "toolErrorBg" : context.isPartial ? "toolPendingBg" : "toolSuccessBg";
+      const header = new Box(context.outputPad, 1, (s) => theme.bg(bg, s));
+      header.addChild(new Text(`${theme.fg("toolTitle", theme.bold("show"))} ${theme.fg("muted", file ?? "markup")}`, 0, 0));
+      return header;
+    },
     renderResult(result, { isPartial }, theme, context) {
       const { file, mimeType } = (result.details ?? {}) as { file?: string; mimeType?: string };
-      const text = result.content.map((c) => (c.type === "text" ? c.text : "")).join("");
-      if (isPartial || !file || !context.showImages) return new Text(theme.fg("muted", text), 0, 0);
-      // A new Image would send the picture to the terminal again on every redraw.
-      if (context.lastComponent instanceof Image && context.state.file === file) return context.lastComponent;
-      try {
-        const data = fs.readFileSync(file).toString("base64");
-        context.state.file = file;
-        return new Image(data, mimeType ?? "image/png", { fallbackColor: (s) => theme.fg("muted", s) }, { filename: path.basename(file), maxWidthCells: 100 });
-      } catch {
-        return new Text(theme.fg("muted", `${file} is gone`), 0, 0);
+      const note = (text: string) => new Text(theme.fg(context.isError ? "error" : "muted", text), context.outputPad, 0);
+      const view = new Container();
+      view.addChild(new Spacer(1));
+      if (isPartial || !file || !context.showImages) {
+        view.addChild(note(result.content.map((c) => (c.type === "text" ? c.text : "")).join("")));
+        return view;
       }
+      // A new Image would send the picture to the terminal again on every redraw.
+      if (context.state.file !== file) {
+        try {
+          const data = fs.readFileSync(file).toString("base64");
+          context.state.image = new Image(data, mimeType ?? "image/png", { fallbackColor: (s) => theme.fg("muted", s) }, { filename: path.basename(file), maxWidthCells: 100 });
+          context.state.file = file;
+        } catch {
+          view.addChild(note(`${file} is gone`));
+          return view;
+        }
+      }
+      view.addChild(context.state.image);
+      return view;
     },
   });
 }
