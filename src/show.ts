@@ -21,6 +21,7 @@ const BROWSERS = [
   "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
   "/Applications/Chromium.app/Contents/MacOS/Chromium",
 ];
+const MIN_WIDTH = 500; // headless Chromium lays pages out at least this wide
 const MAX_WIDTH = 2400;
 const MAX_HEIGHT = 4000;
 const MAX_BYTES = 10e6;
@@ -81,7 +82,7 @@ export function registerShow(pi: ExtensionAPI, exec: Run = run, browser = findBr
     parameters: Type.Object({
       file: Type.Optional(Type.String({ description: "Path of the image, SVG or HTML file" })),
       html: Type.Optional(Type.String({ description: "HTML or SVG markup, when there is no file" })),
-      width: Type.Optional(Type.Number({ description: "Page width in CSS pixels for HTML (default 1000; 390 for a phone)" })),
+      width: Type.Optional(Type.Number({ description: "Page width in CSS pixels for HTML (default 1000, at least 500)" })),
     }),
     exposure: "model-only",
     async execute(id, { file, html, width }, _signal, _update, ctx) {
@@ -102,7 +103,7 @@ export function registerShow(pi: ExtensionAPI, exec: Run = run, browser = findBr
       const page = path.join(dir, `${name}.html`);
       const out = path.join(dir, `${name}.png`);
       fs.writeFileSync(page, pageFor({ html, file: abs }));
-      const { w, h } = await screenshot(bin, page, out, Math.min(Math.max(width ?? 1000, 200), MAX_WIDTH), exec).catch((err) => {
+      const { w, h } = await screenshot(bin, page, out, Math.min(Math.max(width ?? 1000, MIN_WIDTH), MAX_WIDTH), exec).catch((err) => {
         fs.rmSync(page, { force: true });
         throw err;
       });
