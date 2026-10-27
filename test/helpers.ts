@@ -46,7 +46,15 @@ export function fakePi(exec: (cmd: string, args: string[]) => { code: number; st
       for (const handler of handlers.get("agent_start") ?? []) handler({}, {});
     },
     getMcpServers: () => mcp,
-    registerMcpServer: (name: string, config: any) => mcp.push({ name, config }),
+    registerMcpServer: (name: string, config: any) => {
+      const at = mcp.findIndex((m) => m.name === name);
+      if (at >= 0) mcp[at] = { name, config };
+      else mcp.push({ name, config });
+    },
+    unregisterMcpServer: (name: string) => {
+      const at = mcp.findIndex((m) => m.name === name);
+      if (at >= 0) mcp.splice(at, 1);
+    },
     getAllTools: () => [],
   };
   const emit = async (event: string, payload: any, ctx: any) => {

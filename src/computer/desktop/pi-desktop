@@ -1,0 +1,27 @@
+#!/usr/bin/env python3
+import os
+from pathlib import Path
+import shutil
+import sys
+
+sys.dont_write_bytecode = True  # the bundle may be read-only or shared; never leave __pycache__ in it
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from session import desktop_environment
+
+# Both IPC and input must use the private session; never inherit the personal seat.
+environment = desktop_environment()
+os.environ.clear()
+os.environ.update(environment)
+os.environ['HYPRUSE_CONFINE'] = 'launched'
+os.environ['HYPRUSE_AUTH_GUARD'] = 'strict'
+os.environ['HYPRUSE_STRICT'] = '1'
+os.environ['HYPRUSE_MARK'] = '1'
+os.environ['HYPRUSE_SCREENSHOT_MODE'] = 'file'
+os.environ['HYPRUSE_CLIPBOARD'] = '0'
+if os.environ.get('PI_SUBAGENT_RUN_DIR'):
+    os.environ['HYPRUSE_READONLY'] = '1'
+# The uv/pipx location first; PATH only when it is absent.
+executable = str(Path.home() / '.local/bin/hypruse')
+if not os.access(executable, os.X_OK):
+    executable = shutil.which('hypruse') or sys.exit('hypruse is not installed (uv tool install hypruse)')
+os.execv(executable, [executable, *sys.argv[1:]])
