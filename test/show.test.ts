@@ -77,7 +77,7 @@ test("show renders markup at the measured size and keeps the page", async () => 
     const { calls, pages, exec } = fakeBrowser();
     const { call } = await setup(exec);
     const r = await call({ html: "<h1>Plan</h1>", width: 390 });
-    assert.ok(calls[0].includes("--window-size=390,800") && calls[0].includes("--dump-dom"));
+    assert.ok(calls[0].includes("--window-size=500,800") && calls[0].includes("--dump-dom"));
     assert.ok(calls[1].includes("--window-size=300,120") && calls[1].includes("--force-device-scale-factor=2"));
     assert.match(pages[0], /<h1>Plan<\/h1>/);
     const out = r.details.file;
