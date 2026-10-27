@@ -133,8 +133,9 @@ export default function (pi: ExtensionAPI) {
     promptGuidelines: ["Use self_compact at a useful stopping point when context is approaching the configured warning threshold. Include a concise handoff note."],
     parameters: Type.Object({ note: Type.Optional(Type.String({ description: "Continuation state to preserve in the compaction summary" })) }),
     execute: async (_id, { note }, _signal, _update, ctx) => {
+      const running = compacting;
       compact(ctx, note);
-      return { content: [{ type: "text", text: compacting ? "Compaction requested. Continue from the summary and handoff note." : "Compaction is already in progress." }], details: undefined };
+      return { content: [{ type: "text", text: running ? "Compaction is already in progress." : "Compaction requested. Continue from the summary and handoff note." }], details: undefined };
     },
   });
 
