@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import type { ProfileFile, ProfileValues } from "./config.ts";
+import { type ProfileFile, type ProfileValues, resolveConfig } from "./config.ts";
 
 const fields = new Set(["notice", "warning", "force", "buffer", "prompt"]);
 
@@ -9,6 +9,12 @@ function profileValues(value: unknown, where: string): ProfileValues {
     if (!fields.has(key)) throw new Error(`Unknown setting ${where}.${key}`);
     if (typeof entry !== "string" && typeof entry !== "number") throw new Error(`${where}.${key} must be a string or number`);
     if (key === "prompt" && typeof entry !== "string") throw new Error(`${where}.prompt must be a string`);
+  }
+  // A bad threshold or buffer fails here, where the error can name its file.
+  try {
+    resolveConfig({}, value as ProfileValues);
+  } catch (error) {
+    throw new Error(`${where}: ${(error as Error).message}`);
   }
   return value as ProfileValues;
 }

@@ -25,7 +25,7 @@ export default function (pi: ExtensionAPI) {
     buffer: pi.getFlag("compact-buffer"),
     prompt: pi.getFlag("compact-prompt"),
   });
-  let config = resolveConfig(flagOverrides());
+  let config = resolveConfig(); // flags and config files apply at session_start
   let notifiedError: string | undefined;
   let forceFailed = false; // set when a forced compaction errors; cleared once usage leaves the force tier
   let lastTier = "below";
@@ -177,20 +177,25 @@ export default function (pi: ExtensionAPI) {
   });
 
   const configureForModel = async (provider: string | undefined, modelId: string | undefined, ctx: ExtensionContext) => {
-    try {
-      const globalProfiles = await loadProfileFile(profilePath);
-      const global = provider && modelId ? profileForModel(globalProfiles, provider, modelId) : globalProfiles.default ?? {};
-      let project = {};
+    const notify = (text: string, error: unknown, fallback: string) => {
+      if (ctx.hasUI) ctx.ui.notify(`${text}: ${error instanceof Error ? error.message : String(error)}. ${fallback}`, "error");
+    };
+    const load = async (path: string) => {
       try {
-        const projectProfiles = await loadProfileFile(join(ctx.cwd, ".pi", "self-compact.json"));
-        project = provider && modelId ? profileForModel(projectProfiles, provider, modelId) : projectProfiles.default ?? {};
+        const file = await loadProfileFile(path);
+        return provider && modelId ? profileForModel(file, provider, modelId) : file.default ?? {};
       } catch (error) {
-        if (ctx.hasUI) ctx.ui.notify(`Could not load project self-compact config: ${error instanceof Error ? error.message : String(error)}. Using global settings.`, "error");
+        notify(`Could not load ${path}`, error, "Ignoring that file.");
+        return {};
       }
-      config = resolveConfig(flagOverrides(), { ...global, ...project });
+    };
+    const profile = { ...(await load(profilePath)), ...(await load(join(ctx.cwd, ".pi", "self-compact.json"))) };
+    try {
+      config = resolveConfig(flagOverrides(), profile);
     } catch (error) {
-      config = resolveConfig(flagOverrides());
-      if (ctx.hasUI) ctx.ui.notify(`Could not load ${profilePath}: ${error instanceof Error ? error.message : String(error)}. Using default thresholds.`, "error");
+      // The files' values were checked as they loaded, so a --compact-* flag is at fault.
+      config = resolveConfig({}, profile);
+      notify("Invalid --compact-* flag", error, "Ignoring the flags.");
     }
   };
 

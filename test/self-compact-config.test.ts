@@ -31,6 +31,8 @@ test("validates the profile file schema", () => {
   });
   assert.throws(() => parseProfileFile('{"models":{"bad-key":{"force":"80%"}}}'));
   assert.throws(() => parseProfileFile('{"default":{"unknown":1}}'));
+  assert.throws(() => parseProfileFile('{"models":{"a/b":{"force":"95%"}}}'), /^Error: models\.a\/b: Percentage threshold must be at most 90%$/);
+  assert.throws(() => parseProfileFile('{"default":{"buffer":-1}}'), /^Error: default: Buffer/);
 });
 
 test("merges provider/model profiles with project values taking priority", () => {
