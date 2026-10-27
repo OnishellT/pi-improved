@@ -6,8 +6,8 @@ import { nodeOk, registerDoctor } from "../src/doctor.ts";
 import { fakePi, tempProject } from "./helpers.ts";
 
 const models = [{ provider: "anthropic", id: "opus" }];
-const setup = async (exec: (cmd: string, args: string[]) => any, hasUI = true, mode?: string) => {
-  const root = await tempProject({ ".pi/workflow.json": JSON.stringify({ version: 1, setup: "done", verify: [], connectors: [], mode, models: { implement: "anthropic/opus", review: "openai/gpt-5" } }) });
+const setup = async (exec: (cmd: string, args: string[]) => any, hasUI = true, mode?: string, extra = {}) => {
+  const root = await tempProject({ ".pi/workflow.json": JSON.stringify({ version: 1, setup: "done", verify: [], connectors: [], mode, models: { implement: "anthropic/opus", review: "openai/gpt-5" }, ...extra }) });
   const notes: { msg: string; level: string }[] = [];
   const ctx: any = { cwd: root, hasUI, modelRegistry: { getAvailable: () => models }, ui: { notify: (msg: string, level: string) => notes.push({ msg, level }) } };
   const h = fakePi(exec);
@@ -28,6 +28,16 @@ test("/doctor lists missing models with a login hint and failing CLIs", async ()
   assert.match(msg, /✗ subagent/);
   assert.match(msg, /✓ git/);
   assert.match(msg, /openai\/gpt-5[\s\S]*\/login <provider>[^\n]*openai/);
+});
+
+test("agentlint is checked only when the project runs it", async () => {
+  const fail = (cmd: string) => (cmd === "git" ? { code: 0 } : { code: 1 });
+  const unused = await setup(fail);
+  await unused.commands.get("doctor").handler("", unused.ctx);
+  assert.doesNotMatch(unused.notes[0].msg, /agentlint/);
+  const used = await setup(fail, true, undefined, { agentlint: "npm exec agentlint --" });
+  await used.commands.get("doctor").handler("", used.ctx);
+  assert.match(used.notes[0].msg, /✗ agentlint: not found/);
 });
 
 test("session_start warns once, only with a UI, and only when something is missing", async () => {

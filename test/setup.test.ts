@@ -122,6 +122,19 @@ test("the settle hook nudges a model that stops early, a bounded number of times
   assert.equal((await settle())?.continue, true);
 });
 
+test("a setup turn that ends on an error or Escape says how to resume", async () => {
+  const root = await tempProject({});
+  await updateManifest(root, (m) => void (m.setup = "running"));
+  const { pi, emit } = fakePi();
+  registerSetup(pi);
+  const notes: string[] = [];
+  const ctx = { cwd: root, hasUI: true, ui: { notify: (m: string) => notes.push(m) } };
+  assert.equal(await emit("agent_before_settle", { outcome: "error" }, ctx), undefined);
+  await emit("agent_before_settle", { outcome: "aborted" }, ctx);
+  assert.equal(notes.length, 2);
+  assert.match(notes[0], /Run \/setup to continue/);
+});
+
 test("ask_user batches questions and supports a free-text answer", async () => {
   const { pi, tools } = fakePi();
   registerAskUser(pi);
