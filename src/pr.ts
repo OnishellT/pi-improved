@@ -103,6 +103,8 @@ export async function gatherFacts(exec: Exec, root: string, wanted?: string): Pr
       break;
     }
   }
+  // origin/HEAD is a symbolic ref: use the branch it points to, or the base would be named "HEAD".
+  if (base === "origin/HEAD") base = (await run("git", ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"]))?.trim() || "origin/main";
   const branch = (await run("git", ["branch", "--show-current"]))?.trim() || "(detached HEAD)";
   const commits = base ? lines((await run("git", ["log", "--format=%h %s", `${base}..HEAD`])) ?? "") : [];
   const changes = base ? lines((await run("git", ["diff", "--name-status", `${base}...HEAD`])) ?? "") : [];

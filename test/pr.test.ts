@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { branchName, buildBody, newAdrs, prTitle, runPr, scrub, type PrFacts } from "../src/pr.ts";
+import { branchName, buildBody, gatherFacts, newAdrs, prTitle, runPr, scrub, type PrFacts } from "../src/pr.ts";
 import { fakeUI, tempProject } from "./helpers.ts";
 
 const plan = { summary: "Add the thing", steps: ["step one"], files: [], decisions: [] as any[], interface: [], seams: [{ name: "parser", testFile: "t", catches: "bad input", misses: "io" }] };
@@ -105,4 +105,15 @@ test("without gh nothing is asked or pushed: the body is shown", async () => {
   assert.equal(out.status, "shown");
   assert.deepEqual(ui.asked, []);
   assert.ok(!has("git", "push"));
+});
+
+test("origin/HEAD is resolved to the branch it points to", async () => {
+  const exec: any = async (cmd: string, args: string[]) => {
+    const ok = (stdout = "") => ({ code: 0, stdout, stderr: "", killed: false });
+    if (cmd !== "git") return ok();
+    if (args[0] === "symbolic-ref") return ok("origin/main\n");
+    return ok("x\n");
+  };
+  const facts = await gatherFacts(exec, "/tmp");
+  assert.equal(facts?.base, "origin/main");
 });
