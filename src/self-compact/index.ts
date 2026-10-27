@@ -37,7 +37,7 @@ export default function (pi: ExtensionAPI) {
     const usage = ctx.getContextUsage();
     const contextWindow = selectedContextWindow ?? activeContextWindow ?? usage?.contextWindow;
     if (!usage || usage.tokens == null || !contextWindow) return undefined;
-    return { ...usage, contextWindow, effectiveWindow: Math.max(1, contextWindow - config.buffer) };
+    return { ...usage, contextWindow, effectiveWindow: contextWindow - config.buffer };
   };
 
   /** Shows an error in the UI, or on stderr when there is none (`pi -p`). */
@@ -66,9 +66,9 @@ export default function (pi: ExtensionAPI) {
         invalidate() {},
         render(width) {
           const usage = usageFor(ctx);
-          const contextWindow = usage?.effectiveWindow ?? Math.max(1, (activeContextWindow ?? ctx.model?.contextWindow ?? 0) - config.buffer);
+          const contextWindow = usage?.effectiveWindow ?? (activeContextWindow ?? ctx.model?.contextWindow ?? 0) - config.buffer;
           const tokens = usage?.tokens ?? 0;
-          const percent = usage?.tokens == null ? 0 : (tokens / contextWindow) * 100;
+          const percent = usage?.tokens == null || contextWindow <= 0 ? 0 : (tokens / contextWindow) * 100;
           const filled = Math.min(20, Math.round((percent / 100) * 20));
           const bar = `${"█".repeat(filled)}${"░".repeat(20 - filled)}`;
           let state = "";
@@ -238,7 +238,8 @@ export default function (pi: ExtensionAPI) {
       const current = usage ? `${usage.tokens?.toLocaleString()} / ${usage.effectiveWindow.toLocaleString()} tokens` : "usage unknown";
       if (!usage) return ctx.ui.notify("Context usage unknown; thresholds depend on the context window.", "info");
       const limit = usage.effectiveWindow;
-      ctx.ui.notify(`Context ${current}. Notice ${thresholdTokens(config.notice, limit).toLocaleString()}, warning ${thresholdTokens(config.warning, limit).toLocaleString()}, force ${thresholdTokens(config.force, limit).toLocaleString()} tokens.`, "info");
+      const problem = checkThresholds(config, limit);
+      ctx.ui.notify(`Context ${current}. Notice ${thresholdTokens(config.notice, limit).toLocaleString()}, warning ${thresholdTokens(config.warning, limit).toLocaleString()}, force ${thresholdTokens(config.force, limit).toLocaleString()} tokens.${problem ? ` ${problem}: enforcement is off.` : ""}`, "info");
     },
   });
 

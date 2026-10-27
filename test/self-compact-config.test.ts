@@ -71,6 +71,8 @@ test("checkThresholds reports when force >= window", () => {
   const error = checkThresholds(config, 1_000);
   assert.ok(error);
   assert.match(error, /less than the context window size/);
+  assert.match(checkThresholds(resolveConfig(), 128_000 - 200_000)!, /buffer must be smaller/);
+  assert.match(checkThresholds(resolveConfig(), 0)!, /buffer must be smaller/);
 });
 
 test("sanitizeStatus removes carriage returns, newlines, and tabs", () => {
