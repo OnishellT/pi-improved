@@ -53,13 +53,13 @@ Every key the code reads. Setup and `/models` write most of them; the rest you e
 | `contextWarn` | number | `150000` | Context tokens at which a one-time notice suggests `/compact`. `0` turns it off. |
 | `review.minLevel` | `off` \| `low` \| `high` | `off` | Risk level from which a model review runs. Needs `models.review`. |
 | `review.always` | boolean | `false` | Always review, always check the plan. Beats `never`. Needs `models.review` for the diff review. |
-| `review.never` | boolean | `false` | Never review. |
+| `review.never` | boolean | `false` | Never review and never check the plan. |
 | `review.plan` | boolean | unset | `true`: check every plan. `false`: never. Unset: only when the plan is risky. |
 | `review.paths` | string[] | `[]` | Globs that count as high risk. |
 | `review.maxLines`, `review.maxFiles` | number | `200`, `6` | Above these the diff is `low` risk. |
 | `review.highLines`, `review.highFiles` | number | `600`, `15` | Above these the diff is `high` risk. |
 
-`.pi/task.json` is the active task. It is local, and setup adds it to `.gitignore`. Neither file can be written by the model; the extension owns them.
+`.pi/task.json` is the active task. It is local, and setup adds it to `.gitignore`. The model's write and edit tools cannot change either file; the extension owns them.
 
 ## Measuring cost
 

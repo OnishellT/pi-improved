@@ -60,3 +60,13 @@ test("checkPlan spawns a read-only subagent on the given model, stops it, and ma
   assert.equal((await checkPlan(fakeExec("no verdict").exec, root, task, plan, "", "p/m")).status, "skipped");
   assert.equal((await checkPlan(fakeExec("x").exec, root, task, plan, "", "bad-model")).status, "skipped");
 });
+
+test("an aborted plan check stops its subagent instead of waiting for a verdict", async () => {
+  const root = await tempProject({});
+  const f = fakeExec("VERDICT: OK");
+  const abort = new AbortController();
+  abort.abort();
+  assert.equal((await checkPlan(f.exec, root, task, plan, "", "p/m", abort.signal)).status, "skipped");
+  assert.ok(!f.calls.some((c) => c.args[0] === "wait"));
+  assert.ok(f.calls.some((c) => c.args[0] === "stop" && c.args[1] === "c0ffee"));
+});
