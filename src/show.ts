@@ -31,8 +31,10 @@ const MEASURE = `<script>addEventListener("load", () => setTimeout(() => {
   const range = document.createRange();
   range.selectNodeContents(document.body);
   const boxes = [range, ...document.body.querySelectorAll("*")].map((e) => e.getBoundingClientRect());
-  const edge = (side) => Math.ceil(Math.max(0, ...boxes.map((b) => b[side])) + 8);
-  document.title = "size:" + edge("right") + "x" + edge("bottom");
+  const edge = (side) => Math.ceil(Math.max(0, ...boxes.map((b) => b[side])));
+  const body = getComputedStyle(document.body);
+  const gap = parseFloat(body.paddingBottom) + parseFloat(body.marginBottom);
+  document.title = "size:" + (edge("right") + 8) + "x" + Math.ceil(edge("bottom") + Math.max(gap, 8));
 }))</script>`;
 
 const run: Run = (bin, args) =>
@@ -46,7 +48,17 @@ export function findBrowser(pathEnv = process.env.PATH ?? ""): string | undefine
   return undefined;
 }
 
-/** Renders a page to a PNG the size of its content, at twice the CSS pixels. */
+/** Deletes the files in dir last modified more than maxAgeMs before now; best effort. */
+export function pruneRenders(dir: string, maxAgeMs: number, now = Date.now()) {
+  try {
+    for (const f of fs.readdirSync(dir)) {
+      const file = path.join(dir, f);
+      if (fs.statSync(file).mtimeMs < now - maxAgeMs) fs.rmSync(file, { force: true });
+    }
+  } catch {}
+}
+
+/** Renders a page to a PNG as wide as the page was laid out and as tall as its content, at twice the CSS pixels. */
 export async function screenshot(browser: string, page: string, out: string, width: number, exec: Run = run) {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), "pi-show-"));
   const url = pathToFileURL(page).href;
@@ -55,7 +67,8 @@ export async function screenshot(browser: string, page: string, out: string, wid
     const dom = await exec(browser, [...flags, `--window-size=${width},800`, "--dump-dom", url]);
     const size = /<title>size:(\d+)x(\d+)<\/title>/.exec(dom);
     if (!size) throw new Error("the page did not finish loading in 5 s");
-    const [w, h] = [Math.min(Number(size[1]), MAX_WIDTH), Math.min(Number(size[2]), MAX_HEIGHT)];
+    // Never narrower than the page was laid out: a narrower window would reflow it and trim its right padding.
+    const [w, h] = [Math.min(Math.max(Number(size[1]), width), MAX_WIDTH), Math.min(Number(size[2]), MAX_HEIGHT)];
     await exec(browser, [...flags, "--force-device-scale-factor=2", `--window-size=${w},${h}`, `--screenshot=${out}`, url]);
     return { w, h };
   } finally {
@@ -102,6 +115,7 @@ export function registerShow(pi: ExtensionAPI, exec: Run = run, browser = findBr
       if (!bin) throw new Error("No Chromium or Chrome found for HTML and SVG: install one, or show a PNG instead.");
       const dir = path.join(agentDir(), "renders");
       fs.mkdirSync(dir, { recursive: true });
+      pruneRenders(dir, 7 * 24 * 3600e3);
       const name = `${Date.now()}-${id.replace(/[^\w-]/g, "")}`;
       const page = path.join(dir, `${name}.html`);
       const out = path.join(dir, `${name}.png`);

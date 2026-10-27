@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 import { Image, resetCapabilitiesCache, setCapabilities, Text } from "@earendil-works/pi-tui";
-import { findBrowser, pageFor, registerShow, type Run } from "../src/show.ts";
+import { findBrowser, pageFor, pruneRenders, registerShow, type Run } from "../src/show.ts";
 import { fakePi, tempDir, withEnv } from "./helpers.ts";
 
 const theme = { fg: (_c: string, s: string) => s } as any;
@@ -78,13 +78,13 @@ test("show renders markup at the measured size and keeps the page", async () => 
     const { call } = await setup(exec);
     const r = await call({ html: "<h1>Plan</h1>", width: 390 });
     assert.ok(calls[0].includes("--window-size=500,800") && calls[0].includes("--dump-dom"));
-    assert.ok(calls[1].includes("--window-size=300,120") && calls[1].includes("--force-device-scale-factor=2"));
+    assert.ok(calls[1].includes("--window-size=500,120") && calls[1].includes("--force-device-scale-factor=2"));
     assert.match(pages[0], /<h1>Plan<\/h1>/);
     const out = r.details.file;
     assert.equal(path.dirname(out), path.join(agent, "renders"));
     assert.match(path.basename(out), /^\d+-call1\.png$/);
     assert.equal(await fs.readFile(out, "utf8"), "png");
-    assert.match(r.content[0].text, /^Shown to the user \(300x120\): .*\.png \(page: .*\.html\)$/);
+    assert.match(r.content[0].text, /^Shown to the user \(500x120\): .*\.png \(page: .*\.html\)$/);
     assert.deepEqual((await fs.readdir(path.join(agent, "renders"))).length, 2);
   });
 });
@@ -102,6 +102,29 @@ test("show renders an HTML file without leaving its page behind, and fails clear
     await assert.rejects((await setup(fakeBrowser("").exec)).call({ html: "<p>" }), /did not finish loading/);
     await assert.rejects((await setup(exec, () => undefined)).call({ html: "<p>" }), /No Chromium or Chrome/);
     assert.deepEqual(await fs.readdir(path.join(agent, "renders")), [path.basename(r.details.file)], "a failed render leaves no page");
+  });
+});
+
+test("pruneRenders deletes only files older than the limit, and tolerates a missing folder", async () => {
+  const dir = await tempDir();
+  const now = Date.now();
+  for (const [name, age] of [["old.png", 10_000], ["new.png", 1_000]] as const) {
+    await fs.writeFile(path.join(dir, name), "x");
+    const t = new Date(now - age);
+    await fs.utimes(path.join(dir, name), t, t);
+  }
+  pruneRenders(dir, 5_000, now);
+  assert.deepEqual(await fs.readdir(dir), ["new.png"]);
+  pruneRenders(path.join(dir, "missing"), 5_000, now);
+});
+
+test("a wide measured page keeps its width, so the picture is not reflowed", async () => {
+  const agent = await tempDir();
+  await withEnv({ PI_CODING_AGENT_DIR: agent }, async () => {
+    const { calls, exec } = fakeBrowser("900x300");
+    const { call } = await setup(exec);
+    await call({ html: "<p>wide</p>", width: 700 });
+    assert.ok(calls[1].includes("--window-size=900,300"));
   });
 });
 
