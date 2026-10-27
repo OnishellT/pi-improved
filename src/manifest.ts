@@ -15,6 +15,19 @@ export const DEFAULT_SKILLS: Record<Phase, string[]> = {
   learn: ["retro", "pstack-maintain-verification-skill"],
 };
 
+/** Bundled skills offered per phase as a one-line index (name, description, path) instead of being injected; the agent reads one only if the task needs it. */
+export const DEFAULT_ON_DEMAND: Record<Phase, string[]> = {
+  setup: [],
+  plan: [],
+  implement: [],
+  diagnose: [],
+  review: [],
+  learn: [],
+};
+
+/** Skills that are never in a default list: they only run when the user selects them explicitly (/skills). */
+export const OPT_IN: string[] = ["interrogate", "reflect"];
+
 export interface McpConfig {
   url: string;
 }
@@ -41,6 +54,8 @@ export interface Manifest {
   models?: PhaseModels;
   /** Bundled skill names per phase; a missing phase uses DEFAULT_SKILLS. */
   skills?: Partial<Record<Phase, string[]>>;
+  /** Bundled skill names per phase listed as an on-request index; a missing phase uses DEFAULT_ON_DEMAND. */
+  skillsOnDemand?: Partial<Record<Phase, string[]>>;
   /** Characters of failing-step output kept in a verify report (default 4000, minimum 200). Smaller is cheaper on every retry. */
   maxReport?: number;
   /** Context size in tokens at which a one-time notice suggests /compact or a new session (default 150000; 0 turns it off). */
