@@ -23,6 +23,10 @@ In your project:
 
 `/pr [base]` prepares the branch and the PR with the static check results. `/cost` shows the active task's spend and `/metrics` the finished tasks'. `/verify` runs verification by hand. `/skills` picks the skills injected per phase. `/computer` picks the browser and desktop the agent can drive, off until you choose ([docs/COMPUTER.md](docs/COMPUTER.md)). The agent can show pictures in the chat: images, charts it plots, and HTML or SVG mockups (those need Chromium or Chrome).
 
+### Self-compaction
+
+The `self-compact` extension tracks context usage and lets the agent request compaction with a handoff note. Configure soft notice, warning, and hard-limit thresholds with `--compact-notice`, `--compact-warning`, `--compact-force` (token counts or percentages, default 75%/85%/90%). Per-model and project defaults are in `~/.pi/agent/self-compact.json` and `.pi/self-compact.json` respectively (schema: `{ default: { notice?, warning?, force?, buffer?, prompt? }, models: { "provider/model": {...} } }`). The footer shows context usage and threshold markers. Use `/self-compact-info` to check current thresholds and `/self-compact-now [note]` to compact manually. Enforcement is skipped, with a one-time error, when thresholds are misordered or force is at or above the context window. After a failed forced compaction it does not force again until usage drops below the force threshold.
+
 Stages, gates, checks and internals: [docs/WORKFLOW.md](docs/WORKFLOW.md).
 
 ## State
