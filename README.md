@@ -4,7 +4,7 @@ Automatic project setup for Pi, so cheap models work with good context. The chea
 
 ## Install
 
-Requirements: Linux or macOS, Node >= 22.18, git, bash and **tmux** (the review and plan-check subagents run in tmux sessions). The rest ships with the package, including the [pi-subagent](https://github.com/badlogic/pi-subagent) CLI and [agentlint](https://github.com/aurelienbobenrieth/agentlint). A `subagent` already on the PATH wins.
+Requirements: Linux or macOS, Node >= 22.18, git, bash and **tmux** (the review and plan-check subagents run in tmux sessions). The rest ships with the package, including the [pi-subagent](https://github.com/badlogic/pi-subagent) CLI and [agentlint](https://github.com/aurelienbobenrieth/agentlint). A pi-subagent installed in pi itself wins over the bundled one and keeps its own widget and `/subagent`.
 
 ```sh
 pi install git:github.com/OnishellT/pi-improved

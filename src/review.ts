@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { resolveBin } from "./bin.ts";
-import { ownRuns } from "./subagent-panes.ts";
+import { ownRuns } from "./subagent-view.ts";
 import type { Task } from "./task-state.ts";
 import { agentDir, ensureTrusted } from "./subagent-ext.ts";
 import { diffBase, git, untrackedFiles, type Exec } from "./git.ts";

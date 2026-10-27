@@ -143,7 +143,7 @@ Out of package, on purpose. A person has the last word on functionality in the d
 
 **Gates.** All blocking happens in code, on pi events: `agent_before_settle` (contract, verify, review, close), `tool_result` (write count, MCP text as ticket evidence) and `tool_call` (files outside the plan, dependencies, migrations, interactive agentlint commands, and write or edit calls on `.pi/workflow.json` or `.pi/task.json`). `setup_finish` and `task_plan` are always declared, so the tool list never changes and the prompt cache survives phase changes; outside their phase they return an error. The model asks the person through the `ask_user` tool (options plus "Other"); it fails without a UI.
 
-**Subagents.** Children launch via pi-subagent in tmux, read-only (`read,grep,find,ls` plus `codemode`, whose scripts reach only those four: the `mcp__none` entry keeps MCP tools out), with a brief file and a time limit. Inside a child (`PI_SUBAGENT_RUN_DIR`) the extension registers nothing: no setup offers, blocks or questions nobody can see. Their cost goes to the task telemetry. In Tern, Stencil's terminal (`TERN_PANE` set), each child of the session gets a pane beside pi attached to its tmux session while it works, so you can watch it or type to steer it; focus stays on pi and the pane closes when the child goes idle or stops.
+**Subagents.** Children launch via pi-subagent in tmux, read-only (`read,grep,find,ls` plus `codemode`, whose scripts reach only those four: the `mcp__none` entry keeps MCP tools out), with a brief file and a time limit. Inside a child (`PI_SUBAGENT_RUN_DIR`) the extension registers nothing: no setup offers, blocks or questions nobody can see. Their cost goes to the task telemetry. Above the editor, one line per child of the session, plan check and review included: state, current tool, turns, tool calls, model, context tokens and time. In Tern, Stencil's terminal (`TERN_PANE` set), each child gets a pane beside pi attached to its tmux session while it works, so you can watch it or type to steer it; focus stays on pi and the pane closes when the child goes idle or stops. `/subagent` picks a child and focuses its pane, or opens one that stays until the child stops; outside Tern it attaches like pi-subagent's. Both replace pi-subagent's own widget and `/subagent`, unless pi-subagent is installed in pi itself.
 
 **Portability.** `pi install git:github.com/OnishellT/pi-improved` is enough. pi-subagent and agentlint are bundled. System requirements that cannot be packaged: Node >= 22.18, git, tmux. `/doctor` checks them.
 
@@ -165,7 +165,7 @@ Out of package, on purpose. A person has the last word on functionality in the d
 | | `learn.ts`, `adr.ts`, `events.ts` | task records and retro; ADR files; events between modules |
 | | `discover.ts`, `connectors.ts`, `ui-driver.ts` | repo scan; vetted connectors; GUI driver detection |
 | | `ask.ts`, `base-prompt.ts`, `git.ts` | `ask_user`; main-prompt additions; git helper |
-| Subagents | `bin.ts`, `subagent-ext.ts` | bundled CLIs; loading pi-subagent |
+| Subagents | `bin.ts`, `subagent-ext.ts`, `subagent-view.ts` | bundled CLIs; loading pi-subagent; children widget, Tern panes, `/subagent` |
 | Computer | `computer/` | `/computer`, browser and desktop MCP servers ([COMPUTER.md](COMPUTER.md)) |
 
 ## Pending

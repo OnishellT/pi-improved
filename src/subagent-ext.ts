@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -30,8 +30,23 @@ export async function loadBundledSubagent(pi: ExtensionAPI, dir = agentDir()): P
   const file = bundledExtension();
   if (!fs.existsSync(file)) return "missing";
   const mod = await import(pathToFileURL(file).href);
-  await (mod.default ?? mod)(pi);
+  await (mod.default ?? mod)(subagentHost(pi));
   return "bundled";
+}
+
+/** pi-subagent's own `/subagent`, which subagent-view.ts falls back to outside Tern. */
+export let bundledCommand: { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> | void } | undefined;
+
+/** The API the bundled pi-subagent gets: its `/subagent` is kept aside and its widget dropped, for subagent-view.ts. */
+export function subagentHost(pi: ExtensionAPI): ExtensionAPI {
+  const noWidget = (ctx: any) => ctx && new Proxy(ctx, { get: (c, key) => (key === "ui" ? new Proxy(c.ui, { get: (ui, k) => (k === "setWidget" ? () => {} : Reflect.get(ui, k)) }) : Reflect.get(c, key)) });
+  return new Proxy(pi, {
+    get: (target, key) => {
+      if (key === "registerCommand") return (name: string, options: any) => (name === "subagent" ? void (bundledCommand = options) : target.registerCommand(name, options));
+      if (key === "on") return (event: any, handler: any) => target.on(event, (e: any, ctx: any) => handler(e, noWidget(ctx)));
+      return Reflect.get(target, key);
+    },
+  });
 }
 
 /** Trusts `project` for pi sessions of this agent dir, so the review child does not stop at the trust dialog. */
