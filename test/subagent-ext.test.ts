@@ -3,8 +3,9 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
+import extension from "../src/index.ts";
 import { agentDir, ensureTrusted, hasGlobalSubagent, loadBundledSubagent } from "../src/subagent-ext.ts";
-import { tempProject } from "./helpers.ts";
+import { fakePi, tempProject, withEnv } from "./helpers.ts";
 
 test("global pi-subagent is detected from extensions/ or settings packages", async () => {
   const none = await tempProject({});
@@ -37,4 +38,11 @@ test("hasGlobalSubagent accepts object entries in settings packages", async () =
 
 test("tests run against a temp agent dir, never the real one", () => {
   assert.notEqual(path.resolve(agentDir()), path.join(os.homedir(), ".pi", "agent"));
+});
+
+test("the extension registers nothing inside a subagent child", async () => {
+  const { pi, tools, commands } = fakePi();
+  const agent = await tempProject({ "extensions/subagent/index.ts": "export default () => {}" }); // a global subagent, so the bundled one is not loaded
+  await withEnv({ PI_SUBAGENT_RUN_DIR: "/tmp/run", PI_CODING_AGENT_DIR: agent }, () => extension(pi));
+  assert.equal(tools.size + commands.size, 0);
 });

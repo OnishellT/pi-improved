@@ -141,7 +141,7 @@ Out of package, on purpose. A person has the last word on functionality in the d
 
 `interrogate` and `reflect` are opt-in only. The main session also gets a base prompt: the `unslop` skill (when bundled) and two working-style lines. Subagents never get it. `basePrompt: false` in `.pi/workflow.json` turns it off.
 
-**Gates.** All blocking happens in code, on pi events: `agent_before_settle` (contract, verify, review, close), `tool_result` (write count, MCP text as ticket evidence) and `tool_call` (files outside the plan, dependencies, migrations, interactive agentlint commands, and write or edit calls on `.pi/workflow.json` or `.pi/task.json`). `setup_finish` and `task_plan` are visible only in their phase. The model asks the person through the `ask_user` tool (options plus "Other"); it fails without a UI.
+**Gates.** All blocking happens in code, on pi events: `agent_before_settle` (contract, verify, review, close), `tool_result` (write count, MCP text as ticket evidence) and `tool_call` (files outside the plan, dependencies, migrations, interactive agentlint commands, and write or edit calls on `.pi/workflow.json` or `.pi/task.json`). `setup_finish` and `task_plan` are always declared, so the tool list never changes and the prompt cache survives phase changes; outside their phase they return an error. The model asks the person through the `ask_user` tool (options plus "Other"); it fails without a UI.
 
 **Subagents.** Children launch via pi-subagent in tmux, read-only (`read,grep,find,ls`), with a brief file and a time limit. Inside a child (`PI_SUBAGENT_RUN_DIR`) the extension registers nothing: no setup offers, blocks or questions nobody can see. Their cost goes to the task telemetry.
 
@@ -160,7 +160,7 @@ Out of package, on purpose. A person has the last word on functionality in the d
 | | `contract.ts`, `plan-check.ts` | verified names; plan check |
 | | `risk.ts`, `review.ts` | diff risk and fast path; the review subagent |
 | | `triggers.ts`, `guards.ts` | scope, dependency and migration pauses; blocked agentlint and state-file writes |
-| | `context-guard.ts`, `phase-tools.ts` | context notice; tools visible per phase |
+| | `context-guard.ts` | context notice |
 | State | `manifest.ts`, `task-state.ts` | `.pi/workflow.json`, `.pi/task.json`, task memory, defaults |
 | | `learn.ts`, `adr.ts`, `events.ts` | task records and retro; ADR files; events between modules |
 | | `discover.ts`, `connectors.ts`, `ui-driver.ts` | repo scan; vetted connectors; GUI driver detection |

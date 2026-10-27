@@ -6,7 +6,7 @@ import { registerAskUser } from "../src/ask.ts";
 import { readManifest, updateManifest } from "../src/manifest.ts";
 import { checkOutputs, registerSetup } from "../src/setup.ts";
 import { setupPrompt } from "../src/setup-prompt.ts";
-import { fakeCtx, fakePi, tempProject } from "./helpers.ts";
+import { fakeCtx, fakePi, fakeUI, tempProject } from "./helpers.ts";
 
 const SKILL = "---\nname: domain-billing\ndescription: Billing rules\n---\n# Billing\n";
 const documented = { "AGENTS.md": "# App\n", "GLOSSARY.md": "# G\n", ".pi/skills/domain-billing/SKILL.md": SKILL, "package.json": "{}" };
@@ -172,4 +172,49 @@ test("the gitignore list covers the state paths their owners define", async () =
   const { CONTRACT_PATH } = await import("../src/contract.ts");
   const { METRICS_DIR } = await import("../src/telemetry.ts");
   for (const owned of [TASK_PATH, CONTRACT_PATH, METRICS_DIR]) assert.ok(IGNORED_STATE.includes(owned), owned);
+});
+
+test("an agentlint config with zero rules does not block setup", async () => {
+  const root = await tempProject({
+    "AGENTS.md": "# App\n",
+    "GLOSSARY.md": "# G\n",
+    ".pi/skills/domain-billing/SKILL.md": "---\nname: domain-billing\ndescription: Billing\n---\n",
+    ".agentlint/config.ts": "",
+  });
+  await updateManifest(root, (m) => {
+    m.setup = "running";
+    m.agentlint = "npm exec agentlint --";
+  });
+  const { pi, tools } = fakePi((_cmd, args) => (/rules test/.test(args[1]) ? { code: 2, stderr: "No matching rules. Available:" } : { code: 0 }));
+  registerSetup(pi);
+  const ui = fakeUI([true]);
+  const result = await tools.get("setup_finish").execute("1", { verify: ["true"], summary: "s" }, undefined, undefined, { cwd: root, hasUI: true, ui });
+  assert.equal(result.terminate, true);
+  assert.match(await fs.readFile(path.join(root, ".gitignore"), "utf8"), /\.pi\/task\.json/);
+});
+
+test("setup_finish does not add agentlint twice when a package script already runs it", async () => {
+  const root = await tempProject({
+    "AGENTS.md": "# App\n",
+    "GLOSSARY.md": "# G\n",
+    ".pi/skills/domain-billing/SKILL.md": "---\nname: domain-billing\ndescription: Billing\n---\n",
+    ".agentlint/config.ts": "",
+    "package.json": JSON.stringify({ scripts: { verify: "npm test && npm exec agentlint -- check --all" } }),
+  });
+  await updateManifest(root, (m) => {
+    m.setup = "running";
+    m.agentlint = "npm exec agentlint --";
+  });
+  const { pi, tools } = fakePi();
+  registerSetup(pi);
+  await tools.get("setup_finish").execute("1", { verify: ["npm run verify"], summary: "s" }, undefined, undefined, { cwd: root, hasUI: true, ui: fakeUI([true]) });
+  assert.deepEqual((await readManifest(root)).verify, ["npm run verify"]);
+});
+
+test("setup_finish refuses outside setup", async () => {
+  const root = await tempProject({});
+  const { pi, tools } = fakePi();
+  registerSetup(pi);
+  const { ctx } = ctxFor(root, []);
+  await assert.rejects(tools.get("setup_finish").execute("1", { verify: ["true"], summary: "s" }, undefined, undefined, ctx), /No setup is running/);
 });
