@@ -126,7 +126,10 @@ export default function (pi: ExtensionAPI) {
       onError: (error) => {
         compacting = false;
         forceFailed = true;
-        if (ctx.hasUI) ctx.ui.notify(`Self-compaction failed: ${error.message}`, "error");
+        // After the session is replaced (`/new`, `/resume`) or `pi -p` ends, any use of ctx throws, and nobody is left to tell.
+        try {
+          report(ctx, `Self-compaction failed: ${error.message}`);
+        } catch {}
       },
     });
   };
