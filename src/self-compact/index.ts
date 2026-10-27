@@ -40,10 +40,16 @@ export default function (pi: ExtensionAPI) {
     return { ...usage, contextWindow, effectiveWindow: Math.max(1, contextWindow - config.buffer) };
   };
 
+  /** Shows an error in the UI, or on stderr when there is none (`pi -p`). */
+  const report = (ctx: ExtensionContext, text: string) => {
+    if (ctx.hasUI) ctx.ui.notify(text, "error");
+    else console.error(`[self-compact] ${text}`);
+  };
+
   /** Why thresholds cannot be enforced for this window, or undefined. Notifies once per distinct problem. */
   const configProblem = (ctx: ExtensionContext, effectiveWindow: number) => {
     const error = checkThresholds(config, effectiveWindow);
-    if (error && error !== notifiedError && ctx.hasUI) ctx.ui.notify(`Self-compact: ${error}. Enforcement is off.`, "error");
+    if (error && error !== notifiedError) report(ctx, `Self-compact: ${error}. Enforcement is off.`);
     notifiedError = error;
     return error;
   };
@@ -178,9 +184,8 @@ export default function (pi: ExtensionAPI) {
   });
 
   const configureForModel = async (provider: string | undefined, modelId: string | undefined, ctx: ExtensionContext) => {
-    const notify = (text: string, error: unknown, fallback: string) => {
-      if (ctx.hasUI) ctx.ui.notify(`${text}: ${error instanceof Error ? error.message : String(error)}. ${fallback}`, "error");
-    };
+    const notify = (text: string, error: unknown, fallback: string) =>
+      report(ctx, `${text}: ${error instanceof Error ? error.message : String(error)}. ${fallback}`);
     const load = async (path: string) => {
       try {
         const file = await loadProfileFile(path);
