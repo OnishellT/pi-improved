@@ -19,7 +19,7 @@ In your project:
 1. `/setup`: scan the repo, ask the minimum, then have the model write `AGENTS.md`, domain skills, ADRs and a verification skill. Pi offers it when you open a project without setup.
 2. `/models`: pick a model per phase (`setup`, `implement`, `review`, `escalate`). Saved in `.pi/workflow.json`.
 3. `/task <description or PAY-142>`: plan, approve once (small, low-risk plans skip the dialog but pass the same gates), implement. Code gates the end on `verify`, then a read-only review runs if the diff is risky.
-4. `/doctor`: check Node, subagent, tmux, git, agentlint when the project uses it, and that the configured models are available. If one is missing, run `/login <provider>`.
+4. `/doctor`: check Node, subagent, tmux, git, agentlint when the project uses it, and that each configured model is listed for a provider you are logged in to (if one is missing, run `/login <provider>`). It does not call the models, so one your account cannot use only fails on its first call.
 
 `/pr [base]` prepares the branch and the PR with the static check results. `/cost` shows the active task's spend and `/metrics` the finished tasks'. `/verify` runs verification by hand. `/skills` picks the skills injected per phase. `/computer` picks the browser and desktop the agent can drive, off until you choose ([docs/COMPUTER.md](docs/COMPUTER.md)).
 

@@ -45,7 +45,7 @@ Result: `.pi/workflow.json` with `setup: "done"`, `verify`, `models`, `connector
 It then calls `task_plan` with:
 
 - `summary`, `steps`, `files`.
-- `decisions`: only choices no document settles, 2 to 4 options each. Choices the code cannot resolve go to the person and are stored as ADRs in `docs/adr/`.
+- `decisions`: only choices no document settles, 2 to 4 options each. Choices the code cannot resolve go to the person and are stored as ADRs in `docs/adr/`. What the person already answered through `ask_user` while planning is added as a decided choice too, with its ADR, and is not asked again.
 - `interface`: file, exports and signatures the tests will import, citing the source (ticket, doc or existing file).
 - `seams`: test points per the `tdd` skill. Each ticket acceptance criterion, invalid-input ones included, needs one.
 

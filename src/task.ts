@@ -73,6 +73,8 @@ export function registerTask(pi: ExtensionAPI) {
   const ticketText = new Map<string, string>();
   /** Answers already given for a question text, so a task_plan retry does not ask it again. Reset per task. */
   const answers = new Map<string, string>();
+  /** What the user answered through ask_user while planning, by question: decisions the plan records. Reset per task. */
+  const asked = new Map<string, { question: string; options: string[]; answer: string }>();
 
   const evidenceFor = async (root: string, task: Task) => {
     const parts = [task.title, ...(task.ticket ? [task.ticket] : []), ticketText.get(root) ?? ""];
@@ -83,6 +85,7 @@ export function registerTask(pi: ExtensionAPI) {
   const start = async (ctx: any, manifest: Manifest, task: Task) => {
     nudges = 0;
     answers.clear();
+    asked.clear();
     ticketText.delete(ctx.cwd);
     await usePhaseModel(pi, ctx, "implement");
     pi.sendUserMessage(taskPrompt(task.title, task.ticket, tracker(manifest), await relatedTasks(ctx.cwd, task.title), await skillsBlock(ctx.cwd, "plan"), task.spec));
@@ -142,6 +145,14 @@ export function registerTask(pi: ExtensionAPI) {
       }
       const decision: Decision = { ...base, status: "decided", answer: await ask(ctx, "decision", d.question, d.options) };
       pending.push({ decision, adr: { title: d.question, context: `${task.title}\n\n${params.summary}`, decision: decision.answer! } });
+      out.push(decision);
+    }
+    // Questions the planner already put to the user through ask_user are decisions too.
+    const listed = new Set(params.decisions.map((d) => d.question));
+    for (const a of asked.values()) {
+      if (listed.has(a.question)) continue;
+      const decision: Decision = { id: `d${out.length + 1}`, question: a.question, options: a.options, status: "decided", answer: a.answer };
+      pending.push({ decision, adr: { title: a.question, context: `${task.title}\n\n${params.summary}`, decision: a.answer } });
       out.push(decision);
     }
     return out;
@@ -277,6 +288,16 @@ export function registerTask(pi: ExtensionAPI) {
 
   pi.on("before_agent_start", async (event) => {
     if (event.messageType === "user") nudges = 0;
+  });
+  pi.on("tool_result", async (event, ctx) => {
+    if (event.toolName !== "ask_user" || (await readTask(ctx.cwd).catch(() => undefined))?.status !== "planning") return;
+    const questions = (event.input.questions ?? []) as { question: string; options: string[] }[];
+    // Answers come back in question order; a cancel drops the rest.
+    for (const [i, a] of (((event as any).details?.answers ?? []) as { question: string; answer: string }[]).entries()) {
+      const options = questions[i]?.options ?? [];
+      asked.set(a.question, { question: a.question, options, answer: a.answer });
+      answers.set(JSON.stringify([a.question, options]), a.answer);
+    }
   });
   pi.on("tool_result", async (event, ctx) => {
     if (!event.toolName.startsWith("mcp__")) return;

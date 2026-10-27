@@ -85,6 +85,28 @@ test("invalid source is asked and recorded as an ADR", async () => {
   assert.match(await fs.readFile(path.join(root, d.source!), "utf8"), /basis points/);
 });
 
+test("ask_user answers given while planning become decisions with ADRs and are not asked again", async () => {
+  const { commands, tools, ctxFor, emit, root } = await setup();
+  await commands.get("task").handler("Add fee", ctxFor([]).ctx);
+  const input = { questions: [{ question: "Rounding?", options: ["half-up", "banker"] }, { question: "Negative amounts?", options: ["throw", "zero"] }] };
+  const details = { answers: [{ question: "Rounding?", answer: "half-up" }, { question: "Negative amounts?", answer: "throw" }] };
+  await emit("tool_result", { toolName: "ask_user", input, details }, ctxFor([]).ctx);
+  const { ctx, ui } = ctxFor([true]);
+  await tools.get("task_plan").execute("1", plan([{ question: "Rounding?", options: ["half-up", "banker"] }]), undefined, undefined, ctx);
+  assert.equal(ui.asked.length, 1);
+  const decisions = (await readTask(root))!.plan!.decisions;
+  assert.deepEqual(decisions.map((d) => [d.question, d.answer]), [["Rounding?", "half-up"], ["Negative amounts?", "throw"]]);
+  assert.match(await fs.readFile(path.join(root, decisions[1].source!), "utf8"), /throw/);
+});
+
+test("ask_user answers outside planning are not plan decisions", async () => {
+  const { commands, tools, ctxFor, emit, root } = await setup();
+  await emit("tool_result", { toolName: "ask_user", input: { questions: [{ question: "Q?", options: ["a", "b"] }] }, details: { answers: [{ question: "Q?", answer: "a" }] } }, ctxFor([]).ctx);
+  await commands.get("task").handler("Add fee", ctxFor([]).ctx);
+  await tools.get("task_plan").execute("1", plan(), undefined, undefined, ctxFor([true]).ctx);
+  assert.equal((await readTask(root))!.plan!.decisions.length, 0);
+});
+
 test("cancelled question stops; rejection returns feedback and stays planning", async () => {
   const { commands, tools, ctxFor, root } = await setup();
   await commands.get("task").handler("Add fee", ctxFor([]).ctx);

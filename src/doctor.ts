@@ -61,7 +61,7 @@ export async function runDoctor(pi: ExtensionAPI, ctx: ExtensionContext, version
     checks.push({
       name: "Models",
       ok: !missing.length,
-      detail: missing.length ? `unavailable: ${missing.join(", ")}. Run /login <provider> for: ${[...new Set(missing.map((m) => m.split("/")[0]))].join(", ")}` : "ok",
+      detail: missing.length ? `unavailable: ${missing.join(", ")}. Run /login <provider> for: ${[...new Set(missing.map((m) => m.split("/")[0]))].join(", ")}` : "listed for a logged-in provider (not called)",
     });
   }
   return checks;
