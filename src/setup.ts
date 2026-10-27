@@ -238,11 +238,15 @@ export function registerSetup(pi: ExtensionAPI) {
     if (event.messageType === "user") nudges = 0;
   });
   pi.on("agent_before_settle", async (event, ctx) => {
-    // An error or Escape leaves setup "running"; say how to get out of it.
-    if (event.outcome !== "completed" && ctx.hasUI && (await setupRunning(ctx.cwd))) ctx.ui.notify("Setup stopped before finishing. Run /setup to continue where it left off.", "warning");
     if (event.outcome !== "completed" || nudges >= MAX_NUDGES || !(await setupRunning(ctx.cwd))) return;
     nudges++;
     return { entries: [{ type: "custom_message", customType: "setup-nudge", content: SETUP_NUDGE, display: false }], continue: true };
+  });
+
+  // Escape, an error or a model that gave up after the nudges leaves setup "running"; say how to get out of it.
+  // agent_settled, not agent_before_settle: pi skips the settle boundary on Escape.
+  pi.on("agent_settled", async (_event, ctx) => {
+    if (ctx.hasUI && (await setupRunning(ctx.cwd))) ctx.ui.notify("Setup stopped before finishing. Run /setup to continue where it left off.", "warning");
   });
 
   pi.on("session_start", async (event, ctx) => {

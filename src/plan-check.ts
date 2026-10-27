@@ -42,6 +42,7 @@ export function buildPlanBrief(task: Task, plan: Plan, evidence: string, sibling
     "2. Reuse: an existing helper (validator, parser, formatter, type) in the repo that the plan should use instead of writing a new one.",
     "3. Robustness the ticket implies: invalid inputs rejected, boundaries from the ticket's acceptance criteria covered by the seams.",
     "4. Scope: a file the plan must touch and does not list, or lists and must not.",
+    "The plan's Decisions are settled: an answer came from the user, a `see <path>` from that document. Treat them as evidence like the ticket; never ask to confirm them.",
     "Do not comment on style, wording or things you are not sure about. Keep it under 250 words.",
     "Finish with `VERDICT: OK` or `VERDICT: FIX` followed by a numbered list of concrete fixes (what to rename/change and why, with the file or ticket line that decides it).",
     "## Ticket evidence",

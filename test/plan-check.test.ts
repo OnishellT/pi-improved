@@ -29,6 +29,7 @@ test("brief carries the ticket evidence, the plan interface and the sibling file
   const brief = buildPlanBrief(task, plan, "## Scope\n- `stopLevel(avgEntryPrice, stopPct)`", sib);
   assert.match(brief, /Plan check: Stop and trailing levels[\s\S]*stopLevel\(avgEntryPrice, stopPct\)[\s\S]*protection\.ts: stopLevel, shouldExit, shouldExit\(position[\s\S]*calendar\.ts, money\.ts/);
   assert.match(brief, /VERDICT: OK/);
+  assert.match(brief, /Decisions are settled: an answer came from the user/);
   assert.match(buildPlanBrief(task, plan, "x".repeat(30_000), []), /truncated/);
 });
 
