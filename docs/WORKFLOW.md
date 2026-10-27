@@ -147,7 +147,7 @@ Out of package, on purpose. A person has the last word on functionality in the d
 
 **Pictures.** The `show` tool draws a picture in the chat through the terminal's image protocol (Kitty or iTerm2: Tern, Kitty, Ghostty, WezTerm, iTerm2; elsewhere a one-line placeholder). It takes a PNG, JPEG, GIF or WebP file as is, and renders an SVG file, an HTML file or HTML/SVG markup (mockups, styled tables) with headless Chromium or Chrome: the page is measured, then saved as a PNG at twice its size in `~/.pi/agent/renders/`. The model gets only the path, so a picture costs no image tokens. For charts the tool description tells it to plot to a PNG first (matplotlib or similar); for diagrams, to write a ```` ```mermaid ```` block, which pi itself draws as text (flowchart, sequence, class, state, ER).
 
-**Portability.** `pi install git:github.com/OnishellT/pi-improved` is enough. pi-subagent and agentlint are bundled. System requirements that cannot be packaged: Node >= 22.18, git, tmux. Chromium or Chrome only for `show` on HTML and SVG. `/doctor` checks them.
+**Portability.** `pi install git:github.com/OnishellT/pi-improved` is enough. pi-subagent and agentlint are bundled. System requirements that cannot be packaged: Node >= 22.18, git, tmux; `/doctor` checks them. Chromium or Chrome only for `show` on HTML and SVG.
 
 **Module map** (`src/`).
 
