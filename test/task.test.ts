@@ -34,6 +34,11 @@ test("/task requires setup done", async () => {
   assert.equal(await readTask(root), undefined);
 });
 
+test("task_plan outside planning is refused", async () => {
+  const { tools, ctxFor } = await setup();
+  await assert.rejects(tools.get("task_plan").execute("1", plan(), undefined, undefined, ctxFor([]).ctx), /No task is being planned/);
+});
+
 test("/task creates the task and sends one prompt", async () => {
   const { commands, sent, ctxFor, root } = await setup();
   await commands.get("task").handler("PAY-12", ctxFor([]).ctx);

@@ -33,8 +33,10 @@ export default async function (pi: ExtensionAPI) {
   registerTriggers(pi);
   registerGate(pi);
   registerLearn(pi);
-  // Sessions saved when these tools were toggled per phase resume with them inactive; turn them on once. New sessions already have them.
-  pi.on("session_start", () => {
+  // Sessions saved when these tools were toggled per phase come back with them inactive; turn them on once.
+  // Only on resume or fork: new sessions already have them, and a startup `--tools` list stays as given.
+  pi.on("session_start", (event) => {
+    if (event.reason !== "resume" && event.reason !== "fork") return;
     const active = pi.getActiveTools();
     const missing = ["setup_finish", "task_plan"].filter((t) => !active.includes(t));
     if (missing.length) pi.setActiveTools([...active, ...missing]);
