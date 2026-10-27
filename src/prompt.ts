@@ -1,6 +1,7 @@
 import { connectorById } from "./connectors.ts";
 import { agentlintCheck, type Discovery } from "./discover.ts";
 import type { Manifest } from "./manifest.ts";
+import { uiDriverHint } from "./ui-driver.ts";
 
 export const AGENTS_MAX_LINES = 150;
 export const AGENTLINT_SKILLS = "node_modules/@aurelienbbn/agentlint/skills/agentlint";
@@ -41,7 +42,7 @@ export function setupPrompt(found: Discovery, manifest: Manifest, resuming: bool
    - \`AGENTS.md\`, at most ${AGENTS_MAX_LINES} lines: purpose, stack, commands, architecture map, conventions, hard rules (MUST / NEVER), and links to the skills. If it already exists, update it and keep the user's content.
    - \`.pi/skills/domain-<name>/SKILL.md\`, one per business area. Use frontmatter with \`name\` and \`description\`, then the vocabulary, invariants, key files and pitfalls.
    - \`docs/adr/NNNN-<title>.md\` for each architecture decision that the code shows or the user confirmed.`,
-    "Create the project's verification skill following pstack-create-verification-skill at `.pi/skills/verify-app/SKILL.md`, with a runnable script when the app can be driven headlessly. Its evidence, maps and scratch files live under `.pi/evidence/` inside the repo (never under the home directory or outside the repo); the command must not create directories elsewhere. Add its command to the verify list passed to `setup_finish` only if it runs green.",
+    `Create the project's verification skill following pstack-create-verification-skill at \`.pi/skills/verify-app/SKILL.md\`, with a runnable script when the app can be driven headlessly. Its evidence, maps and scratch files live under \`.pi/evidence/\` inside the repo (never under the home directory or outside the repo); the command must not create directories elsewhere.${found.uiDrivers?.length ? ` For behavior a headless run cannot reach (desktop windows, Electron), the script may use these GUI drivers: ${uiDriverHint(found.uiDrivers)}` : ""} Add its command to the verify list passed to \`setup_finish\` only if it runs green.`,
     ...(manifest.agentlint ? [agentlintStep(manifest.agentlint, found)] : []),
     "Make sure verification exists. Use the proposed verify steps, fix them if they are wrong, or add a missing script or target. Order them fastest first: the stack's compiler, type checker or linter (whatever this project already has) before the tests, so the agent gets static feedback before behavior feedback. Do not change application code and do not install other dependencies without asking.",
     "Call `setup_finish` with the final verify steps and a short summary. If it reports problems, fix them and call it again.",
