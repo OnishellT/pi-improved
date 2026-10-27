@@ -33,6 +33,7 @@ export const ownRuns = new Set<string>();
 const WIDGET = "pi-improved-subagents";
 const SPINNER = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏";
 const MAX_LINES = 10; // pi shows at most 10 widget lines
+const KEEP_FINISHED = 5 * 60_000; // a child that stopped working leaves the widget after this long
 
 const tern: Tern = (args) => new Promise((resolve) => execFile("tern", args, { timeout: 10_000 }, (err, stdout) => resolve(err ? undefined : stdout)));
 const tmuxSessions = () =>
@@ -117,9 +118,11 @@ function elapsed(ms: number) {
   return `${Math.floor(s / 3600)}h ${String(Math.floor(s / 60) % 60).padStart(2, "0")}m`;
 }
 
+const isWorking = (r: Run) => r.state === "busy" || r.state === "starting";
+
 /** One line per child, cut to `width`: `⠋ [S] review · read · 2 turns · 5 tools · gpt-6-astra·medium · 12.3k tok · 41s`. */
 export function runLine(r: Run, a: Activity, now: number, frame: number, paint: Paint = (_c, t) => t, width = Infinity): string {
-  const working = r.state === "busy" || r.state === "starting";
+  const working = isWorking(r);
   const icon = r.state === "busy" ? SPINNER[frame % SPINNER.length] : r.state === "idle" ? "✓" : r.state === "error" ? "✗" : "…";
   const doing = r.state === "busy" ? a.doing || "thinking…" : r.state === "starting" ? "starting…" : r.state;
   const end = working ? now : Date.parse(r.updatedAt) || now;
@@ -133,7 +136,10 @@ export function runLine(r: Run, a: Activity, now: number, frame: number, paint: 
   return paint(color, text.slice(0, h).join("")) + text.slice(h, b).join("") + paint("muted", text.slice(b).join(""));
 }
 
-export function widgetLines(runs: Run[], now: number, frame: number, paint: Paint = (_c, t) => t, width = Infinity): string[] {
+/** The widget's lines: working children, and the ones that stopped working less than 5 minutes ago (`/subagent` lists all). */
+export function widgetLines(all: Run[], now: number, frame: number, paint: Paint = (_c, t) => t, width = Infinity): string[] {
+  // pi-subagent stamps updatedAt when the state changes, so for a finished child it is when it finished.
+  const runs = all.filter((r) => isWorking(r) || now - (Date.parse(r.updatedAt) || now) < KEEP_FINISHED);
   const shown = runs.length > MAX_LINES ? runs.slice(0, MAX_LINES - 1) : runs;
   const lines = shown.map((r) => runLine(r, activity(r.sessionFile), now, frame, paint, width));
   if (shown.length < runs.length) lines.push(paint("muted", `+${runs.length - shown.length} more · /subagent`));
@@ -176,9 +182,10 @@ export async function showPane(panes: Map<string, Pane>, r: Run, anchor: string,
 }
 
 // view: pi-improved loaded its own pi-subagent, whose widget and `/subagent` give way to these (see subagentHost).
-// The widget lists this session's children, plan check and review included. In Tern (TERN_PANE is the pane pi runs
-// in), each working child gets a pane beside pi attached to its tmux session, so you can watch it or type to steer
-// it; focus stays on pi and the pane closes when the child goes idle or stops. `/subagent` focuses or opens one.
+// The widget lists this session's children, plan check and review included, until 5 minutes after one finishes. In
+// Tern (TERN_PANE is the pane pi runs in), each working child gets a pane beside pi attached to its tmux session, so
+// you can watch it or type to steer it; focus stays on pi and the pane closes when the child goes idle or stops.
+// `/subagent` focuses or opens one.
 export function registerSubagentView(pi: ExtensionAPI, view: boolean, run: Tern = tern, live = tmuxSessions) {
   const anchor = process.env.TERN_PANE;
   if (!anchor && !view) return;
@@ -197,7 +204,10 @@ export function registerSubagentView(pi: ExtensionAPI, view: boolean, run: Tern 
       const runs = sessionRuns(ctx.sessionManager.getSessionId(), await live());
       // One row per child: pi pads widget lines by one column on each side and wraps longer ones.
       const width = (process.stdout.columns || 80) - 2;
-      if (view) ctx.ui.setWidget(WIDGET, runs.length ? widgetLines(runs, Date.now(), frame++, paint, width) : undefined);
+      if (view) {
+        const lines = widgetLines(runs, Date.now(), frame++, paint, width);
+        ctx.ui.setWidget(WIDGET, lines.length ? lines : undefined);
+      }
       if (anchor) await syncPanes(panes, runs, anchor, run);
     };
     timer = setInterval(() => {

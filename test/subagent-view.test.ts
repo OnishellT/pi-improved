@@ -98,6 +98,17 @@ test("widgetLines fits pi's 10 widget lines", () => {
   assert.equal(widgetLines(runs.slice(0, 10), Date.now(), 0).length, 10);
 });
 
+test("widgetLines drops a child 5 minutes after it stopped working", () => {
+  const now = Date.parse("2026-10-27T10:00:30.000Z");
+  const later = (min: number) => now + min * 60_000;
+  const runs = [run("busy", "busy"), run("done", "idle"), run("failed", "error")];
+  const names = (at: number, list = runs) => widgetLines(list, at, 0).map((l) => l.split(" ")[2]);
+  assert.deepEqual(names(later(4)), ["busy", "done", "failed"]);
+  assert.deepEqual(names(later(5)), ["busy"], "a working child stays however long it runs");
+  assert.deepEqual(names(later(5), [{ ...runs[1], state: "busy" }]), ["done"], "and comes back when it works again");
+  assert.deepEqual(widgetLines(runs.slice(1), later(5), 0), []);
+});
+
 test("syncPanes opens a pane per working child, stacks them, and closes the ones that stopped working", async () => {
   const { calls, tern } = fakeTern();
   const panes = new Map<string, Pane>();
