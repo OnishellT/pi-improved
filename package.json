@@ -7,11 +7,16 @@
   "keywords": ["pi-package"],
   "engines": { "node": ">=22.18.0" },
   "pi": {
-    "extensions": ["./src/index.ts"]
+    "extensions": ["./src/index.ts", "./src/computer/index.ts"]
   },
   "dependencies": {
     "@aurelienbbn/agentlint": "^0.9.1",
-    "@earendil-works/pi-subagent": "github:badlogic/pi-subagent"
+    "@earendil-works/pi-subagent": "github:badlogic/pi-subagent",
+    "@modelcontextprotocol/sdk": "^1.28.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "ws": "^8.22.0"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
