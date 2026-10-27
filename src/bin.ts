@@ -12,5 +12,3 @@ export function resolveBin(name: Bin): string {
   const bundled = name === "subagent" ? path.join(root, ".bundled", "pi-subagent", "subagent.ts") : path.join(root, "node_modules", ".bin", name);
   return fs.existsSync(bundled) ? bundled : name;
 }
-
-export const hasBin = (name: Bin) => resolveBin(name) !== name;

@@ -12,8 +12,8 @@ export const planText = (p: Plan) =>
     "",
     "Files:",
     ...p.files.map((f) => `- ${f}`),
-    ...(p.interface?.length ? ["", "Interface:", ...p.interface.map((i) => `- ${i.file}: ${[...i.exports, ...(i.signatures ?? [])].join(", ")}${i.source ? ` (${i.source})` : ""}`)] : []),
-    ...(p.seams?.length ? ["", "Seams:", ...p.seams.map((x) => `- ${x.name} → ${x.testFile}: ${x.catches}${x.misses ? ` (misses: ${x.misses})` : ""}`)] : []),
+    ...(p.interface.length ? ["", "Interface:", ...p.interface.map((i) => `- ${i.file}: ${[...i.exports, ...(i.signatures ?? [])].join(", ")}${i.source ? ` (${i.source})` : ""}`)] : []),
+    ...(p.seams.length ? ["", "Seams:", ...p.seams.map((x) => `- ${x.name} → ${x.testFile}: ${x.catches}${x.misses ? ` (misses: ${x.misses})` : ""}`)] : []),
     ...(p.decisions.length ? ["", "Decisions:", ...p.decisions.map((d) => `- ${d.question} → ${d.answer ?? `see ${d.source}`}`)] : []),
   ].join("\n");
 

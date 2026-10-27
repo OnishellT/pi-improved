@@ -3,7 +3,8 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { test } from "node:test";
 import { ESCALATE_EVENT, REVIEW_EVENT, VERIFY_EVENT } from "../src/events.ts";
-import { TASK_DONE_EVENT, registerLearn } from "../src/learn.ts";
+import { TASK_DONE_EVENT } from "../src/events.ts";
+import { registerLearn } from "../src/learn.ts";
 import { loadMetrics, metricsReport, registerTelemetry, taskMetrics } from "../src/telemetry.ts";
 import { fakePi, tempProject } from "./helpers.ts";
 
@@ -35,6 +36,15 @@ test("accumulates usage per phase and counts events", async () => {
   assert.deepEqual([m.phases.planning.input, m.phases.planning.cost], [100, 0.5]);
   assert.deepEqual([m.phases.implementing.output, m.phases.implementing.cacheRead, m.phases.implementing.cost], [20, 100, 0.5]);
   assert.deepEqual([m.verifyRuns, m.verifyFailures, m.escalations, m.reviews.length], [2, 1, 1, 1]);
+});
+
+test("snapshots are written through a temp file: no leftovers, valid JSON", async () => {
+  const root = await tempProject({ ".pi/task.json": taskJson("M-9", "planning") });
+  const s = setup();
+  await Promise.all([s.emit("message_end", msg(0.1), { cwd: root }), s.fire(VERIFY_EVENT, { root, ok: true, seconds: 1 })]);
+  const files = await fs.readdir(path.join(root, ".pi/metrics"));
+  assert.deepEqual(files, ["M-9.json"]);
+  JSON.parse(await fs.readFile(path.join(root, ".pi/metrics/M-9.json"), "utf8"));
 });
 
 test("ignores usage without an active task", async () => {

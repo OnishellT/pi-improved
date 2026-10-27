@@ -1,9 +1,8 @@
-import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { buildPlanBrief, checkPlan, parsePlanVerdict, siblings } from "../src/plan-check.ts";
 import type { Plan, Task } from "../src/task-state.ts";
-import { isSubagent, tempProject } from "./helpers.ts";
+import { fakeSubagentExec, isSubagent, ok, tempProject } from "./helpers.ts";
 
 const task: Task = { id: "t1", title: "Stop and trailing levels", status: "planning", allowedExtra: [], startedAt: "now" };
 const plan: Plan = {
@@ -15,21 +14,13 @@ const plan: Plan = {
   seams: [{ name: "stop math", testFile: "src/lib/domain/protection.test.ts", catches: "levels" }],
 };
 
-function fakeExec(wait: string) {
-  const calls: { cmd: string; args: string[] }[] = [];
-  let brief = "";
-  const exec: any = async (cmd: string, args: string[]) => {
-    calls.push({ cmd, args });
-    const ok = { stdout: "", stderr: "", code: 0, killed: false };
-    if (args[0] === "spawn") {
-      brief = readFileSync(args[args.indexOf("--file") + 1], "utf8");
-      return { ...ok, stdout: "Spawned plan-check (c0ffee)\n" };
-    }
-    if (args[0] === "wait") return { ...ok, stdout: `c0ffee finished\n\n${wait}` };
-    return ok;
-  };
-  return { exec, calls, brief: () => brief };
-}
+const fakeExec = (wait: string) =>
+  fakeSubagentExec({ spawn: ok("Spawned plan-check (c0ffee)\n"), wait: ok(`c0ffee finished\n\n${wait}`) });
+
+test("siblings does not read directories outside the project", async () => {
+  const root = await tempProject({ "src/a.ts": "" });
+  assert.deepEqual(await siblings(root, { ...plan, files: ["../x.ts", "../../y/"] }), []);
+});
 
 test("brief carries the ticket evidence, the plan interface and the sibling files", async () => {
   const root = await tempProject({ "src/lib/domain/money.ts": "", "src/lib/domain/calendar.ts": "", "src/lib/domain/.hidden": "" });
@@ -47,6 +38,8 @@ test("parsePlanVerdict: last verdict wins; FIX keeps the findings", () => {
   assert.equal(fix?.status, "fix");
   assert.match(fix!.report, /^VERDICT: FIX\n1\. rename/);
   assert.equal(parsePlanVerdict("no verdict"), undefined);
+  assert.match(parsePlanVerdict("x\n\n**VERDICT: FIX**\n1. rename")!.report, /^\*\*VERDICT: FIX\*\*\n1\. rename/);
+  assert.equal(parsePlanVerdict("**VERDICT: OK**")?.status, "ok");
 });
 
 test("checkPlan spawns a read-only subagent on the given model, stops it, and maps the verdict", async () => {

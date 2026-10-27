@@ -1,4 +1,4 @@
-export type Exec = (command: string, args: string[], options: { cwd: string; timeout: number; signal?: AbortSignal }) => Promise<{ stdout: string; stderr: string; code: number; killed: boolean }>;
+import type { Exec } from "./git.ts";
 
 export interface StepResult {
   step: string;
@@ -15,6 +15,7 @@ const tail = (text: string, max: number) => (text.length > max ? `…${text.slic
 export async function runVerify(steps: string[], exec: Exec, cwd: string, timeout = 10 * 60_000, maxReport = DEFAULT_MAX_REPORT) {
   const results: StepResult[] = [];
   for (const step of steps) {
+    // Login shell on purpose: it loads PATH from nvm/asdf and the like, which a plain `bash -c` would miss.
     const { stdout, stderr, code, killed } = await exec("bash", ["-lc", step], { cwd, timeout });
     const ok = code === 0 && !killed;
     results.push({ step, ok, output: tail(`${stdout}\n${stderr}`.trim(), maxReport) });

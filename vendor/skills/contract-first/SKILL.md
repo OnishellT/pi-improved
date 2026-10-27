@@ -1,6 +1,6 @@
 ---
 name: contract-first
-description: "Pin the contract before editing code: exact names, files, signatures, argument and return shapes, and what happens on invalid input. Use at the start of any feature or fix that adds or changes an interface, and again before calling the work done."
+description: "Pin the contract before editing: names, files, signatures, argument and return shapes, invalid-input behavior. Use when a change adds or alters an interface, and again before done."
 ---
 
 # Contract first

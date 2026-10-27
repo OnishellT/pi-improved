@@ -1,3 +1,6 @@
+// Trust model: the endpoint is loopback only (see endpoint), and every page command goes to the one
+// target this server created, never to the person's tabs. `evaluate` runs arbitrary JS in that page and
+// is not a sandbox; URLs are limited by allowedUrl. The window is left open when this server exits.
 import {readFile} from 'node:fs/promises';
 import {connect as tcp} from 'node:net';
 import {pathToFileURL} from 'node:url';
@@ -87,6 +90,9 @@ export class OwnedBrowser {
     socket.addEventListener('message', event => {
       let message;
       try { message = JSON.parse(event.data); } catch { socket.close(); return; }
+      // The person closed our window by hand: forget it so the next open creates a new one.
+      if (message.method === 'Target.detachedFromTarget' && message.params?.sessionId === this.session ||
+          message.method === 'Target.targetDestroyed' && message.params?.targetId === this.target) this.target = this.session = undefined;
       const pending = this.pending.get(message.id);
       if (!pending) return;
       clearTimeout(pending.timer);

@@ -21,3 +21,15 @@ test("ensureTrusted adds the project once and keeps other entries", async () => 
   assert.equal(await ensureTrusted("/proj", dir), false);
   assert.deepEqual(JSON.parse(await fs.readFile(path.join(dir, "trust.json"), "utf8")), { "/other": true, "/proj": true });
 });
+
+test("ensureTrusted leaves a corrupt trust file untouched and trusts nothing", async () => {
+  const dir = await tempProject({ "trust.json": "{not json" });
+  assert.equal(await ensureTrusted("/proj", dir), false);
+  assert.equal(await fs.readFile(path.join(dir, "trust.json"), "utf8"), "{not json");
+  assert.deepEqual((await fs.readdir(dir)).sort(), ["trust.json"]);
+});
+
+test("hasGlobalSubagent accepts object entries in settings packages", async () => {
+  const dir = await tempProject({ "settings.json": JSON.stringify({ packages: [{ source: "npm:@earendil-works/pi-subagent" }] }) });
+  assert.equal(hasGlobalSubagent(dir), true);
+});

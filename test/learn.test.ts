@@ -2,7 +2,8 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { test } from "node:test";
-import { TASK_DONE_EVENT, registerLearn, relatedTasks } from "../src/learn.ts";
+import { TASK_DONE_EVENT } from "../src/events.ts";
+import { registerLearn, relatedTasks } from "../src/learn.ts";
 import { fakePi, tempProject } from "./helpers.ts";
 
 function setup(exec?: Parameters<typeof fakePi>[0]) {
@@ -21,7 +22,7 @@ const task = (id: string, title: string, summary: string, files: string[], answe
 test("appends a record using git output and ranks related tasks", async () => {
   const root = await tempProject({});
   // AGENTS.md changed too, but it is outside the task's plan, so the record leaves it out.
-  const emit = setup((cmd, args) => ({ code: 0, stdout: args.includes("diff") ? "src/pay.ts\nAGENTS.md\n" : "?? src/new.ts\n M src/pay.ts\n" }));
+  const emit = setup((cmd, args) => ({ code: 0, stdout: args[0] === "diff" ? "src/pay.ts\0AGENTS.md\0.pi/task.json\0" : args[0] === "ls-files" ? "src/new.ts\0" : "" }));
   await emit({ root, task: task("PAY-142", "Fix rounding", "Corrige redondeo de pagos", ["src/"], "half-even") });
   await emit({ root, task: task("UI-7", "Botón de login", "Cambia estilos", ["login.css"]) });
   const lines = (await fs.readFile(path.join(root, ".pi/memory/tasks.jsonl"), "utf8")).trim().split("\n");
@@ -65,4 +66,13 @@ test("sends the retro prompt on every 5th record, only with UI", async () => {
   assert.equal(f.sent.length, 1);
   for (let i = 7; i <= 10; i++) await emit(i, false);
   assert.equal(f.sent.length, 1);
+});
+
+test("changed files are measured against the task's base commit, not HEAD", async () => {
+  const root = await tempProject({});
+  const hash = "d".repeat(40);
+  const diffs: string[][] = [];
+  const emit = setup((_cmd, args) => (args[0] === "diff" && diffs.push(args), { code: 0, stdout: args[0] === "rev-parse" ? hash : args[0] === "diff" ? "src/a.ts\0" : "" }));
+  await emit({ root, task: { ...task("B-1", "T", "S", ["src/"]), baseCommit: hash } });
+  assert.ok(diffs[0].includes(hash) && diffs[0].includes("-z"));
 });

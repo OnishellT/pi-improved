@@ -16,13 +16,10 @@ import { registerTask } from "./task.ts";
 import { registerTelemetry } from "./telemetry.ts";
 import { registerTriggers } from "./triggers.ts";
 
-/** Set by pi-subagent in every child session. */
-export const isSubagentChild = () => Boolean(process.env.PI_SUBAGENT_RUN_DIR);
-
 export default async function (pi: ExtensionAPI) {
   await loadBundledSubagent(pi).catch(() => undefined);
-  // Children work for the parent: no setup offers, gates or prompts nobody can answer.
-  if (isSubagentChild()) return;
+  // Children work for the parent (pi-subagent sets this in every child): no setup offers, gates or prompts nobody can answer.
+  if (process.env.PI_SUBAGENT_RUN_DIR) return;
   registerAskUser(pi);
   registerDoctor(pi);
   registerBasePrompt(pi);
@@ -30,12 +27,13 @@ export default async function (pi: ExtensionAPI) {
   registerSkills(pi);
   registerSetup(pi);
   registerTask(pi);
+  // Order matters for `tool_call`: Pi runs handlers in registration order and stops at the first block, so guards come before the triggers' dialogs.
+  registerGuards(pi);
   registerTriggers(pi);
   registerGate(pi);
   registerLearn(pi);
   registerPhaseTools(pi);
   registerPr(pi);
-  registerGuards(pi);
   registerTelemetry(pi);
   registerContextGuard(pi);
 }

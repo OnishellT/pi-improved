@@ -5,16 +5,13 @@ import { test } from "node:test";
 import { registerAskUser } from "../src/ask.ts";
 import { readManifest, updateManifest } from "../src/manifest.ts";
 import { checkOutputs, registerSetup } from "../src/setup.ts";
-import { setupPrompt } from "../src/prompt.ts";
-import { fakePi, fakeUI, tempProject } from "./helpers.ts";
+import { setupPrompt } from "../src/setup-prompt.ts";
+import { fakeCtx, fakePi, tempProject } from "./helpers.ts";
 
 const SKILL = "---\nname: domain-billing\ndescription: Billing rules\n---\n# Billing\n";
 const documented = { "AGENTS.md": "# App\n", "GLOSSARY.md": "# G\n", ".pi/skills/domain-billing/SKILL.md": SKILL, "package.json": "{}" };
 
-function ctxFor(root: string, answers: unknown[]) {
-  const ui = fakeUI(answers);
-  return { ui, ctx: { cwd: root, hasUI: true, mode: "tui", ui, waitForIdle: async () => {}, reload: async () => {} } as any };
-}
+const ctxFor = (root: string, answers: unknown[]) => fakeCtx(root, answers, { mode: "tui", reload: async () => {} });
 
 test("checkOutputs reports every missing piece", async () => {
   const root = await tempProject({ "AGENTS.md": "x\n".repeat(200), ".pi/skills/bad/SKILL.md": "# no frontmatter" });
@@ -153,4 +150,12 @@ test("setup prompt asks for the before-finishing and /task sections with the ver
   const text = setupPrompt({} as any, { version: 1, setup: "running", verify: ["npm test"], connectors: [], language: "English" }, false);
   assert.match(text, /Before finishing[\s\S]*`npm test`/);
   assert.match(text, /When to use \/task[\s\S]*migrations/);
+});
+
+test("the gitignore list covers the state paths their owners define", async () => {
+  const { IGNORED_STATE } = await import("../src/setup.ts");
+  const { TASK_PATH } = await import("../src/task-state.ts");
+  const { CONTRACT_PATH } = await import("../src/contract.ts");
+  const { METRICS_DIR } = await import("../src/telemetry.ts");
+  for (const owned of [TASK_PATH, CONTRACT_PATH, METRICS_DIR]) assert.ok(IGNORED_STATE.includes(owned), owned);
 });

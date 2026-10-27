@@ -15,33 +15,29 @@ Invoke when the user says "reflect" or "/reflect". Skip when the conversation is
 
 ### 1. Locate the active transcript
 
-The parent finds its own transcript file before fanning out. The system prompt names the active workspace's `agent-transcripts/` directory. Use that path. Do not glob across `~/.cursor/projects/*/`. That crosses workspace boundaries and reads private chats from unrelated projects.
+The parent finds its own transcript file before fanning out. Pi keeps sessions in `~/.pi/agent/sessions/--<cwd with / as ->--/<timestamp>_<id>.jsonl`, one folder per working directory (`PI_CODING_AGENT_DIR` or `--session-dir` may move it). Look only in the current workspace's folder; do not glob across the others, which holds unrelated private chats.
 
 ```bash
-ls -t <agent-transcripts>/*.jsonl <agent-transcripts>/*/*.jsonl <agent-transcripts>/*/subagents/*.jsonl 2>/dev/null | head -10
+ls -t ~/.pi/agent/sessions/--<cwd>--/*.jsonl | head -5
 ```
 
-Three transcript layouts: legacy flat (`<id>.jsonl`), current nested (`<id>/<id>.jsonl`), and subagent (`<parent>/subagents/<child>.jsonl`).
-
-For each candidate, read the first JSONL line and check that `message.content[0].text` contains the conversation's opening user prompt. Take the matching path. If no path resolves, write a tight digest of the session and pass that instead.
+The newest file is normally the active session. Confirm it: the first user message in it should match the conversation's opening prompt. If no file resolves, write a tight digest of the session and pass that instead.
 
 ### 2. Spawn three reviewers in parallel
 
-One message, three `Task` calls, `subagent_type: generalPurpose`, with `model` set as below, agent mode (`readonly: false`). Reviewers need MCP access for context lookups (tickets, chat threads, observability traces referenced in the transcript). Readonly strips MCPs.
+Spawn three reviewers in parallel, one per lens below; give them the default tools (not `--tools`), so they keep any extension tools such as MCPs for context lookups (tickets, chat threads, observability traces referenced in the transcript). Subagents run through the pi `subagent` CLI: `subagent spawn --name <role> --prompt "<prompt>" [--file <brief.md>] [--tools read,grep,find,ls]` prints a handle; spawn every parallel one first, then `subagent wait <handle>` for each (its output is the result) and `subagent stop <handle>`. Do not pass `--provider` or `--model`. If no subagent is available, do each pass yourself in sequence.
 
-Each reviewer and the synthesizer name a role line in the `pstack-models.mdc` rule and a default. Set `model` to that line's value, or to the default if the rule or the line is missing. Leave `model` unset when the value is `auto` or `inherit-parent`. If the Task tool rejects a slug, use the default and say so. If it rejects the default, use the closest valid slug of the same family from its error message.
+| Lens | Prompt template |
+|---|---|
+| Judgment | `references/judgment-reviewer.md` |
+| Tooling | `references/tooling-reviewer.md` |
+| Divergent | `references/divergent-reviewer.md` |
 
-| Lens | Role line | Default `model` | Prompt template |
-|---|---|---|---|
-| Judgment | `reflect judgment, divergent, synthesizer` | `claude-opus-5-5-xhigh` | `references/judgment-reviewer.md` |
-| Tooling | `reflect tooling` | `grok-4.7-xhigh-fast` | `references/tooling-reviewer.md` |
-| Divergent | `reflect judgment, divergent, synthesizer` | `claude-opus-5-5-xhigh` | `references/divergent-reviewer.md` |
-
-Pass each template verbatim, substituting the transcript path or digest where marked. Reviewers return findings in the `Task` response body.
+Pass each template verbatim, substituting the transcript path or digest where marked. Reviewers return findings in the subagent output.
 
 ### 3. Synthesize
 
-One `Task` call, `subagent_type: generalPurpose`, with `model` from the `reflect judgment, divergent, synthesizer` line (default `claude-opus-5-5-xhigh`), agent mode (`readonly: false`). The synthesizer's quality check includes spot-verifying citations, which can require MCP access. Readonly strips MCPs. Use `references/synthesizer.md` verbatim, with each reviewer's full output inlined where marked. The synthesizer returns a structured Accepted / Rejected / Backlog list.
+One subagent with the default tools. Its quality check includes spot-verifying citations, which can require MCP access. Use `references/synthesizer.md` verbatim, with each reviewer's full output inlined where marked. The synthesizer returns a structured Accepted / Rejected / Backlog list.
 
 ### 4. Structural enforcement check
 
@@ -56,9 +52,9 @@ Backlog items file to whatever devex / backlog tracker your team uses automatica
 For each approved Accepted item, follow the Routing field exactly:
 
 - Trivial existing-skill edit (a one-line bullet, a tightened sentence, a stale fact corrected): parent does directly.
-- Substantive existing-skill edit (a new section, a new pattern table, more than ~10 lines): hand to Cursor's built-in `create-skill` skill and run its draft / test / iterate loop.
-- `tune description: <skill path>` (the skill exists but didn't trigger when it should have): hand to `create-skill` and run its description-optimization loop.
-- `new skill via create-skill: <kebab-name>`: hand creation to `create-skill`. Do not invent the shape ad hoc.
+- Substantive existing-skill edit (a new section, a new pattern table, more than ~10 lines): write the skill edit yourself and test it on a real case, iterating until it triggers and reads right.
+- `tune description: <skill path>` (the skill exists but didn't trigger when it should have): rewrite its description yourself and re-test that it triggers.
+- `new skill via create-skill: <kebab-name>`: create it yourself, following the shape of the existing skills in this repo.
 
 If your environment ships a SKILL.md validator, run it on every touched skill before declaring done. Skip this step if it doesn't.
 

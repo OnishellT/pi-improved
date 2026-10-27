@@ -26,25 +26,31 @@ export async function runDoctor(pi: ExtensionAPI, ctx: ExtensionContext, version
       return false;
     }
   };
+  const subagent = resolveBin("subagent");
+  const agentlint = resolveBin("agentlint");
+  const [subagentOk, agentlintOk, tmuxOk, gitOk] = await Promise.all([probe(subagent, ["list"]), probe(agentlint, ["--help"]), probe("tmux", ["-V"]), probe("git", ["--version"])]);
   const checks: Check[] = [];
   checks.push({ name: "Node", ok: nodeOk(version), detail: nodeOk(version) ? version : `${version}: needs >= ${MIN_NODE.join(".")}` });
-  const subagent = resolveBin("subagent");
-  const subagentOk = await probe(subagent, ["list"]);
   checks.push({ name: "subagent", ok: subagentOk, detail: subagentOk ? subagent : "not found or not running (reinstall with `pi install git:github.com/OnishellT/pi-improved`)" });
-  const agentlint = resolveBin("agentlint");
-  const agentlintOk = await probe(agentlint, ["--help"]);
   checks.push({ name: "agentlint", ok: agentlintOk, detail: agentlintOk ? agentlint : "not found or not running" });
-  const ext = hasGlobalSubagent() ? "global" : fs.existsSync(bundledExtension()) ? "empaquetada" : undefined;
+  const ext = hasGlobalSubagent() ? "global" : fs.existsSync(bundledExtension()) ? "bundled" : undefined;
   checks.push({ name: "subagent extension", ok: Boolean(ext), detail: ext ?? "missing: without it the review never finishes (reinstall the package)" });
-  const tmuxOk = await probe("tmux", ["-V"]);
   checks.push({ name: "tmux", ok: tmuxOk, detail: tmuxOk ? "ok" : "not installed: the subagent review needs it (apt/brew install tmux)" });
-  const gitOk = await probe("git", ["--version"]);
   checks.push({ name: "git", ok: gitOk, detail: gitOk ? "ok" : "not installed" });
 
-  const mode = (await readManifest(ctx.cwd).catch(() => undefined))?.mode;
-  if (mode !== undefined) checks.push({ name: "Mode", ok: mode === "direct" || mode === "flow", detail: mode === "direct" || mode === "flow" ? mode : `"${String(mode)}" is not valid in .pi/workflow.json: use "direct" or "flow"` });
+  let manifest;
+  try {
+    manifest = await readManifest(ctx.cwd);
+  } catch (error: any) {
+    checks.push({ name: "Manifest", ok: false, detail: error.message });
+  }
+  const mode = manifest?.mode;
+  if (mode !== undefined) {
+    const modeOk = mode === "direct" || mode === "flow";
+    checks.push({ name: "Mode", ok: modeOk, detail: modeOk ? mode : `"${String(mode)}" is not valid in .pi/workflow.json: use "direct" or "flow"` });
+  }
 
-  const wanted = Object.values((await readManifest(ctx.cwd).catch(() => undefined))?.models ?? {}).filter((m): m is string => Boolean(m));
+  const wanted = Object.values(manifest?.models ?? {}).filter((m): m is string => Boolean(m));
   if (wanted.length && ctx.modelRegistry) {
     const available = new Set(ctx.modelRegistry.getAvailable().map((m) => `${m.provider}/${m.id}`));
     const missing = [...new Set(wanted)].filter((m) => !available.has(m));

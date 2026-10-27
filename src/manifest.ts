@@ -9,7 +9,8 @@ export type Phase = "setup" | "plan" | "implement" | "diagnose" | "review" | "le
 export const DEFAULT_SKILLS: Record<Phase, string[]> = {
   setup: ["grilling", "domain-modeling", "pstack-technical-writing", "writing-for-agents", "pstack-create-verification-skill"],
   plan: ["tdd", "contract-first"],
-  implement: ["tdd", "contract-first", "principles-implement"],
+  // tdd and contract-first already reach the session with the plan block; only the implement-specific principles are added here.
+  implement: ["principles-implement"],
   diagnose: ["diagnosing-bugs", "principles-diagnose"],
   review: ["code-review", "pstack-blast-radius", "principles-review"],
   learn: ["retro", "correct", "pstack-maintain-verification-skill"],
@@ -86,13 +87,18 @@ const empty = (): Manifest => ({ version: 1, setup: "pending", verify: [], conne
 export async function readManifest(root: string): Promise<Manifest> {
   try {
     const raw = JSON.parse(await fs.readFile(path.join(root, MANIFEST_PATH), "utf8"));
-    return { ...empty(), ...raw };
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("the root must be an object");
+    const m = { ...empty(), ...raw };
+    if (!Array.isArray(m.verify)) m.verify = [];
+    if (!Array.isArray(m.connectors)) m.connectors = [];
+    return m;
   } catch (error: any) {
     if (error.code === "ENOENT") return empty();
     throw new Error(`${MANIFEST_PATH} is not valid JSON: ${error.message}`);
   }
 }
 
+/** Read-modify-write with no locking: concurrent writers are last-writer-wins. */
 export async function updateManifest(root: string, change: (m: Manifest) => void): Promise<Manifest> {
   const manifest = await readManifest(root);
   change(manifest);

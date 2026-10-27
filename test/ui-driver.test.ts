@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { discover } from "../src/discover.ts";
 import { readManifest } from "../src/manifest.ts";
-import { setupPrompt } from "../src/prompt.ts";
+import { setupPrompt } from "../src/setup-prompt.ts";
 import { detectUiDrivers } from "../src/ui-driver.ts";
 import { tempProject } from "./helpers.ts";
 

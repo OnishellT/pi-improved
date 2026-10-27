@@ -1,16 +1,17 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import type { Exec } from "./git.ts";
 import { readManifest } from "./manifest.ts";
 import { assessRisk } from "./risk.ts";
-import { readTask, type Task } from "./task-state.ts";
-import { formatVerify, runVerify, type Exec } from "./verify.ts";
+import { isPiState, readTask, type Task } from "./task-state.ts";
+import { formatVerify, runVerify } from "./verify.ts";
 
 const TEMPLATES = [".github/pull_request_template.md", ".github/PULL_REQUEST_TEMPLATE.md", "docs/pull_request_template.md", "pull_request_template.md"];
 const EVIDENCE_SKILL = ".pi/skills/verify-app/SKILL.md";
 const ADR_DIR = "docs/adr/";
-const AI_MENTION = /co-authored-by|generated (with|by)|\b(claude|anthropic|chatgpt|openai|copilot|gemini)\b/i;
+const ATTRIBUTION = /co-authored-by|generated (with|by)\b.*\b(claude code|claude|anthropic|chatgpt|copilot|gemini)\b/i;
 
 export interface PrFacts {
   branch: string;
@@ -26,15 +27,18 @@ export interface PrFacts {
   hasEvidenceSkill: boolean;
 }
 
-/** Drops every line that credits or names an AI tool: PR text carries only the work itself. */
-export const scrub = (text: string) => text.split("\n").filter((l) => !AI_MENTION.test(l)).join("\n");
+/** Drops attribution lines (co-author trailers, "Generated with ... Claude Code"); product names in the work itself stay. */
+export const scrub = (text: string) => text.split("\n").filter((l) => !ATTRIBUTION.test(l)).join("\n");
+
+/** Branch names never carry the agent's vendor (the owner's attribution rule); other product names are the work's subject and stay. */
+const VENDOR = /^(claude|anthropic)$/;
 
 const slug = (text: string) => text.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 50);
 
 /** `task/<ticket>` when the task has one, otherwise a short slug of its title. */
 export function branchName(task: Task | undefined): string {
-  const key = task?.ticket ? slug(task.ticket) : slug(task?.title ?? "");
-  return `task/${AI_MENTION.test(key) ? "change" : key || "change"}`;
+  const key = (task?.ticket ? slug(task.ticket) : slug(task?.title ?? "")).split("-").filter((w) => !VENDOR.test(w)).join("-");
+  return `task/${key || "change"}`;
 }
 
 /** Paths of ADRs the diff adds, plus untracked ones (marked). */
@@ -91,6 +95,7 @@ export function buildBody({ task, facts, verify, risk }: BodyInput): string {
 const lines = (text: string) => text.split("\n").map((l) => l.trim()).filter(Boolean);
 
 export async function gatherFacts(exec: Exec, root: string, wanted?: string): Promise<PrFacts | undefined> {
+  // Not git.ts `git`: also runs gh, and "undefined" here is a signal the facts code checks (e.g. no repo).
   const run = async (cmd: string, args: string[]) => {
     const r = await exec(cmd, args, { cwd: root, timeout: 30_000 }).catch(() => undefined);
     return r && r.code === 0 ? r.stdout : undefined;
@@ -108,7 +113,7 @@ export async function gatherFacts(exec: Exec, root: string, wanted?: string): Pr
   const branch = (await run("git", ["branch", "--show-current"]))?.trim() || "(detached HEAD)";
   const commits = base ? lines((await run("git", ["log", "--format=%h %s", `${base}..HEAD`])) ?? "") : [];
   const changes = base ? lines((await run("git", ["diff", "--name-status", `${base}...HEAD`])) ?? "") : [];
-  const dirty = ((await run("git", ["status", "--porcelain"])) ?? "").split("\n").filter(Boolean).filter((l) => !l.slice(3).startsWith(".pi/"));
+  const dirty = ((await run("git", ["status", "--porcelain"])) ?? "").split("\n").filter(Boolean).filter((l) => !isPiState(l.slice(3)));
   let template: string | undefined;
   for (const rel of TEMPLATES) {
     template = await fs.readFile(path.join(root, rel), "utf8").catch(() => undefined);
@@ -129,8 +134,12 @@ export async function gatherFacts(exec: Exec, root: string, wanted?: string): Pr
 
 export type PrOutcome = { status: "not-ready" | "shown" | "declined" | "failed" | "opened"; detail: string };
 
-/** The /pr flow. Nothing is pushed and no PR is opened without a yes from ctx.ui.confirm. */
-export async function runPr(exec: Exec, root: string, ui: any, wantedBase?: string): Promise<PrOutcome> {
+/**
+ * The /pr flow. Nothing is pushed and no PR is opened without a yes from ctx.ui.confirm.
+ * It always pushes to `origin`, whatever the base ref is, and `gh --version` only proves gh is installed:
+ * a missing `gh auth login` shows up late, as "gh pr create failed".
+ */
+export async function runPr(exec: Exec, root: string, ui: Pick<ExtensionContext["ui"], "confirm" | "notify">, wantedBase?: string): Promise<PrOutcome> {
   const facts = await gatherFacts(exec, root, wantedBase?.trim() || undefined);
   if (!facts) return { status: "not-ready", detail: "This folder is not a git repository." };
   if (!facts.base) return { status: "not-ready", detail: "No base branch found. Run /pr <base-branch>." };

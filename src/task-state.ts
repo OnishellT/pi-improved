@@ -45,6 +45,22 @@ export interface Task {
 }
 
 export const TASK_PATH = ".pi/task.json";
+export const MEMORY_PATH = ".pi/memory/tasks.jsonl";
+
+/** Anything under `.pi/` is workflow state, not the task's own work. */
+export const isPiState = (file: string) => file.startsWith(".pi/");
+
+/** Records of finished tasks (JSONL); lines that do not parse are skipped. */
+export async function readMemory(root: string): Promise<any[]> {
+  const raw = await fs.readFile(path.join(root, MEMORY_PATH), "utf8").catch(() => "");
+  const out: any[] = [];
+  for (const line of raw.split("\n")) {
+    try {
+      if (line.trim()) out.push(JSON.parse(line));
+    } catch {}
+  }
+  return out;
+}
 
 export async function readTask(root: string): Promise<Task | undefined> {
   try {
@@ -70,8 +86,15 @@ export async function updateTask(root: string, change: (task: Task) => void): Pr
   return task;
 }
 
-/** True when `file` is in the plan or was allowed later. Plan entries ending in `/` cover a directory. */
-export function inScope(task: Task, file: string) {
-  const allowed = [...(task.plan?.files ?? []), ...task.allowedExtra];
-  return allowed.some((entry) => (entry.endsWith("/") ? file.startsWith(entry) : file === entry));
+/** True when `file` is listed in `files`. Entries ending in `/` cover a directory. */
+export const inFiles = (files: string[], file: string) => files.some((entry) => (entry.endsWith("/") ? file.startsWith(entry) : file === entry));
+
+/** True when `file` is in the plan or was allowed later. */
+export const inScope = (task: Task, file: string) => inFiles([...(task.plan?.files ?? []), ...task.allowedExtra], file);
+
+/** `rel` resolved against `root`, or undefined when it escapes the project (model-written paths are never trusted). */
+export function resolveInside(root: string, rel: string): string | undefined {
+  const abs = path.resolve(root, rel);
+  const from = path.relative(path.resolve(root), abs);
+  return from === ".." || from.startsWith(`..${path.sep}`) || path.isAbsolute(from) ? undefined : abs;
 }

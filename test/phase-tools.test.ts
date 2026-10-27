@@ -8,7 +8,7 @@ import { registerGuards } from "../src/guards.ts";
 import { registerPhaseTools } from "../src/phase-tools.ts";
 import { registerSetup } from "../src/setup.ts";
 import { writeTask } from "../src/task-state.ts";
-import { fakePi, fakeUI, tempProject } from "./helpers.ts";
+import { fakePi, fakeUI, tempProject, withEnv } from "./helpers.ts";
 
 test("phase tools are visible only during their phase", async () => {
   const root = await tempProject({});
@@ -31,14 +31,9 @@ test("phase tools are visible only during their phase", async () => {
   assert.deepEqual(active.sort(), ["read", "task_plan"]);
 });
 
-test("the extension registers nothing inside a subagent child", () => {
+test("the extension registers nothing inside a subagent child", async () => {
   const { pi, tools, commands } = fakePi();
-  process.env.PI_SUBAGENT_RUN_DIR = "/tmp/run";
-  try {
-    extension(pi);
-  } finally {
-    delete process.env.PI_SUBAGENT_RUN_DIR;
-  }
+  await withEnv({ PI_SUBAGENT_RUN_DIR: "/tmp/run" }, () => extension(pi));
   assert.equal(tools.size + commands.size, 0);
 });
 
@@ -71,6 +66,14 @@ test("agentlint commands that open the review UI are blocked", async () => {
   // A rule id that contains "review" or "accept" is not the subcommand.
   assert.equal(await call("npm exec agentlint -- explain facturas/tax-calculation-review"), undefined);
   assert.equal(await call("pnpm agentlint check --rule payments/accept-terms"), undefined);
+});
+
+test("the workflow state files are blocked for write and edit, even through ./ segments", async () => {
+  const { pi, emit } = fakePi();
+  registerGuards(pi);
+  const call = (toolName: string, p: string) => emit("tool_call", { toolName, input: { path: p } }, { cwd: "/" });
+  for (const p of [".pi/workflow.json", ".pi/./workflow.json", "sub/../.pi/task.json"]) assert.equal((await call("write", p))?.block, true, p);
+  assert.equal(await call("edit", "src/a.ts"), undefined);
 });
 
 test("setup_finish does not add agentlint twice when a package script already runs it", async () => {

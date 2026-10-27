@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { execFileSync } from "node:child_process";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { listSkills, loadSkill, skillsDir } from "../src/skills.ts";
 
 const CAPS: Record<string, number> = { tdd: 1800, "contract-first": 2400, "diagnosing-bugs": 3800, "pstack-blast-radius": 2800 };
@@ -27,5 +29,14 @@ test("contract-first keeps the contract file, the check step and the five input 
   const { body } = await loadSkill("contract-first");
   for (const needle of ["contract.json", "contract-check.mjs", "Wrong type", "null", "Empty", "Out of range", "Duplicates"]) {
     assert.ok(body.includes(needle), `contract-first lost "${needle}"`);
+  }
+});
+
+test("scripts/skill-tokens.mjs --json reports every phase and skill with chars and tokens", async () => {
+  const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts/skill-tokens.mjs");
+  const out = JSON.parse(execFileSync("node", [script, "--json"], { encoding: "utf8" }));
+  assert.deepEqual((Object.keys(out.skills)).sort(), (await listSkills()).sort());
+  for (const entry of [...Object.values(out.phases), ...Object.values(out.skills)] as { chars: number; tokens: number }[]) {
+    assert.ok(entry.chars >= 0 && entry.tokens === Math.round(entry.chars / 4));
   }
 });

@@ -1,3 +1,5 @@
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { nodeOk, registerDoctor } from "../src/doctor.ts";
@@ -45,4 +47,11 @@ test("/doctor validates mode: absent and valid pass, anything else fails", async
     assert.equal(/✗ Mode:/.test(msg), !ok, String(mode));
     if (mode === "turbo") assert.match(msg, /"direct" or "flow"/);
   }
+});
+
+test("/doctor reports a corrupt workflow.json as a problem instead of throwing", async () => {
+  const t = await setup(() => ({ code: 0 }));
+  await fs.writeFile(path.join(t.ctx.cwd, ".pi/workflow.json"), "{ nope");
+  await t.commands.get("doctor").handler("", t.ctx);
+  assert.match(t.notes[0].msg, /✗ Manifest: .*not valid JSON/);
 });

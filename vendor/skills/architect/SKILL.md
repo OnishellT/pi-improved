@@ -27,9 +27,7 @@ Skip Phase A only when the work is genuinely greenfield with no surrounding syst
 
 ## Phase B: Sketch
 
-Run the **arena** skill with the design-sketch task and the Phase A grounding artifacts. Pass `references/runner-prompt.md` as each runner's prompt. Each candidate produces a design package shaped per `references/rationale-template.md`.
-
-Take the runners from the `architect runners` line in the `pstack-models.mdc` rule, in place of the `arena runners` line. If the rule or that line is missing, use `claude-opus-5-5-xhigh` and `grok-4.7-xhigh-fast`. Alias and rejected entries follow the runner rules in the **arena** skill's Phase A.
+Spawn two parallel runners (read-only, `--tools read,grep,find,ls`), each given the design-sketch task, the Phase A grounding artifacts and `references/runner-prompt.md` as its prompt. Each candidate produces a design package shaped per `references/rationale-template.md`. Subagents run through the pi `subagent` CLI: `subagent spawn --name <role> --prompt "<prompt>" [--file <brief.md>] [--tools read,grep,find,ls]` prints a handle; spawn every parallel one first, then `subagent wait <handle>` for each (its output is the result) and `subagent stop <handle>`. Do not pass `--provider` or `--model`. If no subagent is available, do each pass yourself in sequence. Then synthesize the candidates into one design package yourself.
 
 Design it twice. Require at least two structurally distinct candidates before synthesis, even when the first looks sufficient. This is the **exhaust-the-design-space** principle skill made concrete. Whole-shape alternatives, not point fixes inside one shape.
 
@@ -37,7 +35,7 @@ Screen every candidate against [`references/design-red-flags.md`](references/des
 
 Compare viable candidates on interface depth. Prefer the design that hides more complexity behind a smaller, simpler public surface. A rich interface can keep call chains short by concentrating capability instead of scattering it across layers.
 
-Arena returns one synthesized design package. The synthesis decision populates the rationale's "Synthesis decision" section.
+The synthesis is one design package. The synthesis decision populates the rationale's "Synthesis decision" section.
 
 ## Phase C: Agree (opt-in)
 
@@ -75,7 +73,7 @@ When you scrap:
 1. Re-run the **how** skill over what's been built.
 2. Redesign as if the new constraints had been day-one assumptions, per redesign-from-first-principles.
 3. Subtract before adding, per the **subtract-before-you-add** principle skill. The new sketch should be smaller than the old one before it grows.
-4. Return to Phase B and re-run arena.
+4. Return to Phase B and re-run the runners.
 
 ## Outputs
 

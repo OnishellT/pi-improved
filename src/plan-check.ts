@@ -2,8 +2,8 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { planText } from "./task-prompt.ts";
 import { runSubagent } from "./review.ts";
-import type { Plan, Task } from "./task-state.ts";
-import type { Exec } from "./verify.ts";
+import { resolveInside, type Plan, type Task } from "./task-state.ts";
+import type { Exec } from "./git.ts";
 
 export type PlanCheckStatus = "ok" | "fix" | "skipped";
 export interface PlanCheckResult {
@@ -21,7 +21,8 @@ export async function siblings(root: string, plan: Plan): Promise<string[]> {
   const dirs = [...new Set(plan.files.map((f) => (f.endsWith("/") ? f.slice(0, -1) : path.posix.dirname(f))))];
   const lines: string[] = [];
   for (const dir of dirs) {
-    const names = (await fs.readdir(path.join(root, dir)).catch(() => [] as string[])).filter((n) => !n.startsWith(".")).sort();
+    const abs = resolveInside(root, dir);
+    const names = (abs ? await fs.readdir(abs).catch(() => [] as string[]) : []).filter((n) => !n.startsWith(".")).sort();
     if (!names.length) continue;
     lines.push(`- ${dir}/: ${names.slice(0, MAX_SIBLINGS).join(", ")}${names.length > MAX_SIBLINGS ? ", …" : ""}`);
   }
@@ -59,8 +60,7 @@ export function parsePlanVerdict(output: string): PlanCheckResult | undefined {
   if (!last) return undefined;
   const body = output.trim();
   if (last[1].toUpperCase() === "OK") return { status: "ok", report: body };
-  const text = output.split("\n").slice(output.slice(0, last.index).split("\n").length - 1).join("\n");
-  return { status: "fix", report: text.trim() || body };
+  return { status: "fix", report: output.slice(last.index).trim() || body };
 }
 
 /** One short strong-model read of the plan (ticket + interface + siblings). Never throws. */

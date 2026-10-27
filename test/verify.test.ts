@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { DEFAULT_MAX_REPORT, formatVerify, runVerify, validCap, type Exec } from "../src/verify.ts";
+import { DEFAULT_MAX_REPORT, formatVerify, runVerify, validCap } from "../src/verify.ts";
+import type { Exec } from "../src/git.ts";
 
 const failing = (out: string): Exec => async () => ({ stdout: out, stderr: "", code: 1, killed: false });
 

@@ -16,6 +16,14 @@ const { values } = parseArgs({
   },
 });
 
+for (const key of ["since", "until"]) {
+  const v = values[key];
+  if (v !== "0000-00-00" && v !== "9999-99-99" && !/^\d{4}-\d{2}-\d{2}$/.test(v)) {
+    console.error(`--${key} must be YYYY-MM-DD, got "${v}"`);
+    process.exit(1);
+  }
+}
+
 const num = (n) => (typeof n === "number" && Number.isFinite(n) ? n : 0);
 const warnings = [];
 const warn = (msg) => warnings.push(msg);

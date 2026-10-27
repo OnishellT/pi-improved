@@ -10,7 +10,7 @@ const task: any = { id: "t", title: "T", status: "implementing", allowedExtra: [
 
 const exec = (numstat: [string, number][], untracked: string[] = []): any => async (_cmd: string, args: string[]) => ({
   code: 0, stderr: "", killed: false,
-  stdout: args.includes("--numstat") ? numstat.map(([f, n]) => `${n}\t0\t${f}`).join("\n") : args[0] === "ls-files" ? untracked.join("\n") : "",
+  stdout: args.includes("--numstat") ? numstat.map(([f, n]) => `${n}\t0\t${f}\0`).join("") : args[0] === "ls-files" ? untracked.map((f) => `${f}\0`).join("") : "",
 });
 const risk = async (e: any, t: any = task, m: Manifest = base) => assessRisk(e, await tempProject({}), t === null ? undefined : t, m);
 
@@ -115,7 +115,16 @@ test("the diff is measured against the task's baseCommit when it resolves, else 
   assert.deepEqual(seen, [hash, "HEAD", "HEAD", "HEAD"]);
 });
 
-test("git failures degrade to no diff", async () => {
+test("a failed git diff is low risk with a reason, not none", async () => {
   const boom: any = async () => { throw new Error("no git"); };
-  assert.equal((await risk(boom)).review, false);
+  assert.deepEqual(await risk(boom), { review: true, level: "low", reasons: ["git diff failed"] });
+  const failed: any = async () => ({ code: 128, stderr: "fatal", killed: false, stdout: "" });
+  assert.equal((await risk(failed)).level, "low");
+});
+
+test("the numstat asks for no renames, so a moved lockfile still counts as a dependency change", async () => {
+  let args: string[] = [];
+  const e: any = async (_c: string, a: string[]) => (a[0] === "diff" && (args = a), { code: 0, stderr: "", killed: false, stdout: a[0] === "diff" ? "1\t0\tpnpm-lock.yaml\0" : "" });
+  assert.match((await risk(e)).reasons.join(), /dependencies/);
+  assert.ok(args.includes("--no-renames") && args.includes("-z"));
 });

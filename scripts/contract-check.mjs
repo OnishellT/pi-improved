@@ -47,11 +47,11 @@ async function text(abs) {
   }
 }
 
-/** Files changed since HEAD plus untracked ones; empty outside a git repository. */
-async function changedFiles(root) {
+/** Files changed since HEAD plus untracked ones, minus the contract itself; empty outside a git repository. */
+async function changedFiles(root, contractAbs) {
   const git = (args) => promisify(execFile)("git", args, { cwd: root, maxBuffer: 8 * 1024 * 1024 }).then((r) => r.stdout, () => "");
-  const lines = [...(await git(["diff", "--name-only", "HEAD"])).split("\n"), ...(await git(["ls-files", "--others", "--exclude-standard"])).split("\n")];
-  return [...new Set(lines.map((l) => l.trim()).filter(Boolean))];
+  const lines = [...(await git(["diff", "--name-only", "-z", "--relative", "HEAD"])).split("\0"), ...(await git(["ls-files", "--others", "--exclude-standard", "-z"])).split("\0")];
+  return [...new Set(lines.filter(Boolean))].filter((l) => path.resolve(root, l) !== contractAbs);
 }
 
 /** Runs the check; returns { code, text }. */
@@ -79,7 +79,7 @@ export async function check(root, contractFile = CONTRACT_PATH) {
     else if (!(await fs.stat(abs).catch(() => undefined))) problems.push(`${f}: the file does not exist`);
   }
 
-  const changed = await changedFiles(root);
+  const changed = await changedFiles(root, file);
   const texts = [];
   for (const f of new Set([...changed, ...contract.files])) {
     const abs = inside(root, f);

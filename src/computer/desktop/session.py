@@ -71,8 +71,8 @@ def desktop_environment():
                 while time.monotonic() < deadline:
                     if process.poll() is not None:
                         raise RuntimeError(f'Agent desktop exited; see {runtime}/startup.log')
-                    instance = single(query(env, 'instances'))
                     try:
+                        instance = single(query(env, 'instances'))
                         if ready(env, instance):
                             break
                     except (subprocess.SubprocessError, json.JSONDecodeError):

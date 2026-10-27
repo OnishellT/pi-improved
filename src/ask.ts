@@ -1,7 +1,13 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-const OTHER = "✏️  Other answer…";
+export const OTHER = "✏️  Other answer…";
+
+/** Pick one option or type a different answer; undefined when the user cancels. */
+export async function selectOrType(ctx: any, title: string, options: string[]): Promise<string | undefined> {
+  const answer = await ctx.ui.select(title, [...options, OTHER]);
+  return answer === OTHER ? ctx.ui.input(title) : answer;
+}
 
 const Question = Type.Object({
   question: Type.String({ description: "One concrete question" }),
@@ -23,8 +29,7 @@ export function registerAskUser(pi: ExtensionAPI) {
       const answers: { question: string; answer: string }[] = [];
       for (const [i, q] of questions.entries()) {
         const title = `(${i + 1}/${questions.length}) ${q.question}`;
-        let answer = await ctx.ui.select(title, [...q.options, OTHER]);
-        if (answer === OTHER) answer = await ctx.ui.input(title);
+        const answer = await selectOrType(ctx, title, q.options);
         if (answer === undefined) break;
         answers.push({ question: q.question, answer });
       }

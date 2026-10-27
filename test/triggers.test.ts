@@ -85,6 +85,21 @@ test("npm add: ADR on approve, block otherwise", async () => {
   assert.equal(await s.run("bash", { command: "npm install" }), undefined);
 });
 
+test("a migration approved in one task is asked again in another", async () => {
+  const s = await setup({}, ["Allow this file", "Approve", "Allow this file", "Approve"]);
+  assert.equal(await s.run("write", { path: "db/migrate/1.rb", content: "" }), undefined);
+  await writeTask(s.root, task({ id: "2" }));
+  assert.equal(await s.run("write", { path: "db/migrate/1.rb", content: "" }), undefined);
+  assert.equal(s.ui.asked.length, 4);
+});
+
+test("an unparsable manifest edit asks for approval but writes no ADR", async () => {
+  const s = await setup({ "package.json": "{}" }, ["Allow this file", "Approve and record ADR"]);
+  const r = await s.run("edit", { path: "package.json", edits: [{ oldText: "nope", newText: "x" }] });
+  assert.equal(r, undefined);
+  assert.equal(await fs.readdir(path.join(s.root, "docs/adr")).catch(() => []).then((f) => f.length), 0);
+});
+
 test("package.json edits: new dep prompts, unchanged deps do not", async () => {
   const pkg = JSON.stringify({ dependencies: { a: "1" } });
   const s = await setup({ "package.json": pkg }, ["Allow this file", "Approve and record ADR", "Block"]);
