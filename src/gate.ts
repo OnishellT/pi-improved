@@ -11,7 +11,7 @@ import { resolvePolicyFailure } from "./policy.ts";
 import { reviewDiff } from "./review.ts";
 import { skillsBlock } from "./skills.ts";
 import { readTask, updateTask } from "./task-state.ts";
-import { formatVerify, isPolicyFailure, runVerify } from "./verify.ts";
+import { formatVerify, isPolicyFailure, runVerify, validCap } from "./verify.ts";
 
 const MAX_RETRIES = 2;
 const MAX_REVIEWS = 1;
@@ -35,7 +35,8 @@ export function registerGate(pi: ExtensionAPI) {
   };
   const verify = async (steps: string[], cwd: string, emit = false) => {
     const t0 = Date.now();
-    const result = await runVerify(steps, pi.exec.bind(pi), cwd);
+    const maxReport = validCap((await readManifest(cwd).catch(() => undefined))?.maxReport);
+    const result = await runVerify(steps, pi.exec.bind(pi), cwd, undefined, maxReport);
     if (emit) pi.events.emit(VERIFY_EVENT, { root: cwd, ok: result.ok, seconds: (Date.now() - t0) / 1000 } satisfies VerifyPayload);
     return { ok: result.ok, report: formatVerify(result), policy: !result.ok && isPolicyFailure(result) };
   };
