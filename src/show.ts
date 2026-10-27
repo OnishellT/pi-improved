@@ -64,7 +64,7 @@ export function pageFor(source: { html?: string; file?: string }): string {
   if (source.file?.toLowerCase().endsWith(".svg")) return `<!doctype html><body><img src="${pathToFileURL(source.file).href}">${MEASURE}`;
   if (source.file) {
     const base = `<base href="${pathToFileURL(path.dirname(source.file) + path.sep).href}">`;
-    return fs.readFileSync(source.file, "utf8").replace(/^(\s*<!doctype[^>]*>)?/i, `$1${base}`) + MEASURE;
+    return fs.readFileSync(source.file, "utf8").replace(/^(\s*<!doctype[^>]*>)?/i, (_m, doctype = "") => doctype + base) + MEASURE;
   }
   const html = source.html ?? "";
   return (/<html|<body/i.test(html) ? html : `<!doctype html><meta charset="utf-8"><body>${html}</body>`) + MEASURE;
@@ -102,14 +102,14 @@ export function registerShow(pi: ExtensionAPI, exec: Run = run, browser = findBr
       const page = path.join(dir, `${name}.html`);
       const out = path.join(dir, `${name}.png`);
       fs.writeFileSync(page, pageFor({ html, file: abs }));
-      try {
-        const { w, h } = await screenshot(bin, page, out, Math.min(Math.max(width ?? 1000, 200), MAX_WIDTH), exec);
-        // Markup has no file of its own: keep the page so the user can open it in a browser.
-        const kept = abs ? "" : ` (page: ${page})`;
-        return { content: [{ type: "text", text: `Shown to the user (${w}x${h}): ${out}${kept}` }], details: { file: out, mimeType: "image/png" } };
-      } finally {
-        if (abs) fs.rmSync(page, { force: true });
-      }
+      const { w, h } = await screenshot(bin, page, out, Math.min(Math.max(width ?? 1000, 200), MAX_WIDTH), exec).catch((err) => {
+        fs.rmSync(page, { force: true });
+        throw err;
+      });
+      // Markup has no file of its own: keep the page so the user can open it in a browser.
+      if (abs) fs.rmSync(page, { force: true });
+      const kept = abs ? "" : ` (page: ${page})`;
+      return { content: [{ type: "text", text: `Shown to the user (${w}x${h}): ${out}${kept}` }], details: { file: out, mimeType: "image/png" } };
     },
     renderResult(result, { isPartial }, theme, context) {
       const { file, mimeType } = (result.details ?? {}) as { file?: string; mimeType?: string };
