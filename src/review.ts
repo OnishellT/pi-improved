@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { resolveBin } from "./bin.ts";
+import { ownRuns } from "./subagent-panes.ts";
 import type { Task } from "./task-state.ts";
 import { agentDir, ensureTrusted } from "./subagent-ext.ts";
 import { diffBase, git, untrackedFiles, type Exec } from "./git.ts";
@@ -151,6 +152,7 @@ export async function runSubagent(exec: Exec, root: string, opts: { name: string
       // pi-subagent prints "Spawned <name> (<handle>)" on its first line.
       handle = /^Spawned \S+ \(([0-9a-f]+)\)/m.exec(spawn.stdout)?.[1];
       if (!handle) return fail("Could not start the review: no subagent handle in the spawn output.");
+      ownRuns.add(handle);
       if (signal?.aborted) return cancelled();
 
       const wait = await exec(resolveBin("subagent"), ["wait", handle, "--timeout", String(waitSeconds)], { cwd: root, timeout: (waitSeconds + 30) * 1000, signal });
@@ -163,6 +165,7 @@ export async function runSubagent(exec: Exec, root: string, opts: { name: string
       if (handle) {
         cost = await subagentCost(handle);
         await exec(resolveBin("subagent"), ["stop", handle], { cwd: root, timeout: 30_000 }).catch(() => {});
+        ownRuns.delete(handle);
       }
       if (dir) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
     }
