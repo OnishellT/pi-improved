@@ -56,7 +56,7 @@ Two checks run before the person is asked to approve:
 
 **Fast path.** A small plan skips the approval dialog: at most 8 files, 6 interface entries and 2 decisions, and no risk trigger (dependency files, migrations, sensitive areas, `review.paths`, `review.always`; `planRiskReasons` in `src/risk.ts`). It still passes the same gates above (verified names, seams in scope, decisions, plan check when enabled); the plan is shown as a notice. Anything bigger or riskier gets the normal approval: the person approves the plan once. `.pi/task.json` becomes `implementing`.
 
-**Mode.** In `direct` (default) the agent works from `AGENTS.md` and the skills, and `/task` is optional. In `flow`, `/task` is the recommended route. `/setup` writes `direct` if unset and has the model add two short `AGENTS.md` sections: "Before finishing" (the `verify` commands) and "When to use /task" (dependencies, migrations, `review.paths`, big changes). No gate runs without an active task. `/doctor` validates `mode`.
+**Mode.** In `direct` (default) the agent works from `AGENTS.md` and the skills, and `/task` is optional. In `flow`, `/task` is the recommended route. `/setup` writes `direct` if unset and has the model add two short `AGENTS.md` sections: "Before finishing" (the `verify` commands) and "When to use /task" (dependencies, migrations, `review.paths`, big changes). Without an active task only the verify gate runs, after a turn that changed files; the contract check, the review and the "is the task done?" question need a task in `implementing`. `/doctor` validates `mode`.
 
 ## 3. Implementation with specific context
 

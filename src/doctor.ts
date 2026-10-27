@@ -27,12 +27,10 @@ export async function runDoctor(pi: ExtensionAPI, ctx: ExtensionContext, version
     }
   };
   const subagent = resolveBin("subagent");
-  const agentlint = resolveBin("agentlint");
-  const [subagentOk, agentlintOk, tmuxOk, gitOk] = await Promise.all([probe(subagent, ["list"]), probe(agentlint, ["--help"]), probe("tmux", ["-V"]), probe("git", ["--version"])]);
+  const [subagentOk, tmuxOk, gitOk] = await Promise.all([probe(subagent, ["list"]), probe("tmux", ["-V"]), probe("git", ["--version"])]);
   const checks: Check[] = [];
   checks.push({ name: "Node", ok: nodeOk(version), detail: nodeOk(version) ? version : `${version}: needs >= ${MIN_NODE.join(".")}` });
   checks.push({ name: "subagent", ok: subagentOk, detail: subagentOk ? subagent : "not found or not running (reinstall with `pi install git:github.com/OnishellT/pi-improved`)" });
-  checks.push({ name: "agentlint", ok: agentlintOk, detail: agentlintOk ? agentlint : "not found or not running" });
   const ext = hasGlobalSubagent() ? "global" : fs.existsSync(bundledExtension()) ? "bundled" : undefined;
   checks.push({ name: "subagent extension", ok: Boolean(ext), detail: ext ?? "missing: without it the review never finishes (reinstall the package)" });
   checks.push({ name: "tmux", ok: tmuxOk, detail: tmuxOk ? "ok" : "not installed: the subagent review needs it (apt/brew install tmux)" });
@@ -43,6 +41,12 @@ export async function runDoctor(pi: ExtensionAPI, ctx: ExtensionContext, version
     manifest = await readManifest(ctx.cwd);
   } catch (error: any) {
     checks.push({ name: "Manifest", ok: false, detail: error.message });
+  }
+  // agentlint matters only to a project whose verify or policy runs it.
+  if (manifest?.agentlint || manifest?.verify?.some((c) => c.includes("agentlint"))) {
+    const agentlint = resolveBin("agentlint");
+    const ok = await probe(agentlint, ["--help"]);
+    checks.push({ name: "agentlint", ok, detail: ok ? agentlint : "not found or not running" });
   }
   const mode = manifest?.mode;
   if (mode !== undefined) {
