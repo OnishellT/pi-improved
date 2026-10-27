@@ -13,6 +13,7 @@ test("branch name: ticket, else title slug, never Claude or Anthropic", () => {
   assert.equal(branchName(undefined), "task/change");
   assert.equal(branchName({ ...task, ticket: "claude-fix" }), "task/fix");
   assert.equal(branchName({ ...task, ticket: undefined, title: "Ask Claude to fix login" }), "task/ask-to-fix-login");
+  assert.equal(branchName({ ...task, ticket: undefined, title: "claudemd cleanup" }), "task/cleanup");
 });
 
 test("new ADRs: added in the diff plus untracked ones", () => {
@@ -28,6 +29,7 @@ test("scrub removes attribution lines only; product names in the work survive", 
   const body = buildBody({ task: { ...task, title: "Replace OpenAI client with Gemini", plan: undefined }, facts, verify: { ok: false, text: "FAIL copilot suite" } });
   assert.match(body, /Replace OpenAI client with Gemini/);
   assert.match(body, /FAIL copilot suite/);
+  assert.equal(scrub("keep\nAssisted by Claude\nWritten with Claude Code\nend"), "keep\nend");
   assert.equal(prTitle({ ...task, ticket: undefined, title: "Generated with Claude Code" }, []), "Changes");
   assert.doesNotMatch(buildBody({ task, facts, verify: { ok: true, text: "ok\nCo-Authored-By: Someone" } }), /Co-Authored-By/);
 });

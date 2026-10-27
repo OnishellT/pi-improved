@@ -44,6 +44,12 @@ test("/task creates the task and sends one prompt", async () => {
   assert.match(sent[0], /task_plan/);
 });
 
+test("/task with free text that starts like a key is not a ticket", async () => {
+  const { commands, ctxFor, root } = await setup();
+  await commands.get("task").handler("UTF-8 handling", ctxFor([]).ctx);
+  assert.equal((await readTask(root))?.ticket, undefined);
+});
+
 test("active task: replace asks, cancel keeps it", async () => {
   const { commands, ctxFor, root } = await setup();
   await commands.get("task").handler("First", ctxFor([]).ctx);
@@ -86,6 +92,23 @@ test("cancelled question stops; rejection returns feedback and stays planning", 
   await assert.rejects(run([undefined], [{ question: "Q?", options: ["a", "b"] }]), /not approved/);
   await assert.rejects(run([false, "Smaller steps"]), /Smaller steps/);
   assert.equal((await readTask(root))!.status, "planning");
+});
+
+test("a retried plan reuses an answer only while the question's options stay the same", async () => {
+  const { commands, tools, ctxFor } = await setup();
+  await commands.get("task").handler("Add fee", ctxFor([]).ctx);
+  const run = (answers: unknown[], options: string[]) => {
+    const c = ctxFor(answers);
+    return { ui: c.ui, done: tools.get("task_plan").execute("1", plan([{ question: "Q?", options }]), undefined, undefined, c.ctx) };
+  };
+  const first = run(["a", false, "Smaller steps"], ["a", "b"]);
+  await assert.rejects(first.done, /Smaller steps/);
+  const same = run([false, "Again"], ["a", "b"]);
+  await assert.rejects(same.done, /Again/);
+  assert.equal(same.ui.asked.length, 2);
+  const changed = run(["c", true], ["a", "c"]);
+  await changed.done;
+  assert.equal(changed.ui.asked.length, 2);
 });
 
 test("task_plan fails without a planning task", async () => {
@@ -297,12 +320,10 @@ test("specFiles keeps existing in-repo files once, ignoring trailing punctuation
   assert.deepEqual(await specFiles(root, "see docs/a.md. Also docs/a.md, docs/missing.md and /etc/hostname.txt, ../x.md"), ["docs/a.md"]);
 });
 
-test("a ticket key starts the request, and ticket text outranks big spec files in the evidence", async () => {
+test("ticket text from the tracker is evidence for names labelled 'ticket'", async () => {
   const { commands, tools, ctxFor, emit, root } = await setup();
   await updateManifest(root, (m) => void (m.connectors = [{ id: "jira" }]));
-  await fs.mkdir(path.join(root, "docs"), { recursive: true });
-  await fs.writeFile(path.join(root, "docs/big.md"), "filler ".repeat(5000));
-  await commands.get("task").handler("PAY-12 per docs/big.md", ctxFor([]).ctx);
+  await commands.get("task").handler("PAY-12", ctxFor([]).ctx);
   assert.equal((await readTask(root))!.ticket, "PAY-12");
   await emit("tool_result", { toolName: "mcp__jira__get_issue", content: "Add `computeTotal` to src/fee.ts" }, { cwd: root });
   const { ctx, ui } = ctxFor([true]);

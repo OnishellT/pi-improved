@@ -20,7 +20,7 @@ const MAX_NUDGES = 2; // "call task_plan" / "use ask_user" reminders per user me
 const MAX_PLAN_CHECKS = 1; // paid plan checks per task
 const MAX_TICKET_TEXT = 300_000; // characters of tracker output kept as evidence
 // A ticket key at the start of the request (`PAY-142` or `PAY-142 add fees`); anywhere else it is free text.
-const TICKET = /^([A-Z][A-Z0-9]+-\d+)\b/;
+const TICKET = /^[A-Z][A-Z0-9]+-\d+$/;
 const TRACKERS = ["jira", "linear"];
 const PLAN_STATUS = { ok: "plan-ok", fix: "plan-fix", skipped: "skipped" } as const;
 // Doc files named in a request: relative or absolute paths ending in .md/.txt/..., bare or quoted, with prose punctuation around them.
@@ -89,13 +89,14 @@ export function registerTask(pi: ExtensionAPI) {
     return ctx.waitForIdle();
   };
 
-  /** Ask once per question text; a cancelled dialog stops the plan. */
+  /** Ask once per question and options; a cancelled dialog stops the plan. */
   const ask = async (ctx: any, what: string, question: string, options: string[]) => {
-    const known = answers.get(question);
+    const key = JSON.stringify([question, options]);
+    const known = answers.get(key);
     if (known !== undefined) return known;
     const answer = await selectOrType(ctx, question, options);
     if (answer === undefined) throw new Error(`The user cancelled the ${what} question, so the plan is not approved. Stop and wait for the user.`);
-    answers.set(question, answer);
+    answers.set(key, answer);
     return answer;
   };
 
@@ -196,7 +197,7 @@ export function registerTask(pi: ExtensionAPI) {
         if (choice !== "Replace it") return;
       }
 
-      const ticket = arg.match(TICKET)?.[1];
+      const ticket = TICKET.test(arg) ? arg : undefined;
       const spec = await specFiles(root, arg);
       const task: Task = { id: `t${Date.now()}`, title: arg, ticket, status: "planning", allowedExtra: [], startedAt: new Date().toISOString(), ...(spec.length && { spec }) };
       await writeTask(root, task);

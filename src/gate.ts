@@ -42,7 +42,10 @@ export function registerGate(pi: ExtensionAPI) {
   };
   const review = async (cwd: string, task: NonNullable<Awaited<ReturnType<typeof readTask>>>, model: string, signal: AbortSignal) => {
     const t0 = Date.now();
-    const result = await reviewDiff(pi.exec.bind(pi), cwd, task, model, signal, await skillsBlock(cwd, "review"));
+    // Advisory: a throw here must not stop the task from settling.
+    const result = await skillsBlock(cwd, "review")
+      .then((skills) => reviewDiff(pi.exec.bind(pi), cwd, task, model, signal, skills))
+      .catch((e: any) => ({ status: "skipped" as const, report: String(e?.message ?? e), cost: undefined, cancelled: false }));
     const discarded = signal.aborted || result.cancelled === true;
     pi.events.emit(REVIEW_EVENT, { root: cwd, status: result.status, model, seconds: (Date.now() - t0) / 1000, cost: result.cost, discarded } satisfies ReviewPayload);
     return result;
