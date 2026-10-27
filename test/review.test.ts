@@ -25,7 +25,7 @@ test("approved verdict; brief has plan and diff; read-only spawn; run is stopped
   const spawn = f.calls.find((c) => c.args[0] === "spawn")!;
   assert.ok(isSubagent(spawn.cmd));
   assert.deepEqual(spawn.args.slice(spawn.args.indexOf("--provider"), spawn.args.indexOf("--provider") + 4), ["--provider", "anthropic", "--model", "claude-opus-4"]);
-  assert.equal(spawn.args[spawn.args.indexOf("--tools") + 1], "read,grep,find,ls");
+  assert.equal(spawn.args[spawn.args.indexOf("--tools") + 1], "read,grep,find,ls,codemode,mcp__none");
   assert.match(f.brief(), /Add login[\s\S]*Login form summary[\s\S]*step one[\s\S]*src\/login\.ts[\s\S]*argon2[\s\S]*new\.ts[\s\S]*\+const x = 1;/);
   assert.doesNotMatch(f.brief(), /task\.json|SKILL\.md/);
   assert.ok(f.calls.some((c) => c.args[0] === "stop" && c.args[1] === "a1b2c3"));

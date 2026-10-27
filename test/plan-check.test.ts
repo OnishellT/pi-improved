@@ -53,7 +53,7 @@ test("checkPlan spawns a read-only subagent on the given model, stops it, and ma
   assert.ok(isSubagent(spawn.cmd));
   assert.equal(spawn.args[spawn.args.indexOf("--name") + 1], "plan-check");
   assert.deepEqual(spawn.args.slice(spawn.args.indexOf("--provider"), spawn.args.indexOf("--provider") + 4), ["--provider", "openai", "--model", "gpt-6-astra"]);
-  assert.equal(spawn.args[spawn.args.indexOf("--tools") + 1], "read,grep,find,ls");
+  assert.equal(spawn.args[spawn.args.indexOf("--tools") + 1], "read,grep,find,ls,codemode,mcp__none");
   assert.match(f.brief(), /ticket text/);
   assert.ok(f.calls.some((c) => c.args[0] === "stop" && c.args[1] === "c0ffee"));
   assert.equal((await checkPlan(fakeExec("VERDICT: OK").exec, root, task, plan, "", "p/m")).status, "ok");

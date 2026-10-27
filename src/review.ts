@@ -18,6 +18,9 @@ export interface ReviewResult {
 
 const MAX_DIFF = 60_000;
 const WAIT_SECONDS = 600;
+// codemode batches reads in one script. Its scripts can call MCP tools outside --tools unless an entry starts
+// with `mcp__`; `mcp__none` matches no tool, so codemode reaches only the four read tools.
+const CHILD_TOOLS = "read,grep,find,ls,codemode,mcp__none";
 
 const skipped = (reason: string): ReviewResult => ({ status: "skipped", report: reason });
 
@@ -141,7 +144,7 @@ export async function runSubagent(exec: Exec, root: string, opts: { name: string
       await ensureTrusted(root).catch(() => false);
       const spawn = await exec(
         resolveBin("subagent"),
-        ["spawn", "--name", opts.name, "--provider", provider, "--model", id, "--thinking", "medium", "--tools", "read,grep,find,ls", "--cwd", root, "--file", brief, "--prompt", opts.prompt],
+        ["spawn", "--name", opts.name, "--provider", provider, "--model", id, "--thinking", "medium", "--tools", CHILD_TOOLS, "--cwd", root, "--file", brief, "--prompt", opts.prompt],
         { cwd: root, timeout: 60_000 },
       );
       if (spawn.code !== 0) return fail(`Could not launch the subagent: ${(spawn.stderr || spawn.stdout).trim().slice(0, 300) || `code ${spawn.code}`}`);
