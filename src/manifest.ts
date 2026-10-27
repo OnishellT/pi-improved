@@ -7,20 +7,20 @@ export type Phase = "setup" | "plan" | "implement" | "diagnose" | "review" | "le
 
 /** Bundled skills (vendor/skills) injected into each phase's prompt; the model never picks one. */
 export const DEFAULT_SKILLS: Record<Phase, string[]> = {
-  setup: ["grilling", "domain-modeling", "pstack-technical-writing", "pstack-create-verification-skill"],
+  setup: ["grilling", "domain-modeling", "pstack-technical-writing", "writing-for-agents", "pstack-create-verification-skill"],
   plan: ["tdd", "contract-first"],
-  implement: ["tdd", "contract-first"],
-  diagnose: ["diagnosing-bugs"],
-  review: ["pstack-blast-radius"],
-  learn: ["retro", "pstack-maintain-verification-skill"],
+  implement: ["tdd", "contract-first", "principles-implement"],
+  diagnose: ["diagnosing-bugs", "principles-diagnose"],
+  review: ["code-review", "pstack-blast-radius", "principles-review"],
+  learn: ["retro", "correct", "pstack-maintain-verification-skill"],
 };
 
 /** Bundled skills offered per phase as a one-line index (name, description, path) instead of being injected; the agent reads one only if the task needs it. */
 export const DEFAULT_ON_DEMAND: Record<Phase, string[]> = {
-  setup: [],
-  plan: [],
-  implement: [],
-  diagnose: [],
+  setup: ["research"],
+  plan: ["how", "architect", "codebase-design"],
+  implement: ["handoff"],
+  diagnose: ["why"],
   review: [],
   learn: [],
 };
@@ -56,6 +56,8 @@ export interface Manifest {
   skills?: Partial<Record<Phase, string[]>>;
   /** Bundled skill names per phase listed as an on-request index; a missing phase uses DEFAULT_ON_DEMAND. */
   skillsOnDemand?: Partial<Record<Phase, string[]>>;
+  /** Append the unslop skill and two working-style lines to the main session's system prompt (default true; false turns it off). */
+  basePrompt?: boolean;
   /** Characters of failing-step output kept in a verify report (default 4000, minimum 200). Smaller is cheaper on every retry. */
   maxReport?: number;
   /** Context size in tokens at which a one-time notice suggests /compact or a new session (default 150000; 0 turns it off). */

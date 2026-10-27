@@ -33,6 +33,9 @@ export function buildPlanBrief(task: Task, plan: Plan, evidence: string, sibling
   return [
     `# Plan check: ${task.title}`,
     "You are a senior engineer checking a plan BEFORE any code is written. The plan was made by a cheaper model; a cheap model will implement it literally, so what is wrong here is wrong in the code.",
+    "Naming rule:",
+    "- Names come exactly from the ticket; a name the ticket does not give must match what a sibling file or an existing caller already uses.",
+    "- Every interface name (export, file, argument shape) needs a source: the ticket line or the existing code that decides it.",
     "Check only these, against the ticket, the existing code (read it with your tools) and the sibling files:",
     "1. Interface: file names follow the naming convention of their sibling files; export names and argument shapes match what the ticket, docs or existing callers use (objects vs positional, units, types). Flag names the ticket never gives and a sibling module already defines differently.",
     "2. Reuse: an existing helper (validator, parser, formatter, type) in the repo that the plan should use instead of writing a new one.",
