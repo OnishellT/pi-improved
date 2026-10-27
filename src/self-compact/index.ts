@@ -42,8 +42,10 @@ export default function (pi: ExtensionAPI) {
 
   /** Shows an error in the UI, or on stderr when there is none (`pi -p`). */
   const report = (ctx: ExtensionContext, text: string) => {
-    if (ctx.hasUI) ctx.ui.notify(text, "error");
-    else console.error(`[self-compact] ${text}`);
+    // A project's config file could put terminal escapes in a rejected value, which the error repeats.
+    const safe = text.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ");
+    if (ctx.hasUI) ctx.ui.notify(safe, "error");
+    else console.error(`[self-compact] ${safe}`);
   };
 
   /** Why thresholds cannot be enforced for this window, or undefined. Notifies once per distinct problem. */
