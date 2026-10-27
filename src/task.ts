@@ -159,13 +159,13 @@ export function registerTask(pi: ExtensionAPI) {
   };
 
   /** One short strong-model read of the plan: cheaper than reviewing the diff it produces, and it fixes names before they exist. */
-  const runPlanCheck = async (ctx: any, root: string, task: Task, plan: Plan, evidence: string, manifest: Manifest) => {
+  const runPlanCheck = async (ctx: any, root: string, task: Task, plan: Plan, evidence: string, manifest: Manifest, signal?: AbortSignal) => {
     const checker = manifest.models?.review ?? manifest.models?.setup;
     if (!checker || !planCheckWanted(manifest, plan.files) || (task.planChecks ?? 0) >= MAX_PLAN_CHECKS) return;
     await updateTask(root, (t) => void (t.planChecks = (t.planChecks ?? 0) + 1));
     ctx.ui.setStatus("plan-check", `checking the plan with ${checker}…`);
     const t0 = Date.now();
-    const check = await checkPlan(pi.exec.bind(pi), root, task, plan, evidence, checker).finally(() => ctx.ui.setStatus("plan-check", undefined));
+    const check = await checkPlan(pi.exec.bind(pi), root, task, plan, evidence, checker, signal).finally(() => ctx.ui.setStatus("plan-check", undefined));
     pi.events.emit(REVIEW_EVENT, { root, status: PLAN_STATUS[check.status], model: checker, seconds: (Date.now() - t0) / 1000, cost: check.cost } satisfies ReviewPayload);
     if (check.status === "skipped") ctx.ui.notify(`Plan check skipped: ${check.report}`, "warning");
     else if (check.status === "fix") {
@@ -253,7 +253,7 @@ export function registerTask(pi: ExtensionAPI) {
     }),
     exposure: "model-only",
     executionMode: "sequential",
-    async execute(_id, params, _signal, _update, ctx) {
+    async execute(_id, params, signal, _update, ctx) {
       const root = ctx.cwd;
       const task = await readTask(root);
       if (task?.status !== "planning") throw new Error("No task is being planned. The user starts one with /task.");
@@ -265,7 +265,7 @@ export function registerTask(pi: ExtensionAPI) {
       const plan: Plan = { summary: params.summary, steps: params.steps, files: params.files, decisions, interface: params.interface, seams: params.seams };
 
       const manifest = await readManifest(root);
-      await runPlanCheck(ctx, root, task, plan, evidence, manifest);
+      await runPlanCheck(ctx, root, task, plan, evidence, manifest, signal);
       await approve(ctx, plan, manifest);
 
       for (const { decision, adr } of pending) decision.source = await writeAdr(root, adr);

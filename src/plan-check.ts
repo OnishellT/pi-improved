@@ -65,13 +65,14 @@ export function parsePlanVerdict(output: string): PlanCheckResult | undefined {
 }
 
 /** One short strong-model read of the plan (ticket + interface + siblings). Never throws. */
-export async function checkPlan(exec: Exec, root: string, task: Task, plan: Plan, evidence: string, model: string): Promise<PlanCheckResult> {
+export async function checkPlan(exec: Exec, root: string, task: Task, plan: Plan, evidence: string, model: string, signal?: AbortSignal): Promise<PlanCheckResult> {
   const brief = buildPlanBrief(task, plan, evidence, await siblings(root, plan));
   const run = await runSubagent(exec, root, {
     name: "plan-check",
     model,
     brief,
     waitSeconds: WAIT_SECONDS,
+    signal,
     prompt: "Check the plan in the attached brief against the repo. End with VERDICT: OK or VERDICT: FIX and a numbered list of fixes.",
   });
   const withCost = (r: PlanCheckResult): PlanCheckResult => (run.cost === undefined ? r : { ...r, cost: run.cost });

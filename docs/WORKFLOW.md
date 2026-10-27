@@ -121,7 +121,7 @@ Out of package, on purpose. A person has the last word on functionality in the d
 
 ## Internals
 
-**State.** `.pi/workflow.json` is project state (versioned; keys in the [README table](../README.md#state)). `.pi/task.json` is the active task (local, in `.gitignore`): `id`, `title`, `ticket`, `status` (`planning` | `implementing` | `done`), `plan`, `spec`, `planChecks`, `allowedExtra`, `baseCommit`, `startedAt`, `completedAt`. The model cannot write either file.
+**State.** `.pi/workflow.json` is project state (versioned; keys in the [README table](../README.md#state)). `.pi/task.json` is the active task (local, in `.gitignore`): `id`, `title`, `ticket`, `status` (`planning` | `implementing` | `done`), `plan`, `spec`, `planChecks`, `allowedExtra`, `baseCommit`, `startedAt`, `completedAt`. The model's write and edit tools cannot change either file.
 
 **Cost controls.** `/cost` shows the active task's phase, cost and tokens per phase, and the last risk level; `/metrics` covers finished tasks. `contextWarn` and `maxReport` are in the README table. Running `/setup` again on a finished setup warns about the strong-model cost and asks before repeating; the startup offer never fires then.
 
@@ -141,7 +141,7 @@ Out of package, on purpose. A person has the last word on functionality in the d
 
 `interrogate` and `reflect` are opt-in only. The main session also gets a base prompt: the `unslop` skill (when bundled) and two working-style lines. Subagents never get it. `basePrompt: false` in `.pi/workflow.json` turns it off.
 
-**Gates.** All blocking happens in code, on pi events: `agent_before_settle` (contract, verify, review, close), `tool_result` (write count, MCP text as ticket evidence) and `tool_call` (files outside the plan, dependencies, migrations, interactive agentlint commands, and model writes to `.pi/workflow.json` or `.pi/task.json`). `setup_finish` and `task_plan` are visible only in their phase. The model asks the person through the `ask_user` tool (options plus "Other"); it fails without a UI.
+**Gates.** All blocking happens in code, on pi events: `agent_before_settle` (contract, verify, review, close), `tool_result` (write count, MCP text as ticket evidence) and `tool_call` (files outside the plan, dependencies, migrations, interactive agentlint commands, and write or edit calls on `.pi/workflow.json` or `.pi/task.json`). `setup_finish` and `task_plan` are visible only in their phase. The model asks the person through the `ask_user` tool (options plus "Other"); it fails without a UI.
 
 **Subagents.** Children launch via pi-subagent in tmux, read-only (`read,grep,find,ls`), with a brief file and a time limit. Inside a child (`PI_SUBAGENT_RUN_DIR`) the extension registers nothing: no setup offers, blocks or questions nobody can see. Their cost goes to the task telemetry.
 
