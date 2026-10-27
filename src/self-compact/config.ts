@@ -64,6 +64,7 @@ export function thresholdTokens(threshold: Threshold, limit: number): number {
 }
 
 export function checkThresholds(config: Config, limit: number): string | undefined {
+  if (limit <= 0) return "The buffer must be smaller than the context window";
   const values = [config.notice, config.warning, config.force].map((item) => thresholdTokens(item, limit));
   if (!(values[0] < values[1] && values[1] < values[2])) {
     return "Thresholds must be ordered notice < warning < force for this context window";
