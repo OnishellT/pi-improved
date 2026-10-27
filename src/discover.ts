@@ -1,6 +1,5 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { resolveBin } from "./bin.ts";
 import { detectConnectors, type ConnectorSignal } from "./connectors.ts";
 import { detectUiDrivers } from "./ui-driver.ts";
 
@@ -17,8 +16,6 @@ export interface Discovery {
   agentFiles: string[];
   /** `.agentlint/config.*` already exists. */
   agentlint: boolean;
-  /** The project itself depends on agentlint (or already configured it); otherwise the bundled CLI is used. */
-  agentlintInstalled: boolean;
   connectors: ConnectorSignal[];
   /** GLOSSARY.md exists at the repo root. */
   glossary: boolean;
@@ -57,6 +54,16 @@ const CHECK_SCRIPTS = ["typecheck", "lint", "test", "build"];
 const exists = (file: string) => fs.access(file).then(() => true, () => false);
 const readText = (file: string) => fs.readFile(file, "utf8").catch(() => "");
 
+/** The project's package.json, or {} when it is missing or not valid JSON. */
+export async function readPackageJson(root: string): Promise<any> {
+  try {
+    const pkg = JSON.parse(await readText(path.join(root, "package.json")));
+    return pkg && typeof pkg === "object" ? pkg : {};
+  } catch {
+    return {};
+  }
+}
+
 async function present(root: string, names: string[]) {
   const hits = await Promise.all(names.map(async (name) => ((await exists(path.join(root, name))) ? name : undefined)));
   return hits.filter((name): name is string => name !== undefined);
@@ -74,8 +81,7 @@ async function proposeVerify(root: string, stacks: string[], pm: string | undefi
   const make = await makeTargets(root);
   if (make?.targets.includes("verify")) return [`${make.tool} verify`];
 
-  const pkg = JSON.parse((await readText(path.join(root, "package.json"))) || "{}");
-  const scripts: Record<string, string> = pkg.scripts ?? {};
+  const scripts: Record<string, string> = (await readPackageJson(root)).scripts ?? {};
   const runner = pm ?? "npm";
   if (scripts.verify) return [`${runner} run verify`];
 
@@ -97,16 +103,7 @@ async function proposeVerify(root: string, stacks: string[], pm: string | undefi
 }
 
 const AGENTLINT_CMD: Record<string, string> = { npm: "npm exec agentlint --", pnpm: "pnpm agentlint", yarn: "yarn agentlint", bun: "bun run agentlint" };
-export const agentlintCmd = (pm: string | undefined, installed = true) => (installed ? (AGENTLINT_CMD[pm ?? "npm"] ?? AGENTLINT_CMD.npm) : resolveBin("agentlint"));
-
-export async function hasAgentlintDep(root: string) {
-  try {
-    const pkg = JSON.parse(await fs.readFile(path.join(root, "package.json"), "utf8"));
-    return Boolean({ ...pkg.dependencies, ...pkg.devDependencies }["@aurelienbbn/agentlint"]);
-  } catch {
-    return false;
-  }
-}
+export const agentlintCmd = (pm: string | undefined) => AGENTLINT_CMD[pm ?? "npm"] ?? AGENTLINT_CMD.npm;
 export const agentlintCheck = (cmd: string) => `${cmd} check --all`;
 
 export async function hasAgentlintConfig(root: string) {
@@ -142,7 +139,7 @@ export async function discover(root: string, run: Run, pathEnv?: string): Promis
 
   const agentlint = await hasAgentlintConfig(root);
   const uiDrivers = await detectUiDrivers(pathEnv);
-  return { stacks, packageManager, verify: await proposeVerify(root, stacks, packageManager), ci, docs, agentFiles, agentlint, agentlintInstalled: agentlint || (await hasAgentlintDep(root)), connectors, glossary: await exists(path.join(root, "GLOSSARY.md")), agentDocs: await exists(path.join(root, "docs/agents")), ...(uiDrivers.length ? { uiDrivers } : {}) };
+  return { stacks, packageManager, verify: await proposeVerify(root, stacks, packageManager), ci, docs, agentFiles, agentlint, connectors, glossary: await exists(path.join(root, "GLOSSARY.md")), agentDocs: await exists(path.join(root, "docs/agents")), ...(uiDrivers.length ? { uiDrivers } : {}) };
 }
 
 /** A directory looks like a project when it is a git repo or has a stack marker. */

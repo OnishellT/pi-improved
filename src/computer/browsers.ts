@@ -40,21 +40,22 @@ export interface Platform {
 }
 const here = (): Platform => ({ home: os.homedir(), platform: process.platform });
 
+const supported = ({ platform }: Platform) => platform === "linux" || platform === "darwin";
+
 const target = (b: (typeof BROWSERS)[number], { home, platform }: Platform): BrowserTarget => ({
   id: b.id,
   name: b.name,
   portFile: path.join(home, platform === "darwin" ? b.darwin : b.linux, "DevToolsActivePort"),
 });
 
-export const browserIds = () => BROWSERS.map((b) => b.id as string);
-
 /** Validates a config value and turns it into what gets registered. Throws a message the user can act on. */
 export function planBrowser(choice: BrowserChoice | undefined, where = here()): BrowserPlan {
   if (choice === undefined || choice === "off") return { kind: "off" };
+  if (typeof choice === "string" && !supported(where)) throw new Error("Browser presets support Linux and macOS; use portFile or mcp.");
   if (choice === "auto") return { kind: "cdp", targets: BROWSERS.map((b) => target(b, where)) };
   if (typeof choice === "string") {
     const preset = BROWSERS.find((b) => b.id === choice);
-    if (!preset) throw new Error(`Unknown browser "${choice}". Use off, auto, ${browserIds().join(", ")}, { "portFile": … } or { "mcp": … }.`);
+    if (!preset) throw new Error(`Unknown browser "${choice}". Use off, auto, ${BROWSERS.map((b) => b.id).join(", ")}, { "portFile": … } or { "mcp": … }.`);
     return { kind: "cdp", targets: [target(preset, where)] };
   }
   if (choice && typeof choice === "object" && "mcp" in choice) {
@@ -78,6 +79,7 @@ export interface BrowserState {
 }
 
 export function browserStates(where = here(), exists: (file: string) => boolean = fs.existsSync): BrowserState[] {
+  if (!supported(where)) return [];
   return BROWSERS.map((b) => {
     const { portFile } = target(b, where);
     return { id: b.id, name: b.name, installed: exists(path.dirname(portFile)), debugging: exists(portFile) };
@@ -85,7 +87,7 @@ export function browserStates(where = here(), exists: (file: string) => boolean 
 }
 
 const serverFile = () => path.join(path.dirname(fileURLToPath(import.meta.url)), "cdp-server.mjs");
-const node = () => (/node/.test(path.basename(process.execPath)) ? process.execPath : "node");
+const node = () => (/^node(\.exe)?$/.test(path.basename(process.execPath)) ? process.execPath : "node");
 
 /** The bundled CDP server, told which browsers it may attach to (first with debugging on wins). */
 export function cdpServer(targets: BrowserTarget[]): McpServerConfig {

@@ -6,19 +6,9 @@ import { BROWSERS, browserStates, cdpServer, planBrowser } from "../src/computer
 import { readComputerConfig, writeComputerConfig } from "../src/computer/config.ts";
 import { desktopMissing, desktopWrapper } from "../src/computer/desktop.ts";
 import { describeBrowser, registerComputer } from "../src/computer/index.ts";
-import { fakePi, fakeUI, tempProject } from "./helpers.ts";
+import { fakePi, fakeUI, tempProject, withEnv } from "./helpers.ts";
 
 const where = { home: "/home/u", platform: "linux" };
-
-async function withEnv<T>(env: Record<string, string>, run: () => Promise<T>) {
-  const before = Object.fromEntries(Object.keys(env).map((k) => [k, process.env[k]]));
-  Object.assign(process.env, env);
-  try {
-    return await run();
-  } finally {
-    for (const [k, v] of Object.entries(before)) v === undefined ? delete process.env[k] : (process.env[k] = v);
-  }
-}
 
 /** A person with Brave installed, no tools on PATH, and an agent dir holding `config`. */
 async function person(config?: object, mcpJson?: object) {
@@ -46,6 +36,14 @@ test("planBrowser: off by default, auto lists every preset, a preset pins one, b
   assert.throws(() => planBrowser({ portFile: "relative/DevToolsActivePort" }, where), /browser needs/);
   assert.throws(() => planBrowser({ mcp: {} as any }, where), /"command" or a "url"/);
   assert.deepEqual(planBrowser({ mcp: { command: "npx", args: ["@playwright/mcp"] } }, where), { kind: "mcp", config: { exposure: "codemode", command: "npx", args: ["@playwright/mcp"] } });
+});
+
+test("browser presets fail clearly on a platform without known folders", () => {
+  const win = { home: "C:\\Users\\u", platform: "win32" };
+  assert.throws(() => planBrowser("auto", win), /support Linux and macOS; use portFile or mcp/);
+  assert.throws(() => planBrowser("chrome", win), /support Linux and macOS/);
+  assert.deepEqual(browserStates(win, () => true), []);
+  assert.equal(planBrowser({ portFile: "/x/DevToolsActivePort" }, win).kind, "cdp");
 });
 
 test("browserStates separates installed from remote debugging on", () => {
@@ -193,6 +191,18 @@ test("desktop on without its tools registers nothing and says what is missing", 
     const notes: string[] = [];
     await h.emit("session_start", {}, { hasUI: true, ui: { notify: (m: string) => notes.push(m) } });
     assert.match(notes[0], /Desktop is on but needs: hyprctl \(Hyprland\), hypruse/);
+  });
+});
+
+test("a desktop value that is neither on nor off is reported", async () => {
+  const p = await person({ desktop: "yes" as any });
+  await withEnv(p.env, async () => {
+    const h = fakePi();
+    await registerComputer(h.pi);
+    assert.equal(server(h, "desktop"), undefined);
+    const notes: string[] = [];
+    await h.emit("session_start", {}, { hasUI: true, ui: { notify: (m: string) => notes.push(m) } });
+    assert.match(notes[0], /desktop must be "on" or "off", not "yes"/);
   });
 });
 

@@ -1,17 +1,23 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { discover } from "../src/discover.ts";
-import { updateManifest, readManifest } from "../src/manifest.ts";
-import { setupPrompt } from "../src/prompt.ts";
+import { DEFAULT_ON_DEMAND, DEFAULT_SKILLS, OPT_IN, updateManifest, readManifest } from "../src/manifest.ts";
+import { setupPrompt } from "../src/setup-prompt.ts";
 import { clean, listSkills, loadSkill, phaseSkills, registerSkills, skillsBlock } from "../src/skills.ts";
 import { fakePi, fakeUI, tempProject } from "./helpers.ts";
 
 test("listSkills finds the bundled skills", async () => {
   assert.deepEqual(await listSkills(), [
     "architect", "code-review", "codebase-design", "contract-first", "correct", "diagnosing-bugs", "domain-modeling", "grilling", "handoff", "how",
-    "interrogate", "pr", "principles-diagnose", "principles-implement", "principles-review", "pstack-blast-radius", "pstack-create-verification-skill",
+    "interrogate", "principles-diagnose", "principles-implement", "principles-review", "pstack-blast-radius", "pstack-create-verification-skill",
     "pstack-maintain-verification-skill", "pstack-technical-writing", "reflect", "research", "retro", "tdd", "unslop", "why", "writing-for-agents",
   ]);
+});
+
+test("every skill named in the manifest lists exists under vendor/skills", async () => {
+  const bundled = await listSkills();
+  const named = [...Object.values(DEFAULT_SKILLS).flat(), ...Object.values(DEFAULT_ON_DEMAND).flat(), ...OPT_IN];
+  for (const name of named) assert.ok(bundled.includes(name), `${name} is not bundled`);
 });
 
 test("loadSkill reads frontmatter, body and companion files", async () => {
@@ -69,6 +75,40 @@ test("/skills saves a per-phase selection", async () => {
   const ui = fakeUI(["No changes", "· retro", "Done", "No changes", "No changes", "No changes", "No changes"]);
   await commands.get("skills").handler("", { cwd: root, ui });
   assert.deepEqual((await readManifest(root)).skills, { plan: ["tdd", "contract-first", "retro"] });
+});
+
+test("clean matches a referenced skill as a whole token and keeps ordinary lines", () => {
+  const bundled = ["pr", "how", "pstack-create-verification-skill"];
+  const out = clean("This skill runs after /pstack-create-verification-skill has written the first one, and checks how it ages.", bundled);
+  assert.equal(out, "(The referenced skill how, pstack-create-verification-skill, if bundled, is included below.)");
+  assert.doesNotMatch(clean("Unrelated /pstack-x line about a probe.", bundled), /referenced skill/);
+  const path = "Launch the reviewer with ~/.cursor/rules/pstack-models.mdc as its rules.";
+  assert.equal(clean(path, bundled), path);
+});
+
+test("/skills Escape after a toggle restores the phase and saves nothing", async () => {
+  const root = await tempProject({});
+  const { pi, commands } = fakePi();
+  registerSkills(pi);
+  const ui = fakeUI(["No changes", "· retro", undefined, "No changes", "No changes", "No changes", "No changes"]);
+  await commands.get("skills").handler("", { cwd: root, ui });
+  assert.equal((await readManifest(root)).skills, undefined);
+});
+
+test("/skills toggling back to the defaults stores no explicit override", async () => {
+  const root = await tempProject({});
+  const { pi, commands } = fakePi();
+  registerSkills(pi);
+  const ui = fakeUI(["No changes", "· retro", "✓ retro", "Done", "No changes", "No changes", "No changes", "No changes"]);
+  await commands.get("skills").handler("", { cwd: root, ui });
+  assert.equal((await readManifest(root)).skills, undefined);
+});
+
+test("skillsBlock leaves skipped skills out of the injected block", async () => {
+  const root = await tempProject({});
+  const block = await skillsBlock(root, "plan", ["tdd"]);
+  assert.doesNotMatch(block, /## Skill: tdd\b/);
+  assert.match(block, /## Skill: contract-first/);
 });
 
 test("clean ignores a ## line inside a code fence when looking for the boilerplate section", () => {

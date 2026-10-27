@@ -33,14 +33,9 @@ test("a configured agentlint gate is appended to the verify steps", async () => 
   assert.deepEqual((await discover(root, noGit)).verify, ["pnpm run test", "pnpm agentlint check --all"]);
 });
 
-test("agentlint uses the project's package manager when the project depends on it, else the bundled CLI", async () => {
-  const withDep = await tempProject({ "package.json": JSON.stringify({ devDependencies: { "@aurelienbbn/agentlint": "^0.9.1" } }), "pnpm-lock.yaml": "" });
-  const found = await discover(withDep, noGit);
-  assert.equal(found.agentlintInstalled, true);
-  assert.equal(agentlintCmd(found.packageManager, found.agentlintInstalled), "pnpm agentlint");
-  const without = await discover(await tempProject({ "package.json": "{}" }), noGit);
-  assert.equal(without.agentlintInstalled, false);
-  assert.equal(agentlintCmd(without.packageManager, without.agentlintInstalled), resolveBin("agentlint"));
+test("agentlint uses the project's package manager", async () => {
+  const found = await discover(await tempProject({ "package.json": "{}", "pnpm-lock.yaml": "" }), noGit);
+  assert.equal(agentlintCmd(found.packageManager), "pnpm agentlint");
 });
 
 test("python checks come from pyproject tool sections", async () => {
@@ -66,4 +61,13 @@ test("ticket keys are not attributed to Jira when the docs point to Linear", () 
 test("isProject needs a git repo or a stack marker", async () => {
   assert.equal(await isProject(await tempProject({ "notes.txt": "" })), false);
   assert.equal(await isProject(await tempProject({ "Cargo.toml": "" })), true);
+});
+
+test("a malformed package.json does not crash discovery", async () => {
+  const { readPackageJson } = await import("../src/discover.ts");
+  const root = await tempProject({ "package.json": "{ not json", "tsconfig.json": "{}" });
+  assert.deepEqual(await readPackageJson(root), {});
+  assert.deepEqual(await readPackageJson(await tempProject({ "package.json": "null" })), {});
+  const found = await discover(root, noGit);
+  assert.ok(Array.isArray(found.verify));
 });

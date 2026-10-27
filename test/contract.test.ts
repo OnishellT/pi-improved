@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { checkContract, formatContract, missingNames, stemTokens } from "../src/contract.ts";
+import { checkContract, formatContract, missingNames, relatesTo, stemTokens } from "../src/contract.ts";
 import { tempProject } from "./helpers.ts";
 
 const plan = (iface: any[]) => ({ summary: "", steps: [], files: [], decisions: [], interface: iface, seams: [] });
@@ -36,4 +36,16 @@ test("checkContract reports missing files and names not present in their file", 
   assert.match(formatContract(problems), /Interface contract not met[\s\S]*- src\/fee\.ts: missing formatFee/);
   // `fee` alone must not satisfy `feeRate2`
   assert.deepEqual(await checkContract(root, plan([{ file: "src/fee.ts", exports: ["feeRate2"] }])), ["src/fee.ts: missing feeRate2"]);
+});
+
+test("relatesTo: the source shares a word of the question; short words and other topics do not count", () => {
+  assert.equal(relatesTo("Money type?", "# Money\nuse cents"), true);
+  assert.equal(relatesTo("Fee unit?", "name: pkg\nversion: 1"), false);
+  assert.equal(relatesTo("Is it ok?", "is it ok"), false);
+});
+
+test("checkContract flags an interface file that does not exist even when only a test file", async () => {
+  const root = await tempProject({ "src/a.ts": "export const a = 1;" });
+  const problems = await checkContract(root, plan([{ file: "src/a.ts", exports: ["a"] }, { file: "test/a.test.ts", exports: ["t"] }]));
+  assert.deepEqual(problems, ["test/a.test.ts: the file does not exist"]);
 });

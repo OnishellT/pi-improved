@@ -10,14 +10,14 @@ export interface AdrInput {
   consequences?: string;
 }
 
-const slug = (text: string) =>
+export const slug = (text: string) =>
   text
     .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
+    .replace(/\p{M}/gu, "")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 60);
+    .slice(0, 60)
+    .replace(/^-|-$/g, "");
 
 /** Writes the next numbered ADR and returns its repo-relative path. */
 export async function writeAdr(root: string, adr: AdrInput, date = new Date()): Promise<string> {

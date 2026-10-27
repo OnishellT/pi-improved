@@ -53,7 +53,7 @@ test("check fails on a missing file, a missing name and a path outside the proje
 
 test("check finds a name in a changed file that the contract does not list", async () => {
   const root = await tempProject({ ...contract({ files: ["a.js"], names: ["helper"] }), "a.js": "x", "b.js": "y" });
-  const git = (...args: string[]) => promisify(execFile)("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...args], { cwd: root });
+  const git = (...args: string[]) => promisify(execFile)("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", ...args], { cwd: root });
   await git("init", "-q");
   await git("add", ".");
   await git("commit", "-qm", "init");
@@ -64,15 +64,25 @@ test("check finds a name in a changed file that the contract does not list", asy
   assert.match(r.text, /1 changed file/);
 });
 
-test("contract-first is injected in plan and implement with the script path resolved", async () => {
+test("contract-first is injected in plan with the script path resolved", async () => {
   const root = await tempProject({});
-  for (const phase of ["plan", "implement"] as const) {
-    assert.ok((await phaseSkills(root, phase)).includes("contract-first"));
-    const block = await skillsBlock(root, phase);
-    assert.match(block, /## Skill: contract-first/);
-    assert.match(block, /\.pi\/contract\.json/);
-    assert.doesNotMatch(block, /\{\{package\}\}|\bClaude\b/);
-    const script = block.match(/node (\S+contract-check\.mjs)/)?.[1];
-    assert.ok(script && (await fs.access(script).then(() => true, () => false)));
-  }
+  assert.ok((await phaseSkills(root, "plan")).includes("contract-first"));
+  assert.ok(!(await phaseSkills(root, "implement")).includes("contract-first"));
+  const block = await skillsBlock(root, "plan");
+  assert.match(block, /## Skill: contract-first/);
+  assert.match(block, /\.pi\/contract\.json/);
+  assert.doesNotMatch(block, /\{\{package\}\}|\bClaude\b/);
+  const script = block.match(/node (\S+contract-check\.mjs)/)?.[1];
+  assert.ok(script && (await fs.access(script).then(() => true, () => false)));
+});
+
+test("check cannot pass on the untracked contract file itself", async () => {
+  const root = await tempProject({ ...contract({ files: ["a.js"], names: ["zzNameNowhere"] }), "a.js": "x" });
+  const git = (...args: string[]) => promisify(execFile)("git", ["-c", "user.name=t", "-c", "user.email=t@t", "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", ...args], { cwd: root });
+  await git("init", "-q");
+  await git("add", "a.js");
+  await git("commit", "-qm", "init");
+  const r = await check(root);
+  assert.equal(r.code, 1);
+  assert.match(r.text, /names not found.*zzNameNowhere/);
 });

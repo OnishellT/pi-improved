@@ -4,7 +4,7 @@ import type { Manifest } from "./manifest.ts";
 import { uiDriverHint } from "./ui-driver.ts";
 
 export const AGENTS_MAX_LINES = 150;
-export const AGENTLINT_SKILLS = "node_modules/@aurelienbbn/agentlint/skills/agentlint";
+const AGENTLINT_SKILLS = "node_modules/@aurelienbbn/agentlint/skills/agentlint";
 
 const INSTALL_DEV: Record<string, string> = { npm: "npm install -D", pnpm: "pnpm add -D", yarn: "yarn add -D", bun: "bun add -d" };
 
@@ -63,5 +63,5 @@ ${JSON.stringify({ ...found, verify: manifest.verify }, null, 2)}
 ${steps.map((step, i) => `${i + 1}. ${step}`).join("\n")}`;
 }
 
-export const NUDGE =
+export const SETUP_NUDGE =
   "Setup is not finished. If you need the user, use ask_user. Otherwise continue the steps and call setup_finish.";

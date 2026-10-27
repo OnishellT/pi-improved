@@ -1,16 +1,15 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { diffBase, git, untrackedFiles, type Exec } from "./git.ts";
 import type { Manifest } from "./manifest.ts";
 import type { Task } from "./task-state.ts";
 import { isManifest, isMigration } from "./triggers.ts";
-import type { Exec } from "./verify.ts";
 
 // Defaults of the size thresholds; `review.maxLines/maxFiles/highLines/highFiles` override them.
 const MAX_LINES = 200;
 const MAX_FILES = 6;
 const HIGH_LINES = 600;
 const HIGH_FILES = 15;
-const HASH = /^[0-9a-f]{7,64}$/;
 const DEPENDENCIES = /(^|\/)(pnpm-lock\.yaml|yarn\.lock|bun\.lockb?|package-lock\.json|Gemfile(\.lock)?)$/;
 const SENSITIVE = /(^|\/)(auth\w*|payments?|billing|security|crypto\w*|migrations?|infra(structure)?)\//i;
 
@@ -21,7 +20,7 @@ const globRegex = (glob: string) =>
   new RegExp(`^${glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*\/|\*\*/g, (m) => (m.endsWith("/") ? "\u0000" : "\u0001")).replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]").replace(/\u0000/g, "(?:.*/)?").replace(/\u0001/g, ".*")}$`);
 
 /** Fast path of /task: a small plan (files, interface entries, decisions) with no risk trigger skips the human approval dialog. */
-export const SMALL_PLAN = { files: 8, interface: 6, decisions: 2 };
+const SMALL_PLAN = { files: 8, interface: 6, decisions: 2 };
 
 /** Why a plan is not small enough to skip approval; empty = fast path. Cheap: counts and regexes on the planned paths. */
 export function planRiskReasons(plan: { files: string[]; interface: unknown[]; decisions: unknown[] }, manifest: Manifest): string[] {
@@ -32,22 +31,6 @@ export function planRiskReasons(plan: { files: string[]; interface: unknown[]; d
   if (plan.decisions.length > SMALL_PLAN.decisions) reasons.push(`${plan.decisions.length} decisions`);
   reasons.push(...highRiskReasons(plan.files, manifest.review));
   return reasons;
-}
-
-
-const git = async (exec: Exec, root: string, args: string[]) => (await exec("git", args, { cwd: root, timeout: 30_000 }).catch(() => undefined))?.stdout ?? "";
-
-/** Current HEAD commit, or undefined without git, repo or commit. */
-export async function gitHead(exec: Exec, root: string): Promise<string | undefined> {
-  const out = (await git(exec, root, ["rev-parse", "--verify", "-q", "HEAD"])).trim();
-  return HASH.test(out) ? out : undefined;
-}
-
-/** The ref diffs are measured against: the task's `baseCommit` when it is a hash that still resolves, else `HEAD`. */
-export async function diffBase(exec: Exec, root: string, task: Pick<Task, "baseCommit"> | undefined): Promise<string> {
-  const base = task?.baseCommit;
-  if (!base || !HASH.test(base)) return "HEAD";
-  return (await git(exec, root, ["rev-parse", "--verify", "-q", `${base}^{commit}`])).trim() ? base : "HEAD";
 }
 
 const threshold = (value: number | undefined, fallback: number) => (typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback);
@@ -76,7 +59,7 @@ export interface RiskAssessment {
 }
 
 /**
- * How risky the diff since the task's base commit is. The level is always computed; a model review is only requested when
+ * How risky the diff since the task's base commit is. The level is computed from the diff (`review.always`/`review.never` short-circuit it); a model review is only requested when
  * the manifest opts in: `review.always`, or `review.minLevel` "low" (above none) or "high". Default "off".
  * Cheap: git and regexes, no LLM. Doubt goes up a level, never down.
  */
@@ -87,12 +70,13 @@ export async function assessRisk(exec: Exec, root: string, task: Task | undefine
   if (rule?.never) return { review: false, level: "none", reasons: ["review.never"] };
 
   const lines = new Map<string, number>();
-  for (const row of (await git(exec, root, ["diff", await diffBase(exec, root, task), "--numstat"])).split("\n")) {
-    const m = /^(\d+|-)\t(\d+|-)\t(.+)$/.exec(row);
+  // `-z` keeps odd names intact; `--no-renames` lists a rename as delete + add, so a moved lockfile or migration still shows.
+  const numstat = await git(exec, root, ["diff", await diffBase(exec, root, task), "--numstat", "--no-renames", "-z"]);
+  for (const row of (numstat ?? "").split("\0")) {
+    const m = /^(\d+|-)\t(\d+|-)\t(.+)$/s.exec(row);
     if (m) lines.set(m[3], (m[1] === "-" ? 0 : +m[1]) + (m[2] === "-" ? 0 : +m[2]));
   }
-  for (const file of (await git(exec, root, ["ls-files", "--others", "--exclude-standard"])).split("\n")) {
-    if (!file || file.startsWith(".pi/")) continue;
+  for (const file of await untrackedFiles(exec, root)) {
     const text = await fs.readFile(path.join(root, file), "utf8").catch(() => "");
     lines.set(file, text ? text.split("\n").length : 1);
   }
@@ -105,6 +89,8 @@ export async function assessRisk(exec: Exec, root: string, task: Task | undefine
     reasons.push(reason);
     if (to === "high" || level === "none") level = to;
   };
+  // Doubt goes up: an unreadable diff is not "no changes".
+  if (numstat === undefined) raise("low", "git diff failed");
   const [maxLines, maxFiles] = [threshold(rule?.maxLines, MAX_LINES), threshold(rule?.maxFiles, MAX_FILES)];
   // `high` never sits below `low`.
   const [highLines, highFiles] = [Math.max(maxLines, threshold(rule?.highLines, HIGH_LINES)), Math.max(maxFiles, threshold(rule?.highFiles, HIGH_FILES))];

@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { ESCALATE_EVENT, REVIEW_EVENT, VERIFY_EVENT, type EscalatePayload, type ReviewPayload, type VerifyPayload } from "./events.ts";
-import { readTask } from "./task-state.ts";
+import { readMemory, readTask } from "./task-state.ts";
 
 export interface TaskMetrics {
   phases: Record<string, { input: number; output: number; cacheRead: number; cost: number; seconds: number }>;
@@ -12,11 +12,11 @@ export interface TaskMetrics {
   escalations: number;
 }
 
-const MEMORY_PATH = ".pi/memory/tasks.jsonl";
+export const METRICS_DIR = ".pi/metrics/";
 const metrics = new Map<string, TaskMetrics>();
 
 const empty = (): TaskMetrics => ({ phases: {}, verifyRuns: 0, verifyFailures: 0, reviews: [], escalations: 0 });
-const snapshotPath = (root: string, id: string) => path.join(root, ".pi/metrics", `${id.replace(/[^\w.-]/g, "_")}.json`);
+const snapshotPath = (root: string, id: string) => path.join(root, METRICS_DIR, `${id.replace(/[^\w.-]/g, "_")}.json`);
 
 /** Metrics collected in memory for the task, or undefined when none were recorded or loaded. */
 export function taskMetrics(taskId: string): TaskMetrics | undefined {
@@ -36,19 +36,8 @@ export async function loadMetrics(root: string, taskId: string): Promise<TaskMet
   }
 }
 
-async function readRecords(root: string): Promise<any[]> {
-  const raw = await fs.readFile(path.join(root, MEMORY_PATH), "utf8").catch(() => "");
-  const out: any[] = [];
-  for (const line of raw.split("\n")) {
-    try {
-      if (line.trim()) out.push(JSON.parse(line));
-    } catch {}
-  }
-  return out;
-}
-
 export async function metricsReport(root: string): Promise<string> {
-  const records = (await readRecords(root)).filter((r) => r.metrics);
+  const records = (await readMemory(root)).filter((r) => r.metrics);
   if (!records.length) return "No metrics yet: they are saved when each task ends.";
   const rows = records.slice(-10).map((r) => {
     const phases = Object.values<any>(r.metrics.phases ?? {});
@@ -98,7 +87,10 @@ export function registerTelemetry(pi: ExtensionAPI) {
     try {
       const file = snapshotPath(root, id);
       await fs.mkdir(path.dirname(file), { recursive: true });
-      await fs.writeFile(file, JSON.stringify(data));
+      // Temp file + rename in the same directory: overlapping saves never leave a truncated snapshot.
+      const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+      await fs.writeFile(tmp, JSON.stringify(data));
+      await fs.rename(tmp, file);
     } catch {}
   }
   async function bump(root: string, change: (m: TaskMetrics) => void) {

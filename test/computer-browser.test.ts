@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { once } from "node:events";
 import * as fs from "node:fs/promises";
 import * as http from "node:http";
-import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -11,12 +10,13 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { WebSocketServer } from "ws";
 import { cdpServer } from "../src/computer/browsers.ts";
 import { allowedUrl, endpoint, parseTargets } from "../src/computer/cdp-server.mjs";
+import { tempDir } from "./helpers.ts";
 
 const script = fileURLToPath(new URL("../src/computer/cdp-server.mjs", import.meta.url));
 const value = (result: any) => JSON.parse(result.content[0].text);
 
 async function scratch() {
-  return fs.mkdtemp(path.join(os.tmpdir(), "pi-browser-"));
+  return tempDir("pi-browser-");
 }
 
 async function portFile(dir: string, name: string, contents?: string) {
@@ -50,7 +50,7 @@ async function fakeChrome(calls: any[]) {
       else if (call.method === "Runtime.evaluate") {
         result = call.params.expression.includes("#missing")
           ? { exceptionDetails: { text: "Selector must match exactly one control" } }
-          : { result: { value: call.params.expression.includes("getBoundingClientRect") ? { x: 20, y: 30 } : { ok: true } } };
+          : { result: { value: call.params.expression.includes("getBoundingClientRect") ? { x: 20, y: 30 } : call.params.expression.includes("#big") ? "x".repeat(12001) : { ok: true } } };
       }
       socket.send(JSON.stringify({ method: "Ignored.event", params: {} }));
       socket.send(JSON.stringify({ id: call.id, result }));
@@ -183,6 +183,50 @@ test("native WebSocket and MCP route every page command to the created target, n
     await stop(server);
     await fs.rm(dir, { recursive: true, force: true });
   }
+});
+
+async function opened(run: (main: any, calls: any[], server: WebSocketServer) => Promise<void>) {
+  const dir = await scratch();
+  const calls: any[] = [];
+  const server = await fakeChrome(calls);
+  let main;
+  try {
+    const file = await portFile(dir, "DevToolsActivePort", `${(server.address() as any).port}\n/devtools/browser\n`);
+    main = await client([{ id: "brave", name: "Brave", portFile: file }]);
+    await main.callTool({ name: "open", arguments: { url: "about:blank" } });
+    await run(main, calls, server);
+  } finally {
+    await main?.close();
+    await stop(server);
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+}
+
+test("evaluate refuses a result over the size cap", async () => {
+  await opened(async (main) => {
+    const big: any = await main.callTool({ name: "evaluate", arguments: { expression: "'#big'" } });
+    assert.equal(big.isError, true);
+    assert.match(big.content[0].text, /Result too large/);
+  });
+});
+
+test("open after close creates a new window", async () => {
+  await opened(async (main, calls) => {
+    assert.equal(value(await main.callTool({ name: "close", arguments: {} })).closed, true);
+    assert.equal(value(await main.callTool({ name: "open", arguments: {} })).ownedTarget, "owned");
+    assert.equal(calls.filter((c) => c.method === "Target.createTarget").length, 2);
+  });
+});
+
+test("a window the person closed by hand is forgotten: the next open makes a new one", async () => {
+  await opened(async (main, calls, server) => {
+    for (const socket of server.clients) socket.send(JSON.stringify({ method: "Target.detachedFromTarget", params: { sessionId: "owned-session", targetId: "owned" } }));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.equal(value(await main.callTool({ name: "status", arguments: {} })).ownedWindow, false);
+    assert.equal(value(await main.callTool({ name: "open", arguments: {} })).ownedTarget, "owned");
+    assert.equal(calls.filter((c) => c.method === "Target.createTarget").length, 2);
+    assert.equal(calls.filter((c) => c.method === "Target.attachToTarget").length, 2);
+  });
 });
 
 test("the config the extension registers starts a working server", async () => {

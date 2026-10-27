@@ -28,19 +28,20 @@ export interface Skill {
 /** Root of this package, so a skill can point at its scripts through the `{{package}}` placeholder. */
 const packageDir = () => path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-export const skillsDir = () => path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "vendor", "skills");
+export const skillsDir = () => path.join(packageDir(), "vendor", "skills");
 
-export async function listSkills(): Promise<string[]> {
-  const entries = await fs.readdir(skillsDir(), { withFileTypes: true }).catch(() => []);
+export async function listSkills(root = skillsDir()): Promise<string[]> {
+  const entries = await fs.readdir(root, { withFileTypes: true }).catch(() => []);
   const names: string[] = [];
   for (const e of entries) {
-    if (e.isDirectory() && (await fs.access(path.join(skillsDir(), e.name, "SKILL.md")).then(() => true, () => false))) names.push(e.name);
+    if (e.isDirectory() && (await fs.access(path.join(root, e.name, "SKILL.md")).then(() => true, () => false))) names.push(e.name);
   }
   return names.sort();
 }
 
-export async function loadSkill(name: string): Promise<Skill> {
-  const dir = path.join(skillsDir(), name);
+/** `root` is the skills directory (a temp one in tests). Reads only a single-line `description:`; a folded value (`>`, `|`) would show as ">". */
+export async function loadSkill(name: string, root = skillsDir()): Promise<Skill> {
+  const dir = path.join(root, name);
   const text = await fs.readFile(path.join(dir, "SKILL.md"), "utf8");
   const match = text.match(/^---\n([\s\S]*?)\n---\n?/);
   const description = match?.[1].match(/^description:\s*(.*)$/m)?.[1].trim().replace(/^"([\s\S]*)"$/, "$1").replace(/\\"/g, '"') ?? "";
@@ -53,15 +54,14 @@ export async function loadSkill(name: string): Promise<Skill> {
   return { name, description, body: text.slice(match?.[0].length ?? 0).trim(), files };
 }
 
-export async function phaseSkills(root: string, phase: Phase): Promise<string[]> {
+/** A phase's injected and on-request skills: the manifest's list when set, else the default. One manifest read. */
+async function phaseLists(root: string, phase: Phase) {
   const manifest = await readManifest(root).catch(() => undefined);
-  return manifest?.skills?.[phase] ?? DEFAULT_SKILLS[phase];
+  return { injected: manifest?.skills?.[phase] ?? DEFAULT_SKILLS[phase], onDemand: manifest?.skillsOnDemand?.[phase] ?? DEFAULT_ON_DEMAND[phase] };
 }
 
-export async function phaseOnDemand(root: string, phase: Phase): Promise<string[]> {
-  const manifest = await readManifest(root).catch(() => undefined);
-  return manifest?.skillsOnDemand?.[phase] ?? DEFAULT_ON_DEMAND[phase];
-}
+export const phaseSkills = async (root: string, phase: Phase) => (await phaseLists(root, phase)).injected;
+export const phaseOnDemand = async (root: string, phase: Phase) => (await phaseLists(root, phase)).onDemand;
 
 /** Cross-harness boilerplate that ends every pstack skill: the same ~1 KB would repeat in each phase prompt. */
 const BOILERPLATE = "## Agent integration boundary";
@@ -75,8 +75,9 @@ export function clean(text: string, bundled: string[]) {
     if (/^\s*```/.test(line)) fenced = !fenced;
     if (!fenced && /^## /.test(line)) boilerplate = line.trim() === BOILERPLATE;
     if (boilerplate) continue;
-    if (/Skill tool|\/pstack-[\w-]+/i.test(line)) {
-      const refs = bundled.filter((n) => line.includes(n) || line.includes(n.replace(/^pstack-/, "")));
+    // The slash form must start a token, so paths like ~/.cursor/rules/pstack-x.mdc are kept.
+    if (/Skill tool/i.test(line) || /(^|[\s`(])\/pstack-[\w-]+/.test(line)) {
+      const refs = bundled.filter((n) => new RegExp(`(?<![\\w-])${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w-])`).test(line));
       if (refs.length) out.push(`(The referenced skill ${refs.join(", ")}, if bundled, is included below.)`);
       continue;
     }
@@ -93,16 +94,17 @@ export function clean(text: string, bundled: string[]) {
 const cap = (text: string) => (text.length > MAX_BODY ? `${text.slice(0, MAX_BODY)}\n\n[truncated]` : text);
 
 /** Text to prepend to a phase prompt. Deterministic so prompt caching works. */
-export async function skillsBlock(root: string, phase: Phase): Promise<string> {
+export async function skillsBlock(root: string, phase: Phase, skip: string[] = []): Promise<string> {
   const bundled = await listSkills();
+  const { injected, onDemand } = await phaseLists(root, phase);
   const sections: string[] = [];
-  for (const name of await phaseSkills(root, phase)) {
-    if (!bundled.includes(name)) continue;
+  for (const name of injected) {
+    if (!bundled.includes(name) || skip.includes(name)) continue;
     const skill = await loadSkill(name);
     sections.push(`## Skill: ${name}\n\n${cap(clean(skill.body, bundled))}`);
     for (const f of skill.files) sections.push(`### ${f.name}\n\n${cap(clean(f.content.trim(), bundled))}`);
   }
-  const index = await onDemandIndex(root, phase, bundled);
+  const index = await onDemandIndex(onDemand.filter((n) => bundled.includes(n) && !injected.includes(n)));
   if (index) sections.push(index);
   return sections.join("\n\n");
 }
@@ -112,14 +114,12 @@ const oneLine = (text: string) => {
   return flat.length > MAX_DESC ? `${flat.slice(0, MAX_DESC - 1)}…` : flat;
 };
 
-/** Compact index of the phase's on-demand skills (only bundled ones, none already injected); empty when there is nothing to list. */
-async function onDemandIndex(root: string, phase: Phase, bundled: string[]): Promise<string> {
-  const injected = await phaseSkills(root, phase);
-  const names = (await phaseOnDemand(root, phase)).filter((n) => bundled.includes(n) && !injected.includes(n));
+/** Compact index of the given on-demand skills with their folders; empty when there is nothing to list. */
+async function onDemandIndex(names: string[]): Promise<string> {
   if (!names.length) return "";
-  const lines = ["## Skills on request", "", "Read a skill's SKILL.md only if the task needs it; do not read them otherwise."];
+  const lines = ["## Skills on request", "", "Read a skill's SKILL.md (in its folder) only if the task needs it; do not read them otherwise. Paths a skill mentions, like references/x.md, are relative to its folder."];
   for (const name of names) {
-    lines.push(`- ${name}: ${oneLine((await loadSkill(name)).description)} (${path.join(skillsDir(), name, "SKILL.md")})`);
+    lines.push(`- ${name}: ${oneLine((await loadSkill(name)).description)} (folder: ${path.join(skillsDir(), name)})`);
   }
   return lines.join("\n");
 }
@@ -145,6 +145,7 @@ export function registerSkills(pi: ExtensionAPI) {
       for (const [key, name] of PHASES) {
         let chosen = [...(next[key] ?? DEFAULT_SKILLS[key])];
         let onDemand = [...(nextOD[key] ?? DEFAULT_ON_DEMAND[key])];
+        const start = { chosen: [...chosen], onDemand: [...onDemand] };
         let changed = false;
         for (;;) {
           const options = [
@@ -154,7 +155,14 @@ export function registerSkills(pi: ExtensionAPI) {
             ...all.map((s) => `${onDemand.includes(s) ? "◆" : "◇"} ${tag(s)} (on request)`),
           ];
           const pick = await ctx.ui.select(`${name} (now: ${chosen.join(", ") || "none"}; on request: ${onDemand.join(", ") || "none"})`, options);
-          if (!pick || pick === KEEP || pick === DONE) break;
+          if (!pick) {
+            // Escape cancels this phase's edits.
+            chosen = start.chosen;
+            onDemand = start.onDemand;
+            changed = false;
+            break;
+          }
+          if (pick === KEEP || pick === DONE) break;
           changed = true;
           if (pick === DEFAULTS) {
             delete next[key];
@@ -174,7 +182,8 @@ export function registerSkills(pi: ExtensionAPI) {
           }
         }
         if (changed) {
-          next[key] = chosen;
+          if (chosen.join() !== DEFAULT_SKILLS[key].join()) next[key] = chosen;
+          else delete next[key];
           if (onDemand.join() !== DEFAULT_ON_DEMAND[key].join()) nextOD[key] = onDemand;
           else delete nextOD[key];
         }

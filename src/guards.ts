@@ -1,20 +1,20 @@
+import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-/** agentlint commands that open a browser UI and wait for a person. */
-// The `review` subcommand right after the binary (optionally after `--`), or the UI flags anywhere.
+/** agentlint commands that open a browser UI and wait for a person: the `review` subcommand right after the binary (optionally after `--`), or the UI flags anywhere. */
 const INTERACTIVE_AGENTLINT = /\bagentlint(?:\s+--)?\s+review\b|\bagentlint\b[^;&|\n]*\s--(?:review|wizard)\b/;
 
 /** Recording an exception to a rule is a decision for the user, even when the rule allows agent authority. */
 const AGENTLINT_ACCEPT = /\bagentlint(?:\s+--)?\s+(?:accept|approve)\b/;
 
-/** Workflow state the code owns: the model must not rewrite it. */
+/** Workflow state the code owns: the model must not rewrite it. Only write/edit are guarded; a bash redirect into it is a deliberate limit. */
 const OWNED = /(^|\/)\.pi\/(workflow|task)\.json$/;
 
 export function registerGuards(pi: ExtensionAPI) {
   pi.on("tool_call", async (event, ctx) => {
     if (event.toolName === "write" || event.toolName === "edit") {
       const file = String((event.input as { path?: unknown }).path ?? "");
-      if (OWNED.test(file)) return { block: true, reason: `${file} is workflow state managed by the extension. Do not edit it; ask the user (/models, /setup) if it needs to change.` };
+      if (OWNED.test(path.posix.normalize(file))) return { block: true, reason: `${file} is workflow state managed by the extension. Do not edit it; ask the user (/models, /setup) if it needs to change.` };
       return;
     }
     if (event.toolName !== "bash") return;

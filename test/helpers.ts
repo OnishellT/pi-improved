@@ -1,14 +1,39 @@
+import { readFileSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
+import { after } from "node:test";
+
+// Every temp dir a test creates; removed once when the importing test file finishes.
+const created: string[] = [];
+after(async () => {
+  await Promise.all(created.map((dir) => fs.rm(dir, { recursive: true, force: true })));
+});
+
+export async function tempDir(prefix = "pi-improved-") {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
+  created.push(dir);
+  return dir;
+}
 
 export async function tempProject(files: Record<string, string>) {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pi-improved-"));
+  const root = await tempDir();
   for (const [name, content] of Object.entries(files)) {
     await fs.mkdir(path.dirname(path.join(root, name)), { recursive: true });
     await fs.writeFile(path.join(root, name), content);
   }
   return root;
+}
+
+/** Set env vars for `run` (undefined deletes), then put the previous values back. */
+export async function withEnv<T>(env: Record<string, string | undefined>, run: () => Promise<T>) {
+  const before = Object.fromEntries(Object.keys(env).map((k) => [k, process.env[k]]));
+  for (const [k, v] of Object.entries(env)) v === undefined ? delete process.env[k] : (process.env[k] = v);
+  try {
+    return await run();
+  } finally {
+    for (const [k, v] of Object.entries(before)) v === undefined ? delete process.env[k] : (process.env[k] = v);
+  }
 }
 
 /** Scripted UI: each dialog consumes the next queued answer. */
@@ -27,6 +52,12 @@ export function fakeUI(answers: unknown[]) {
     notify: () => {},
     setStatus: () => {},
   };
+}
+
+/** Session context with a scripted UI; `extra` adds or overrides fields (mode, reload, ...). */
+export function fakeCtx(root: string, answers: unknown[], extra: object = {}) {
+  const ui = fakeUI(answers);
+  return { ui, ctx: { cwd: root, hasUI: true, ui, waitForIdle: async () => {}, ...extra } as any };
 }
 
 /** Minimal ExtensionAPI double: records registrations and scripts exec results. */
@@ -63,6 +94,29 @@ export function fakePi(exec: (cmd: string, args: string[]) => { code: number; st
     return result;
   };
   return { pi, tools, commands, sent, mcp, emit };
+}
+
+/** A successful exec result. */
+export const ok = (stdout = "") => ({ stdout, stderr: "", code: 0, killed: false });
+
+/**
+ * exec double for a subagent review: spawn records the brief file, wait answers `opts.wait`.
+ * `git` answers git calls by their args (default: empty output).
+ */
+export function fakeSubagentExec(opts: { spawn?: any; wait?: any; git?: (args: string[]) => string } = {}) {
+  const calls: { cmd: string; args: string[] }[] = [];
+  let brief = "";
+  const exec: any = async (cmd: string, args: string[]) => {
+    calls.push({ cmd, args });
+    if (cmd === "git") return ok(opts.git?.(args) ?? "");
+    if (args[0] === "spawn") {
+      brief = readFileSync(args[args.indexOf("--file") + 1], "utf8");
+      return opts.spawn ?? ok("Spawned review (a1b2c3)\nState: busy\n");
+    }
+    if (args[0] === "wait") return opts.wait ?? ok();
+    return ok();
+  };
+  return { exec, calls, brief: () => brief };
 }
 
 /** The subagent CLI may be invoked by bare name or by its bundled absolute path. */

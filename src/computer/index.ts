@@ -1,7 +1,7 @@
 import type { ExtensionAPI, McpServerConfig } from "@earendil-works/pi-coding-agent";
 import { browserStates, cdpServer, planBrowser, type BrowserChoice, type Platform } from "./browsers.ts";
 import { configPath, definedInMcpJson, readComputerConfig, writeComputerConfig, type ComputerConfig } from "./config.ts";
-import { desktopMissing, desktopServer, desktopWrapper } from "./desktop.ts";
+import { desktopMissing, desktopOffered, desktopServer, desktopWrapper } from "./desktop.ts";
 
 const KEEP = "No changes";
 const AUTO = "Auto: the first browser with remote debugging on";
@@ -20,7 +20,7 @@ export function describeBrowser(choice: unknown): string {
 
 const desktopState = (config: ComputerConfig) => (config.desktop === "on" ? "on" : "off");
 
-/** Registers or removes the `browser` and `desktop` MCP servers so they match the config. */
+/** Registers or removes the `browser` and `desktop` MCP servers so they match the config, and exports $PI_DESKTOP while the bundled desktop is registered. */
 export function computerServers(pi: ExtensionAPI, dir?: string) {
   const live = new Set<string>();
   const set = (name: string, config: McpServerConfig | undefined) => {
@@ -58,10 +58,13 @@ export function computerServers(pi: ExtensionAPI, dir?: string) {
       set("browser", undefined);
       problems.push(error.message);
     }
+    if (config.desktop !== undefined && config.desktop !== "on" && config.desktop !== "off") problems.push(`desktop must be "on" or "off", not ${JSON.stringify(config.desktop)}.`);
     const missing = config.desktop === "on" ? desktopMissing(pathEnv) : [];
     if (missing.length) problems.push(`Desktop is on but needs: ${missing.join(", ")}.`);
     try {
-      set("desktop", config.desktop === "on" && !missing.length && !shadowed("desktop") ? desktopServer() : undefined);
+      const offered = desktopOffered(config, pathEnv, undefined, dir);
+      if (config.desktop === "on" && !missing.length && !offered) shadowed("desktop"); // the only remaining reason: it reports itself
+      set("desktop", offered ? desktopServer() : undefined);
     } catch (error: any) {
       problems.push(error.message);
     }
@@ -107,7 +110,7 @@ export async function registerComputer(pi: ExtensionAPI) {
       const missing = desktopMissing();
       if (!missing.length || config.desktop === "on") {
         const desktop = await ctx.ui.select(
-          `Desktop: a private Hyprland session the agent drives (now: ${desktopState(config)}${missing.length ? `; missing: ${missing.join(", ")}` : ""})`,
+          `Desktop: a private Hyprland session the agent drives (Pi must run inside Hyprland) (now: ${desktopState(config)}${missing.length ? `; missing: ${missing.join(", ")}` : ""})`,
           [KEEP, "On", "Off"],
         );
         if (desktop === "On" || desktop === "Off") next.desktop = desktop === "On" ? "on" : "off";

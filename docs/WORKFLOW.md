@@ -2,7 +2,7 @@
 
 One idea: **the cheap model implements, code decides when work advances, and the strong model and the person step in only where they add value.** Below is the expected flow from first session to deploy, and what the package covers today.
 
-Everything is **language- and framework-agnostic**. No stack-specific gates ship in the package. Verification commands come from the project (`.pi/workflow.json`). Code checks read plain text (names, files, diffs) and never parse a language.
+Everything is **language- and framework-agnostic**. No stack-specific gates ship in the package. Verification commands come from the project (`.pi/workflow.json`; every key is in the [README table](../README.md#state)). Code checks read plain text (names, files, diffs) and never parse a language.
 
 ## Flow at a glance
 
@@ -10,7 +10,7 @@ Everything is **language- and framework-agnostic**. No stack-specific gates ship
 |---|-------|-----|-------|--------|
 | 1 | Initial setup: docs, skills, rules | `setup` model + person | `/setup`, setup skills, agentlint | Covered |
 | 2 | Planning | `implement` model, `review` model check | `/task`, `task_plan`, verified names, plan check | Covered |
-| 3 | Implementation with specific context | `implement` model | Approved plan, `tdd` skill, automatic pauses | Covered in session. Isolated subagent pending |
+| 3 | Implementation with specific context | `implement` model | Approved plan, `tdd` skill, automatic pauses | Covered (isolated subagent: see Pending) |
 | 4 | Real verification in the expected environment | Code (`verify`) | `verify-app` (browser, CLI, API or TUI), compiler, linter, tests | Covered |
 | 5 | agentlint | Code (`verify`) | Rules in `.agentlint/config.ts` | Covered |
 | 6 | Error correction | Orchestrator. 3rd failure: `escalate` model | `verify` gate, `diagnosing-bugs` skill, diff review | Covered |
@@ -52,19 +52,17 @@ It then calls `task_plan` with:
 Two checks run before the person is asked to approve:
 
 - **Verified names** (`src/contract.ts`). Each `interface` name must appear literally, as a word, in its cited source: ticket text read via MCP, spec files named in `/task`, docs, or existing code. A new file needs every word of its name in that source. Anything absent counts as invented and is asked. Plain text, any language.
-- **Plan check** (`src/plan-check.ts`). A read-only child with the `review` (or `setup`) model reads the ticket, interface and sibling files. It returns `VERDICT: OK` or a fix list: names that break the folder convention, argument shapes that differ from the ticket's, existing helpers being duplicated, invalid inputs left uncovered. Once per task. Off by default: it runs only with `"review": { "plan": true }`, `review.always`, or `review.minLevel` `low`/`high` when the plan touches high-risk files (dependencies, migrations, `review.paths`, sensitive zones). `"plan": false` turns it off; `always` beats `never`. On fixes, the orchestrator corrects the plan and calls `task_plan` again.
+- **Plan check** (`src/plan-check.ts`). A read-only child with the `review` (or `setup`) model reads the ticket, interface and sibling files. It returns `VERDICT: OK` or a fix list: names that break the folder convention, argument shapes that differ from the ticket's, existing helpers being duplicated, invalid inputs left uncovered. Once per task. Off unless `review.plan`, `review.always` or a `review.minLevel` policy asks for it (see the README table); the policy applies only when the plan touches high-risk files. On fixes, the orchestrator corrects the plan and calls `task_plan` again.
 
 **Fast path.** A small plan skips the approval dialog: at most 8 files, 6 interface entries and 2 decisions, and no risk trigger (dependency files, migrations, sensitive areas, `review.paths`, `review.always`; `planRiskReasons` in `src/risk.ts`). It still passes the same gates above (verified names, seams in scope, decisions, plan check when enabled); the plan is shown as a notice. Anything bigger or riskier gets the normal approval: the person approves the plan once. `.pi/task.json` becomes `implementing`.
 
-**Mode.** `mode` in `.pi/workflow.json` is `"direct"` (default when absent) or `"flow"`. In `direct` the agent works from `AGENTS.md` and the skills, and `/task` is optional. In `flow`, `/task` is the recommended route. `/setup` writes `direct` if unset and has the model add two short `AGENTS.md` sections: "Before finishing" (the `verify` commands) and "When to use /task" (dependencies, migrations, `review.paths`, big changes). No gate runs without an active task. `/doctor` validates `mode`.
+**Mode.** In `direct` (default) the agent works from `AGENTS.md` and the skills, and `/task` is optional. In `flow`, `/task` is the recommended route. `/setup` writes `direct` if unset and has the model add two short `AGENTS.md` sections: "Before finishing" (the `verify` commands) and "When to use /task" (dependencies, migrations, `review.paths`, big changes). No gate runs without an active task. `/doctor` validates `mode`.
 
 ## 3. Implementation with specific context
 
 Target: **an agent that receives only what it needs** implements. Its input is the approved plan, interface, seams, relevant ADRs and phase skills. No planning conversation, no other tasks. The less context a cheap model carries, the better it follows the plan.
 
-Today: implementation runs in the same pi session with the `implement` model, `tdd` injected and the plan as contract. The existing subagents are read-only (plan check, diff review). Moving implementation to a trimmed-context subagent is the next step. The surrounding pieces (gates, pauses, verification) are done and will not change.
-
-Code pauses and asks when the agent:
+Code pauses and asks when the agent (interactive sessions only, while the task is `implementing`):
 
 - touches files outside the plan's `files`;
 - adds dependencies, by command or by editing `package.json`, `pyproject.toml`, `go.mod`, etc.;
@@ -79,7 +77,7 @@ When the agent calls the task done, code does not believe it. In `agent_before_s
 1. **Interface contract.** Each plan export must appear in its file. If one is missing, the task returns to the agent without spending verify time or review money.
 2. **`verify`.** Commands from `.pi/workflow.json` run in order: fast ones first (compiler, typechecker, linter), then tests, then `verify-app`. `verify-app` exercises the functionality in the real environment with the tools setup left: open the screen in the headless browser, run the CLI command, call the endpoint, walk the TUI. Evidence goes to `.pi/evidence/`.
 
-The agent cannot close the task while `verify` is red. It gets 2 automatic retries (fix once, then escalate), then the person decides. `/verify` runs it by hand. Commands come from the project, so the same flow serves TypeScript, Python, Go or anything else.
+The agent cannot close the task while `verify` is red. It gets 2 automatic retries (fix once, then escalate), then the person decides. Interface-contract misses have their own 2 retries. `/verify` runs it by hand. Commands come from the project, so the same flow serves TypeScript, Python, Go or anything else.
 
 ## 5. agentlint
 
@@ -101,7 +99,7 @@ The `verify` report returns to the orchestrator with instructions. Pressure rise
 | 2nd, too | Switch to the `escalate` model (or `review`, or `setup`) for that attempt. |
 | 3rd | The person decides: continue or drop. |
 
-Risk is measured on every pass against the task's `baseCommit` (HEAD when it entered implementing, so commits the agent made still count): `git diff <base>` plus untracked files, falling back to `HEAD` without it. The level is `none`, `low` (over 200 lines or 6 files, no plan, new user decisions) or `high` (over 600 lines or 15 files, dependencies, migrations, `review.paths`, sensitive zones); `review.maxLines`, `maxFiles`, `highLines`, `highFiles` tune it. Level and reasons appear in the gate's final summary. A model review is requested only when the manifest opts in with `review.minLevel` `low` or `high` (default `off`) or `review.always`; `always` beats `never`. When requested, a read-only child with the `review` model reviews the diff against the plan, ADRs and `AGENTS.md`, following `pstack-blast-radius`. One round. If it asks for changes, the cheap model makes them and `verify` checks them, not another paid review. Below the configured level, no review is paid. Without tmux, or on failure, the review is skipped and the person is told.
+Unless `review.always` or `review.never` decides first, risk is measured on every pass against the task's `baseCommit` (HEAD when it entered implementing, so commits the agent made still count): `git diff <base>` plus untracked files, falling back to `HEAD` without it. The level is `none`, `low` (over 200 lines or 6 files, no plan, new user decisions) or `high` (over 600 lines or 15 files, dependencies, migrations, `review.paths`, sensitive zones); The `review.*` thresholds tune it. Level and reasons appear in the gate's final summary. A model review is requested only when the manifest opts in (`review.minLevel`, `review.always`) and needs `models.review`; without it the gate warns once per session and runs none. When requested, a read-only child with the `review` model reviews the diff against the plan, ADRs and `AGENTS.md`, following `pstack-blast-radius`. One round. If it asks for changes, the cheap model makes them and `verify` checks them, not another paid review. Below the configured level, no review is paid. Without tmux, or on failure, the review is skipped and the person is told.
 
 When the person confirms the task is done, a record goes to `.pi/memory/tasks.jsonl` (versioned). It feeds the planning of future tasks (stage 2). Every 5 tasks, a retro runs with the `retro` skill and the verification skill is reviewed with `pstack-maintain-verification-skill`.
 
@@ -123,35 +121,54 @@ Out of package, on purpose. A person has the last word on functionality in the d
 
 ## Internals
 
-**State.** `.pi/workflow.json` is project state (versioned): setup, `verify`, `mode`, `models`, `skills`, `connectors`, `review`, `agentlint`. `.pi/task.json` is the active task (local, in `.gitignore`): `status` (`planning` | `implementing` | `done`), `plan`, `spec`, `planChecks`, `allowedExtra`.
+**State.** `.pi/workflow.json` is project state (versioned; keys in the [README table](../README.md#state)). `.pi/task.json` is the active task (local, in `.gitignore`): `id`, `title`, `ticket`, `status` (`planning` | `implementing` | `done`), `plan`, `spec`, `planChecks`, `allowedExtra`, `baseCommit`, `startedAt`, `completedAt`. The model cannot write either file.
 
-**Cost controls.** `/cost` shows the active task's phase, cost and tokens per phase, and the last risk level; `/metrics` covers finished tasks. A one-time notice suggests `/compact` or a new session when the context passes `contextWarn` tokens (default 150000, `0` turns it off). `maxReport` caps the failing-step output in a verify report (default 4000 characters, minimum 200). Running `/setup` again on a finished setup warns about the strong-model cost and asks before repeating; the startup offer never fires then.
+**Cost controls.** `/cost` shows the active task's phase, cost and tokens per phase, and the last risk level; `/metrics` covers finished tasks. `contextWarn` and `maxReport` are in the README table. Running `/setup` again on a finished setup warns about the strong-model cost and asks before repeating; the startup offer never fires then.
 
 **Models per phase.** `/models` sets `setup`, `implement`, `review` and `escalate` as `provider/model`. A missing phase uses the session model. The strong model runs once in setup, in the plan check, in the diff review when risky, and on the third fix attempt. Everything else uses the cheap model.
 
-**Skills per phase.** Skills live in `vendor/skills/` and each role gets only the ones it uses (`/skills` changes them; a missing skill is ignored). Injected skills are in the prompt; on-demand skills may be read when the work needs them. The model never picks an injected skill.
+**Skills per phase.** Skills live in `vendor/skills/` and each role gets only the ones it uses (`/skills` changes them; a missing skill is ignored). The implement skills are injected once the plan is approved; the others are in the phase prompt; on-demand skills may be read when the work needs them. The model never picks an injected skill.
 
 | Role | Injected | On demand |
 |---|---|---|
 | setup | grilling, domain-modeling, pstack-technical-writing, writing-for-agents, pstack-create-verification-skill | research |
 | plan | tdd, contract-first | how, architect, codebase-design |
-| implement | tdd, contract-first, principles-implement | handoff |
+| implement | principles-implement (tdd and contract-first arrive with the approved plan) | handoff |
 | diagnose | diagnosing-bugs, principles-diagnose | why |
 | review (read-only subagent) | code-review, pstack-blast-radius, principles-review | none |
 | learn | retro, correct, pstack-maintain-verification-skill | none |
 | plan check (subagent) | a 3-line naming rule, no skills | none |
-| /pr | none: the body is built in code | none |
 
 `interrogate` and `reflect` are opt-in only. The main session also gets a base prompt: the `unslop` skill (when bundled) and two working-style lines. Subagents never get it. `basePrompt: false` in `.pi/workflow.json` turns it off.
 
-**Gates.** All blocking happens in code, on pi events: `agent_before_settle` (contract, verify, review, close), `tool_result` (write count, MCP text as ticket evidence) and `tool_call` (files outside the plan, dependencies, migrations, interactive agentlint commands). `setup_finish` and `task_plan` are visible only in their phase.
+**Gates.** All blocking happens in code, on pi events: `agent_before_settle` (contract, verify, review, close), `tool_result` (write count, MCP text as ticket evidence) and `tool_call` (files outside the plan, dependencies, migrations, interactive agentlint commands, and model writes to `.pi/workflow.json` or `.pi/task.json`). `setup_finish` and `task_plan` are visible only in their phase. The model asks the person through the `ask_user` tool (options plus "Other"); it fails without a UI.
 
 **Subagents.** Children launch via pi-subagent in tmux, read-only (`read,grep,find,ls`), with a brief file and a time limit. Inside a child (`PI_SUBAGENT_RUN_DIR`) the extension registers nothing: no setup offers, blocks or questions nobody can see. Their cost goes to the task telemetry.
 
 **Portability.** `pi install git:github.com/OnishellT/pi-improved` is enough. pi-subagent and agentlint are bundled. System requirements that cannot be packaged: Node >= 22.18, git, tmux. `/doctor` checks them.
 
+**Module map** (`src/`).
+
+| Group | File | Owns |
+|---|---|---|
+| Commands | `setup.ts`, `setup-prompt.ts` | `/setup`, `setup_finish`, the setup prompt |
+| | `task.ts`, `task-prompt.ts` | `/task`, `task_plan`, plan approval and fast path |
+| | `models.ts`, `skills.ts` | `/models`, `/skills`, skill injection and on-demand index |
+| | `doctor.ts`, `pr.ts`, `telemetry.ts` | `/doctor`, `/pr`, `/cost` and `/metrics` |
+| Gates | `gate.ts` | verify, contract, review, escalation at `agent_before_settle`; `/verify` |
+| | `verify.ts`, `policy.ts` | running `verify` steps; agentlint failures and exceptions |
+| | `contract.ts`, `plan-check.ts` | verified names; plan check |
+| | `risk.ts`, `review.ts` | diff risk and fast path; the review subagent |
+| | `triggers.ts`, `guards.ts` | scope, dependency and migration pauses; blocked agentlint and state-file writes |
+| | `context-guard.ts`, `phase-tools.ts` | context notice; tools visible per phase |
+| State | `manifest.ts`, `task-state.ts` | `.pi/workflow.json`, `.pi/task.json`, task memory, defaults |
+| | `learn.ts`, `adr.ts`, `events.ts` | task records and retro; ADR files; events between modules |
+| | `discover.ts`, `connectors.ts`, `ui-driver.ts` | repo scan; vetted connectors; GUI driver detection |
+| | `ask.ts`, `base-prompt.ts`, `git.ts` | `ask_user`; main-prompt additions; git helper |
+| Subagents | `bin.ts`, `subagent-ext.ts` | bundled CLIs; loading pi-subagent |
+| Computer | `computer/` | `/computer`, browser and desktop MCP servers ([COMPUTER.md](COMPUTER.md)) |
+
 ## Pending
 
-1. **Implementer subagent** with trimmed context (stage 3).
-2. **PR creation** with static checks attached (stage 7).
-3. **Evaluation with more tasks**, plus a variant with an interface hint, to measure quality on the full flow.
+1. **Implementer subagent** with trimmed context (stage 3). Today implementation runs in the same pi session with the `implement` model and the plan as contract; the existing subagents are read-only (plan check, diff review). The surrounding pieces (gates, pauses, verification) will not change.
+2. **Evaluation with more tasks**, plus a variant with an interface hint, to measure quality on the full flow.

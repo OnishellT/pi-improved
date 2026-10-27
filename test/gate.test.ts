@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { test } from "node:test";
 import { registerGate } from "../src/gate.ts";
-import { TASK_DONE_EVENT } from "../src/learn.ts";
+import { TASK_DONE_EVENT } from "../src/events.ts";
 import { ESCALATE_EVENT, REVIEW_EVENT, VERIFY_EVENT } from "../src/events.ts";
 import { readTask } from "../src/task-state.ts";
 import { fakePi, fakeUI, isSubagent, tempProject } from "./helpers.ts";
@@ -259,10 +259,10 @@ test("a repeated agentlint failure asks the user; approval records the exception
   let remaining = 1;
   const h = fakePi((cmd, args) => {
     if (cmd === "git") return { code: 0, stdout: args[0] === "diff" ? "changed" : "" };
-    const script = args[1] ?? "";
-    calls.push(script);
-    if (/next --format json/.test(script)) return { code: 0, stdout: JSON.stringify({ remaining, selector: remaining ? "sel-1" : undefined }) };
-    if (/ approve /.test(script)) return (remaining = 0), { code: 0 };
+    const script = args.slice(4).join(" ");
+    calls.push(`${args[1]} ${args.slice(3).join(" ")}`);
+    if (/^next --format json/.test(script)) return { code: 0, stdout: JSON.stringify({ remaining, selector: remaining ? "sel-1" : undefined }) };
+    if (/^approve /.test(script)) return (remaining = 0), { code: 0 };
     return { code: 1, stdout: report };
   });
   h.pi.events = { emit: () => {} };
@@ -277,7 +277,7 @@ test("a repeated agentlint failure asks the user; approval records the exception
   const second = await h.emit("agent_before_settle", { outcome: "completed" }, ctx);
   assert.match(ui.asked[0], /agentlint blocks/);
   assert.match(second.entries[0].content, /approved the agentlint exception/);
-  assert.ok(calls.some((c) => /AGENTLINT_ACTOR=human:\S+ npm exec agentlint -- approve --reason "Cambio revisado por finanzas" "sel-1"/.test(c)));
+  assert.ok(calls.some((c) => /shift; npm exec agentlint -- "\$@" human:\S+ approve --reason Cambio revisado por finanzas sel-1$/.test(c)));
 });
 
 test("interface contract: names missing from the files block before verify and the review; present names pass", async () => {
@@ -297,4 +297,37 @@ test("interface contract: names missing from the files block before verify and t
   assert.equal(await t.settle(), undefined);
   assert.equal(t.verifies(), 1);
   assert.equal((await readTask(t.root))?.status, "done");
+});
+
+test("contract misses do not use up the verify retries", async () => {
+  const t = await setup({ pass: false, task: true });
+  const plan = { summary: "s", steps: [], files: ["src/fee.ts"], decisions: [], interface: [{ file: "src/fee.ts", exports: ["fee"], source: "ticket" }], seams: [] };
+  await fs.writeFile(path.join(t.root, ".pi/task.json"), JSON.stringify({ ...task, plan }));
+  await t.run();
+  assert.equal((await t.settle()).entries[0].customType, "contract-gate");
+  assert.equal((await t.settle()).entries[0].customType, "contract-gate");
+  await fs.mkdir(path.join(t.root, "src"), { recursive: true });
+  await fs.writeFile(path.join(t.root, "src/fee.ts"), "export const fee = 1;\n");
+  const r = await t.settle();
+  assert.equal(r.entries[0].customType, "verify-gate");
+  assert.equal(t.ui.asked.length, 0);
+});
+
+test("a requested review without models.review is announced once; the Risk line says there is no review model", async () => {
+  const root = await tempProject({
+    ".pi/workflow.json": JSON.stringify({ version: 1, setup: "done", verify: ["check"], connectors: [], review: { always: true } }),
+    ".pi/task.json": JSON.stringify(task),
+  });
+  const h = fakePi((cmd, args) => (cmd === "git" ? { code: 0, stdout: args[0] === "diff" ? "changed" : "" } : { code: 0 }));
+  h.pi.events = { emit: () => {} };
+  registerGate(h.pi);
+  const notes: string[] = [];
+  const ui = fakeUI([false, false]);
+  (ui as any).notify = (m: string) => notes.push(m);
+  const ctx: any = { cwd: root, hasUI: true, ui };
+  await h.emit("before_agent_start", { messageType: "user" }, ctx);
+  await h.emit("tool_result", { toolName: "write" }, ctx);
+  await h.emit("agent_before_settle", { outcome: "completed" }, ctx);
+  assert.equal(notes.filter((n) => /needs models\.review/.test(n)).length, 1);
+  assert.ok(notes.some((n) => /^Risk high.*\(no review model\)$/.test(n)));
 });

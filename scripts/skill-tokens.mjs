@@ -1,14 +1,16 @@
 #!/usr/bin/env node
 // Prints the size of the skills injected per phase (skillsBlock output for DEFAULT_SKILLS) and per skill.
 // Usage: node scripts/skill-tokens.mjs [--json]    (tokens ~ chars / 4)
+import * as fs from "node:fs/promises";
 import * as os from "node:os";
+import * as path from "node:path";
 import { DEFAULT_SKILLS } from "../src/manifest.ts";
 import { clean, listSkills, loadSkill, skillsBlock } from "../src/skills.ts";
 
 const size = (chars) => ({ chars, tokens: Math.round(chars / 4) });
 
 // A directory without a manifest, so every phase uses DEFAULT_SKILLS.
-const root = os.tmpdir();
+const root = await fs.mkdtemp(path.join(os.tmpdir(), "skill-tokens-"));
 const bundled = await listSkills();
 
 const phases = {};

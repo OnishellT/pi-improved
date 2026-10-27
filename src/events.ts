@@ -1,3 +1,5 @@
+import type { Task } from "./task-state.ts";
+
 /** Events modules use to talk through `pi.events`, so none imports another's internals. */
 export const VERIFY_EVENT = "pi-improved:verify";
 export interface VerifyPayload {
@@ -24,4 +26,13 @@ export const ESCALATE_EVENT = "pi-improved:escalate";
 export interface EscalatePayload {
   root: string;
   model: string;
+}
+
+/** Emitted by the gate when the user confirms a task is finished. */
+export const TASK_DONE_EVENT = "pi-improved:task-done";
+export interface TaskDonePayload {
+  root: string;
+  task: Task;
+  /** The retro prompt is only sent to an interactive session. */
+  hasUI?: boolean;
 }

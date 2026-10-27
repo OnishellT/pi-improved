@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+import { isAbsolute, join } from "node:path";
 import { test } from "node:test";
 import { DEFAULT_ON_DEMAND, OPT_IN, readManifest, updateManifest } from "../src/manifest.ts";
 import { listSkills, loadSkill, phaseOnDemand, registerSkills, skillsBlock, skillsDir } from "../src/skills.ts";
@@ -37,7 +37,7 @@ test("on-demand skills are listed in an index after the injected ones, determini
   const index = block.slice(plain.length);
   assert.match(index, /^\n\n## Skills on request\n\n[^\n]*only if the task needs it/);
   for (const name of ["retro", "grilling"]) {
-    assert.match(index, new RegExp(`^- ${name}: .+ \\(${escape(join(skillsDir(), name, "SKILL.md"))}\\)$`, "m"));
+    assert.match(index, new RegExp(`^- ${name}: .+ \\(folder: ${escape(join(skillsDir(), name))}\\)$`, "m"));
   }
   assert.ok(index.indexOf("- retro:") < index.indexOf("- grilling:"));
   assert.equal(block, await skillsBlock(root, "plan"));
@@ -61,7 +61,7 @@ test("index descriptions are one line and cut at 160 characters", async () => {
   assert.equal(lines.length, names.length);
   let cut = 0;
   for (const line of lines) {
-    const description = line.replace(/^- [^:]+: /, "").replace(/ \([^()]*SKILL\.md\)$/, "");
+    const description = line.replace(/^- [^:]+: /, "").replace(/ \(folder: [^()]*\)$/, "");
     assert.ok(description.length <= 160);
     if (description.endsWith("…")) cut++;
   }
@@ -69,25 +69,30 @@ test("index descriptions are one line and cut at 160 characters", async () => {
 });
 
 test("skill sub-directories are never injected", async () => {
-  const dir = join(skillsDir(), "tdd", "references-test");
-  await mkdir(dir, { recursive: true });
-  try {
-    await writeFile(join(dir, "deep.md"), "SUBDIR-MARKER\n");
-    assert.deepEqual((await loadSkill("tdd")).files.map((f) => f.name), []);
-    assert.doesNotMatch(await skillsBlock(await tempProject({}), "plan"), /SUBDIR-MARKER/);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
+  const root = await tempProject({ "skills/demo/SKILL.md": "---\nname: demo\ndescription: Demo\n---\nBody\n", "skills/demo/extra.md": "EXTRA\n" });
+  const skills = join(root, "skills");
+  await mkdir(join(skills, "demo", "references"), { recursive: true });
+  await writeFile(join(skills, "demo", "references", "deep.md"), "SUBDIR-MARKER\n");
+  assert.deepEqual(await listSkills(skills), ["demo"]);
+  assert.deepEqual((await loadSkill("demo", skills)).files.map((f) => f.name), ["extra.md"]);
 });
 
-function run(root: string, answers: unknown[]) {
+test("the on-request index gives each skill's absolute folder", async () => {
+  const block = await skillsBlock(await tempProject({}), "plan");
+  assert.ok(isAbsolute(skillsDir()));
+  assert.match(block, new RegExp(`- how: .+ \\(folder: ${escape(join(skillsDir(), "how"))}\\)`));
+  assert.match(block, /relative to its folder/);
+});
+
+async function run(root: string, answers: unknown[]): Promise<string[][]> {
   const { pi, commands } = fakePi();
   registerSkills(pi);
   const ui = fakeUI(answers);
   const seen: string[][] = [];
   const select = ui.select;
   (ui as any).select = (title: string, options: string[]) => (seen.push(options), select(title));
-  return commands.get("skills").handler("", { cwd: root, ui }).then(() => seen);
+  await commands.get("skills").handler("", { cwd: root, ui });
+  return seen;
 }
 
 test("/skills toggles on-demand per phase", async () => {

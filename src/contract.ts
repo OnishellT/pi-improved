@@ -2,6 +2,9 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { Plan } from "./task-state.ts";
 
+/** The plan's pinned interface as JSON, read by scripts/contract-check.mjs and the contract-first skill; local state. */
+export const CONTRACT_PATH = ".pi/contract.json";
+
 export type InterfaceEntry = Plan["interface"][number];
 
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -29,6 +32,9 @@ export function missingNames(entry: InterfaceEntry, evidence: string, newFile: b
   }
   return missing;
 }
+
+/** True when the document shares a word of 4+ letters with the question: cheap proof that a cited source is about it. */
+export const relatesTo = (question: string, text: string) => (question.match(/[A-Za-z0-9]{4,}/g) ?? []).some((w) => word(w, "i").test(text));
 
 /** Interface names the working copy does not expose yet: each export must appear literally (as a word) in its file. */
 export async function checkContract(root: string, plan: Plan): Promise<string[]> {

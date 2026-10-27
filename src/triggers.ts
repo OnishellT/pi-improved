@@ -2,9 +2,9 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { writeAdr } from "./adr.ts";
-import { inScope, readTask, updateTask, type Task } from "./task-state.ts";
+import { inScope, isPiState, readTask, updateTask, type Task } from "./task-state.ts";
 
-const IGNORED = [".pi/", "docs/adr/"];
+const ADR_DIR = "docs/adr/";
 const MANIFEST = /(^|\/)(package\.json|pyproject\.toml|requirements[^/]*\.txt|go\.mod|Cargo\.toml)$/;
 const MIGRATION = /(^|\/)(migrations?\/|db\/migrate\/|alembic\/versions\/)|(^|\/)schema\.prisma$|\.sql$/;
 const INSTALLERS = /^(?:sudo\s+)?(?:(?:npm|pnpm|yarn|bun)\s+(?:add|install|i)|(?:python3?\s+-m\s+)?pip3?\s+install|uv\s+(?:pip\s+install|add)|poetry\s+add|go\s+get|cargo\s+add|gem\s+install|composer\s+require)\s+(.+)$/;
@@ -89,14 +89,15 @@ async function approveDependency(task: Task, ctx: ExtensionContext, title: strin
   const label = names?.join(", ") || "dependencies";
   const pick = await ctx.ui.select(`${title}: ${label}`, ["Approve and record ADR", "Block"]);
   if (pick !== "Approve and record ADR") return BLOCK("this dependency change");
-  await writeAdr(ctx.cwd, { title: `Add dependency ${names?.join(", ") || "(see decision)"}`, context: task.title, decision });
+  if (!names?.length) return; // the edit could not be parsed: approval only, no ADR naming nothing
+  await writeAdr(ctx.cwd, { title: `Add dependency ${names.join(", ")}`, context: task.title, decision });
 }
 
 export function registerTriggers(pi: ExtensionAPI) {
   const approvedMigrations = new Set<string>();
 
   pi.on("tool_call", async (event: any, ctx: ExtensionContext) => {
-    if (!ctx.hasUI) return;
+    if (!ctx.hasUI) return; // headless: the scope, dependency and migration gates are off
     const task = await readTask(ctx.cwd).catch(() => undefined);
     if (task?.status !== "implementing") return;
 
@@ -109,7 +110,7 @@ export function registerTriggers(pi: ExtensionAPI) {
     if (event.toolName !== "write" && event.toolName !== "edit") return;
     const abs = path.resolve(ctx.cwd, event.input?.path ?? "");
     const file = toRelative(ctx.cwd, abs);
-    if (IGNORED.some((d) => file.startsWith(d))) return;
+    if (isPiState(file) || file.startsWith(ADR_DIR)) return;
 
     if (!inScope(task, file)) {
       const pick = await ctx.ui.select(`The agent wants to touch a file outside the plan: ${file}`, ["Allow this file", "Allow the whole folder", "Block"]);
@@ -131,10 +132,11 @@ export function registerTriggers(pi: ExtensionAPI) {
       if (added === undefined || added.length) return approveDependency(task, ctx, added ? `New dependency in ${file}` : `This edit touches dependencies in ${file}`, added, `Edit of \`${file}\``);
     }
 
-    if (isMigration(file) && !approvedMigrations.has(file)) {
+    const migrationKey = `${task.id}:${file}`;
+    if (isMigration(file) && !approvedMigrations.has(migrationKey)) {
       const pick = await ctx.ui.select(`Schema change or migration: ${file}`, ["Approve", "Block"]);
       if (pick !== "Approve") return BLOCK(`the schema/migration change in ${file}`);
-      approvedMigrations.add(file);
+      approvedMigrations.add(migrationKey);
     }
   });
 }

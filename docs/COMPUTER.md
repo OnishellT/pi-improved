@@ -29,11 +29,15 @@ The rules below hold for the bundled server only. An `{ "mcp": … }` server is 
 - http(s) and `about:blank` only, no credentials in URLs.
 - Subagents get `status` only.
 
+The window it creates stays open when the server exits (or if you close it by hand, the next `open` makes a new one); call `close` to close it. Browser presets support Linux and macOS only; on other systems use `portFile` or `mcp`.
+
 Verified end to end with Helium. The other presets share its code path and folder layout. The macOS folders are unverified.
 
 ## Desktop
 
-A private nested 1280x800 Hyprland session with its own cursor, keyboard and session bus. Input is confined to windows it launched. Subagents are read-only. Needs Linux, Hyprland, dbus (`dbus-run-session`), python3 and [`hypruse`](https://pypi.org/project/hypruse/) (`uv tool install hypruse`).
+A private nested 1280x800 Hyprland session with its own cursor, keyboard and session bus. Input is confined to windows it launched. Subagents are read-only. Pi must itself run inside a Hyprland session, which the nested one attaches to. Needs Linux, Hyprland, dbus (`dbus-run-session`), python3 and [`hypruse`](https://pypi.org/project/hypruse/) (`uv tool install hypruse`).
+
+The nested session starts on first use, is detached, and keeps running after Pi exits (other Pi sessions reuse it). Its log is `/run/user/<uid>/pi-desktop/startup.log`; to stop it, kill the `Hyprland --config …/hyprland.lua` process whose config is this package's.
 
 It refuses to attach to a compositor started from another `hyprland.lua`: the check pins the config path, so it also trips after the package is moved or reinstalled elsewhere. The error names the process to stop. Moving from a hand-made setup: remove the `desktop` entry from `mcp.json` and stop the old private compositor first.
 

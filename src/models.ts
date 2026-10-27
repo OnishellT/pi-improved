@@ -13,6 +13,14 @@ const MAX_FLAT = 15;
 
 const idOf = (m: { provider: string; id: string }) => `${m.provider}/${m.id}`;
 
+/** The registered, available model for "provider/id", or undefined. */
+function resolve(ctx: ExtensionContext, wanted: string) {
+  const registry = ctx.modelRegistry;
+  const slash = wanted.indexOf("/");
+  const model = registry && slash > 0 ? registry.find(wanted.slice(0, slash), wanted.slice(slash + 1)) : undefined;
+  return model && registry!.getAvailable().some((m) => idOf(m) === wanted) ? model : undefined;
+}
+
 /** Switches to the model configured for the phase. Returns the previous model id, or undefined when nothing changed. */
 export async function usePhaseModel(pi: ExtensionAPI, ctx: ExtensionContext, phase: "setup" | "implement"): Promise<string | undefined> {
   try {
@@ -21,9 +29,8 @@ export async function usePhaseModel(pi: ExtensionAPI, ctx: ExtensionContext, pha
     if (!wanted || !registry) return undefined;
     const current = ctx.model;
     if (current && idOf(current) === wanted) return undefined;
-    const slash = wanted.indexOf("/");
-    const model = slash > 0 ? registry.find(wanted.slice(0, slash), wanted.slice(slash + 1)) : undefined;
-    if (!model || !registry.getAvailable().some((m) => idOf(m) === wanted)) {
+    const model = resolve(ctx, wanted);
+    if (!model) {
       ctx.ui.notify(`Model for ${phase}: ${wanted} is not available (not logged in?). Continuing with the current model.`, "warning");
       return undefined;
     }
@@ -44,9 +51,8 @@ export async function switchModel(pi: ExtensionAPI, ctx: ExtensionContext, wante
   try {
     const registry = ctx.modelRegistry;
     if (!wanted || !registry || (ctx.model && idOf(ctx.model) === wanted)) return undefined;
-    const slash = wanted.indexOf("/");
-    const model = slash > 0 ? registry.find(wanted.slice(0, slash), wanted.slice(slash + 1)) : undefined;
-    if (!model || !registry.getAvailable().some((m) => idOf(m) === wanted)) return undefined;
+    const model = resolve(ctx, wanted);
+    if (!model) return undefined;
     const previous = ctx.model ? idOf(ctx.model) : undefined;
     return (await pi.setModel(model)) ? { previous, model: wanted } : undefined;
   } catch {

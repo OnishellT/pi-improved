@@ -14,7 +14,8 @@ export function hasGlobalSubagent(dir = agentDir()): boolean {
   if (fs.existsSync(path.join(dir, "extensions", "subagent", "index.ts"))) return true;
   try {
     const settings = JSON.parse(fs.readFileSync(path.join(dir, "settings.json"), "utf8"));
-    return (settings.packages ?? []).some((p: string) => /pi-subagent/.test(p));
+    // A package is a source string or an object with a `source`.
+    return (settings.packages ?? []).some((p: unknown) => /pi-subagent/.test(typeof p === "string" ? p : String((p as any)?.source ?? "")));
   } catch {
     return false;
   }
@@ -39,10 +40,15 @@ export async function ensureTrusted(project: string, dir = agentDir()) {
   let trust: Record<string, boolean> = {};
   try {
     trust = JSON.parse(await fs.promises.readFile(file, "utf8"));
-  } catch {}
-  if (trust[project]) return false;
+  } catch (error: any) {
+    // Only a missing file means "nobody trusted yet"; an unreadable or corrupt one is left alone so no entry is lost.
+    if (error?.code !== "ENOENT") return false;
+  }
+  if (!trust || typeof trust !== "object" || trust[project]) return false;
   trust[project] = true;
   await fs.promises.mkdir(dir, { recursive: true });
-  await fs.promises.writeFile(file, JSON.stringify(trust, null, 2) + "\n");
+  const tmp = `${file}.${process.pid}.tmp`;
+  await fs.promises.writeFile(tmp, JSON.stringify(trust, null, 2) + "\n");
+  await fs.promises.rename(tmp, file);
   return true;
 }

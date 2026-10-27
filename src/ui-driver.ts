@@ -1,5 +1,5 @@
-import { definedInMcpJson, readComputerConfig, type ComputerConfig } from "./computer/config.ts";
-import { desktopMissing } from "./computer/desktop.ts";
+import { readComputerConfig, type ComputerConfig } from "./computer/config.ts";
+import { desktopOffered } from "./computer/desktop.ts";
 import { which } from "./computer/which.ts";
 
 /**
@@ -22,8 +22,7 @@ export const UI_DRIVERS = [
  */
 export async function detectUiDrivers(pathEnv = process.env.PATH ?? "", agentDir?: string, home?: string): Promise<string[]> {
   const config = await readComputerConfig(agentDir).catch(() => ({}) as ComputerConfig);
-  // Not offered when an mcp.json "desktop" entry wins: the extension then exports no $PI_DESKTOP.
-  const bundled = config.desktop === "on" && !desktopMissing(pathEnv, home).length && !definedInMcpJson("desktop", agentDir);
+  const bundled = desktopOffered(config, pathEnv, home, agentDir);
   return UI_DRIVERS.filter(({ bin }) => which(bin, pathEnv) || (bin === "pi-desktop" && bundled)).map(({ bin }) => bin);
 }
 

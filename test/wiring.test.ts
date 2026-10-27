@@ -5,13 +5,14 @@ import { DEFAULT_ON_DEMAND, DEFAULT_SKILLS, type Phase } from "../src/manifest.t
 import { buildPlanBrief } from "../src/plan-check.ts";
 import { skillsBlock } from "../src/skills.ts";
 import type { Plan, Task } from "../src/task-state.ts";
-import { fakePi, tempProject } from "./helpers.ts";
+import extension from "../src/index.ts";
+import { fakePi, tempProject, withEnv } from "./helpers.ts";
 
 test("DEFAULT_SKILLS gives each role only the skills it uses", () => {
   assert.deepEqual(DEFAULT_SKILLS, {
     setup: ["grilling", "domain-modeling", "pstack-technical-writing", "writing-for-agents", "pstack-create-verification-skill"],
     plan: ["tdd", "contract-first"],
-    implement: ["tdd", "contract-first", "principles-implement"],
+    implement: ["principles-implement"],
     diagnose: ["diagnosing-bugs", "principles-diagnose"],
     review: ["code-review", "pstack-blast-radius", "principles-review"],
     learn: ["retro", "correct", "pstack-maintain-verification-skill"],
@@ -55,4 +56,10 @@ test("base prompt is appended once, and not when basePrompt is false", async () 
 
   const off = await tempProject({ ".pi/workflow.json": JSON.stringify({ version: 1, setup: "done", verify: [], connectors: [], basePrompt: false }) });
   assert.equal(await h.emit("before_agent_start", { messageType: "user", systemPrompt: "SYS" }, { cwd: off }), undefined);
+});
+
+test("the main session registers its commands", async () => {
+  const { pi, commands } = fakePi();
+  await withEnv({ PI_SUBAGENT_RUN_DIR: undefined }, () => extension(pi));
+  for (const name of ["setup", "task", "skills", "pr", "cost", "metrics", "models"]) assert.ok(commands.has(name), name);
 });

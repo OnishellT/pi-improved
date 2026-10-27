@@ -4,9 +4,8 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { resolveBin } from "./bin.ts";
 import type { Task } from "./task-state.ts";
-import { ensureTrusted } from "./subagent-ext.ts";
-import { diffBase } from "./risk.ts";
-import type { Exec } from "./verify.ts";
+import { agentDir, ensureTrusted } from "./subagent-ext.ts";
+import { diffBase, git, untrackedFiles, type Exec } from "./git.ts";
 
 export type ReviewStatus = "approved" | "changes" | "skipped";
 export interface ReviewResult {
@@ -23,15 +22,18 @@ const WAIT_SECONDS = 600;
 const skipped = (reason: string): ReviewResult => ({ status: "skipped", report: reason });
 
 async function collectDiff(exec: Exec, root: string, task?: Pick<Task, "baseCommit">) {
-  const git = async (args: string[]) => (await exec("git", args, { cwd: root, timeout: 30_000 })).stdout;
   const base = await diffBase(exec, root, task);
-  const diff = await git(["diff", base]);
-  const untracked = (await git(["ls-files", "--others", "--exclude-standard"])).split("\n").filter((f) => f && f !== ".pi/task.json");
+  const diff = await git(exec, root, ["diff", base, "--", ".", ":(exclude).pi"]);
+  if (diff === undefined) throw new Error("git diff failed");
+  const untracked = await untrackedFiles(exec, root);
   const truncated = diff.length > MAX_DIFF;
   // New files are not in `git diff <base>`: inline them while the budget lasts so the reviewer does not spend turns reading them.
   const contents: Record<string, string> = {};
   let budget = MAX_DIFF - Math.min(diff.length, MAX_DIFF);
   for (const file of untracked) {
+    // stat first: do not read a huge file just to drop it.
+    const stat = await fs.stat(path.join(root, file)).catch(() => undefined);
+    if (!stat?.isFile() || stat.size > budget) continue;
     const text = await fs.readFile(path.join(root, file), "utf8").catch(() => undefined);
     if (text === undefined || text.length > budget || text.includes("\0")) continue;
     contents[file] = text;
@@ -82,14 +84,20 @@ export function parseVerdict(output: string): ReviewResult | undefined {
   return last[1].toUpperCase() === "APPROVED" ? { status: "approved", report: body } : { status: "changes", report: text.trim() || body };
 }
 
-const runsDir = () => path.join(process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), ".pi", "agent"), "subagents");
+const runsDir = () => path.join(agentDir(), "subagents");
 
 /** Sums the cost of every assistant message in the child's session; undefined when it can't be read. */
 export async function subagentCost(handle: string, dir = runsDir()): Promise<number | undefined> {
   for (const run of await fs.readdir(dir).catch(() => [] as string[])) {
+    // A corrupt or half-written run of another subagent must not hide this one's cost.
+    let meta: any;
     try {
-      const meta = JSON.parse(readFileSync(path.join(dir, run, "metadata.json"), "utf8"));
-      if (meta.handle !== handle) continue;
+      meta = JSON.parse(readFileSync(path.join(dir, run, "metadata.json"), "utf8"));
+    } catch {
+      continue;
+    }
+    if (meta?.handle !== handle) continue;
+    try {
       let cost = 0;
       for (const line of readFileSync(meta.sessionFile, "utf8").split("\n")) {
         if (!line) continue;
@@ -125,35 +133,36 @@ export async function runSubagent(exec: Exec, root: string, opts: { name: string
   return cost === undefined ? result : { ...result, cost };
 
   async function attempt(): Promise<SubagentRun> {
-  try {
-    dir = await fs.mkdtemp(path.join(os.tmpdir(), `pi-${opts.name}-`));
-    const brief = path.join(dir, "brief.md");
-    await fs.writeFile(brief, opts.brief);
+    try {
+      dir = await fs.mkdtemp(path.join(os.tmpdir(), `pi-${opts.name}-`));
+      const brief = path.join(dir, "brief.md");
+      await fs.writeFile(brief, opts.brief);
 
-    await ensureTrusted(root).catch(() => false);
-    const spawn = await exec(
-      resolveBin("subagent"),
-      ["spawn", "--name", opts.name, "--provider", provider, "--model", id, "--thinking", "medium", "--tools", "read,grep,find,ls", "--cwd", root, "--file", brief, "--prompt", opts.prompt],
-      { cwd: root, timeout: 60_000 },
-    );
-    if (spawn.code !== 0) return fail(`Could not launch the subagent: ${(spawn.stderr || spawn.stdout).trim().slice(0, 300) || `code ${spawn.code}`}`);
-    handle = /\(([0-9a-f]+)\)/.exec(spawn.stdout)?.[1] ?? /Spawned (\S+)/.exec(spawn.stdout)?.[1];
-    if (!handle) return fail("Could not read the subagent handle.");
-    if (signal?.aborted) return cancelled();
+      await ensureTrusted(root).catch(() => false);
+      const spawn = await exec(
+        resolveBin("subagent"),
+        ["spawn", "--name", opts.name, "--provider", provider, "--model", id, "--thinking", "medium", "--tools", "read,grep,find,ls", "--cwd", root, "--file", brief, "--prompt", opts.prompt],
+        { cwd: root, timeout: 60_000 },
+      );
+      if (spawn.code !== 0) return fail(`Could not launch the subagent: ${(spawn.stderr || spawn.stdout).trim().slice(0, 300) || `code ${spawn.code}`}`);
+      // pi-subagent prints "Spawned <name> (<handle>)" on its first line.
+      handle = /^Spawned \S+ \(([0-9a-f]+)\)/m.exec(spawn.stdout)?.[1];
+      if (!handle) return fail("Could not start the review: no subagent handle in the spawn output.");
+      if (signal?.aborted) return cancelled();
 
-    const wait = await exec(resolveBin("subagent"), ["wait", handle, "--timeout", String(waitSeconds)], { cwd: root, timeout: (waitSeconds + 30) * 1000, signal });
-    if (signal?.aborted) return cancelled();
-    if (wait.code !== 0 || wait.killed) return fail(`The subagent failed: ${(wait.stderr || wait.stdout).trim().slice(0, 300) || "no response"}`);
-    return { ok: true, output: wait.stdout };
-  } catch (error: any) {
-    return signal?.aborted ? cancelled() : fail(`Could not run: ${error?.message ?? error}`);
-  } finally {
-    if (handle) {
-      cost = await subagentCost(handle);
-      await exec(resolveBin("subagent"), ["stop", handle], { cwd: root, timeout: 30_000 }).catch(() => {});
+      const wait = await exec(resolveBin("subagent"), ["wait", handle, "--timeout", String(waitSeconds)], { cwd: root, timeout: (waitSeconds + 30) * 1000, signal });
+      if (signal?.aborted) return cancelled();
+      if (wait.code !== 0 || wait.killed) return fail(`The subagent failed: ${(wait.stderr || wait.stdout).trim().slice(0, 300) || "no response"}`);
+      return { ok: true, output: wait.stdout };
+    } catch (error: any) {
+      return signal?.aborted ? cancelled() : fail(`Could not run: ${error?.message ?? error}`);
+    } finally {
+      if (handle) {
+        cost = await subagentCost(handle);
+        await exec(resolveBin("subagent"), ["stop", handle], { cwd: root, timeout: 30_000 }).catch(() => {});
+      }
+      if (dir) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
     }
-    if (dir) await fs.rm(dir, { recursive: true, force: true }).catch(() => {});
-  }
   }
 }
 

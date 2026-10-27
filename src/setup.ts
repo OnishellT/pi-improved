@@ -3,11 +3,14 @@ import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { CATALOG, connectorById, type ConnectorSignal } from "./connectors.ts";
-import { agentlintCheck, agentlintCmd, discover, hasAgentlintConfig, isProject, type Discovery, type Run } from "./discover.ts";
+import { agentlintCheck, agentlintCmd, discover, hasAgentlintConfig, isProject, readPackageJson, type Discovery, type Run } from "./discover.ts";
+import { agentDir } from "./subagent-ext.ts";
 import { restoreModel, usePhaseModel } from "./models.ts";
 import { readManifest, updateManifest, type EnabledConnector } from "./manifest.ts";
 import { phaseSkills, skillsBlock } from "./skills.ts";
-import { AGENTS_MAX_LINES, NUDGE, setupPrompt } from "./prompt.ts";
+import { AGENTS_MAX_LINES, SETUP_NUDGE, setupPrompt } from "./setup-prompt.ts";
+import { CONTRACT_PATH } from "./contract.ts";
+import { METRICS_DIR } from "./telemetry.ts";
 import { TASK_PATH } from "./task-state.ts";
 import { formatVerify, runVerify } from "./verify.ts";
 
@@ -57,10 +60,13 @@ async function chooseConnectors(ctx: ExtensionContext, signals: ConnectorSignal[
     enable(rest.find((c) => c.name === pick)!.id);
   }
   for (const c of enabled.values()) {
-    if (!c.mcp) ctx.ui.notify(`${connectorById(c.id)?.name ?? c.id}: configure it in ~/.pi/agent/mcp.json under the name "${c.id}" and it will be used.`, "warning");
+    if (!c.mcp) ctx.ui.notify(`${connectorById(c.id)?.name ?? c.id}: configure it in ${path.join(agentDir(), "mcp.json")} under the name "${c.id}" and it will be used.`, "warning");
   }
   return [...enabled.values()];
 }
+
+/** Local state kept out of git. `.pi/evidence/` has no code owner: the verify-app skill (setup-prompt.ts) writes there. */
+export const IGNORED_STATE = [TASK_PATH, CONTRACT_PATH, METRICS_DIR, ".pi/evidence/"];
 
 async function ensureIgnored(root: string, entries: string[]) {
   const gitignore = path.join(root, ".gitignore");
@@ -72,7 +78,7 @@ async function ensureIgnored(root: string, entries: string[]) {
 
 /** True when a verify step already runs the agentlint gate, directly or through a package script. */
 async function runsAgentlint(root: string, verify: string[]) {
-  const scripts: Record<string, string> = JSON.parse((await fs.readFile(path.join(root, "package.json"), "utf8").catch(() => "{}")) || "{}").scripts ?? {};
+  const scripts: Record<string, string> = (await readPackageJson(root)).scripts ?? {};
   const expand = (step: string) => step.replace(/^(?:npm|pnpm|yarn|bun)(?: run)? ([\w:-]+)$/, (all, name) => scripts[name] ?? all);
   return verify.some((step) => /agentlint\b.*\bcheck\b/.test(expand(step)));
 }
@@ -205,7 +211,7 @@ export function registerSetup(pi: ExtensionAPI) {
         throw new Error(`The user did not approve. Feedback: ${feedback || "(none)"}. Apply it and call setup_finish again.`);
       }
 
-      await ensureIgnored(root, [TASK_PATH, ".pi/contract.json", ".pi/metrics/", ".pi/evidence/", ...((await fs.access(path.join(root, "package.json")).then(() => true, () => false)) ? ["node_modules/"] : [])]);
+      await ensureIgnored(root, [...IGNORED_STATE, ...((await fs.access(path.join(root, "package.json")).then(() => true, () => false)) ? ["node_modules/"] : [])]);
 
       await updateManifest(root, (m) => {
         m.setup = "done";
@@ -234,7 +240,7 @@ export function registerSetup(pi: ExtensionAPI) {
   pi.on("agent_before_settle", async (event, ctx) => {
     if (event.outcome !== "completed" || nudges >= MAX_NUDGES || !(await setupRunning(ctx.cwd))) return;
     nudges++;
-    return { entries: [{ type: "custom_message", customType: "setup-nudge", content: NUDGE, display: false }], continue: true };
+    return { entries: [{ type: "custom_message", customType: "setup-nudge", content: SETUP_NUDGE, display: false }], continue: true };
   });
 
   pi.on("session_start", async (event, ctx) => {
