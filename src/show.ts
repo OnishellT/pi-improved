@@ -75,11 +75,15 @@ export async function screenshot(browser: string, page: string, out: string, wid
       if (!size) throw new Error("the page did not finish loading in 5 s");
       return { w: Number(size[1]), h: Number(size[2]) };
     };
-    const first = await measure(width);
-    // Never narrower than the page was laid out: a narrower window would reflow it and trim its right padding.
-    const w = Math.min(Math.max(first.w, width), MAX_WIDTH);
-    // A wider window can reflow the page (a media query), so its height is measured again at the width it gets.
-    const h = Math.min(w > width ? (await measure(w)).h : first.h, MAX_HEIGHT);
+    // Never narrower than the page was laid out: a narrower window would reflow it and trim its right padding. A wider
+    // window can reflow the page again (a media query), so it is measured at each width it gets, up to 3 times.
+    let w = width;
+    let size = await measure(w);
+    for (let i = 0; i < 3 && Math.min(size.w, MAX_WIDTH) > w; i++) {
+      w = Math.min(size.w, MAX_WIDTH);
+      size = await measure(w);
+    }
+    const h = Math.min(size.h, MAX_HEIGHT);
     try {
       await exec(browser, [...flags, "--force-device-scale-factor=2", `--window-size=${w},${h}`, `--screenshot=${out}`, url]);
     } catch (err) {

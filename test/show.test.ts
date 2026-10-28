@@ -102,6 +102,24 @@ test("screenshot measures the height again at a width the content needed beyond 
   assert.deepEqual(calls.map((c) => c.find((a) => a.startsWith("--window-size="))), ["--window-size=500,800", "--window-size=700,800", "--window-size=700,340"]);
 });
 
+test("screenshot keeps widening while a wider window makes the content wider again, up to the cap", async () => {
+  const widths: string[] = [];
+  const exec: Run = async (_bin, args) => {
+    const size = args.find((a) => a.startsWith("--window-size="))!;
+    widths.push(size);
+    if (!args.includes("--dump-dom")) return "";
+    // A breakpoint at 700 lays the content out 900 wide; at 900 it fits.
+    return size === "--window-size=500,800" ? "<title>size:700x100</title>" : size === "--window-size=700,800" ? "<title>size:900x200</title>" : "<title>size:900x150</title>";
+  };
+  assert.deepEqual(await screenshot("chromium", "p.html", "p.png", 500, exec), { w: 900, h: 150 });
+  assert.deepEqual(widths, ["--window-size=500,800", "--window-size=700,800", "--window-size=900,800", "--window-size=900,150"]);
+  const growing: Run = async (_bin, args) => {
+    const at = Number(/--window-size=(\d+)/.exec(args.join(" "))![1]);
+    return args.includes("--dump-dom") ? `<title>size:${at + 1000}x100</title>` : "";
+  };
+  assert.deepEqual(await screenshot("chromium", "p.html", "p.png", 500, growing), { w: 2400, h: 100 });
+});
+
 test("screenshot removes a picture the browser left half written when it fails", async () => {
   const out = path.join(await tempDir(), "p.png");
   const exec: Run = async (_bin, args) => {
