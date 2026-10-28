@@ -101,6 +101,17 @@ test("screenshot measures the height again at a width the content needed beyond 
   assert.deepEqual(calls.map((c) => c.find((a) => a.startsWith("--window-size="))), ["--window-size=500,800", "--window-size=700,800", "--window-size=700,340"]);
 });
 
+test("screenshot removes a picture the browser left half written when it fails", async () => {
+  const out = path.join(await tempDir(), "p.png");
+  const exec: Run = async (_bin, args) => {
+    if (args.includes("--dump-dom")) return "<title>size:500x100</title>";
+    await fs.writeFile(out, "half");
+    throw new Error("timed out");
+  };
+  await assert.rejects(screenshot("chromium", "p.html", out, 500, exec), /timed out/);
+  await assert.rejects(fs.access(out));
+});
+
 test("show renders an HTML file without leaving its page behind, and fails clearly", async () => {
   const agent = await tempDir();
   await withEnv({ PI_CODING_AGENT_DIR: agent }, async () => {

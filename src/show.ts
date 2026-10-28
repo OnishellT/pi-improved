@@ -80,7 +80,12 @@ export async function screenshot(browser: string, page: string, out: string, wid
     const w = Math.min(Math.max(first.w, width), MAX_WIDTH);
     // A wider window can reflow the page (a media query), so its height is measured again at the width it gets.
     const h = Math.min(w > width ? (await measure(w)).h : first.h, MAX_HEIGHT);
-    await exec(browser, [...flags, "--force-device-scale-factor=2", `--window-size=${w},${h}`, `--screenshot=${out}`, url]);
+    try {
+      await exec(browser, [...flags, "--force-device-scale-factor=2", `--window-size=${w},${h}`, `--screenshot=${out}`, url]);
+    } catch (err) {
+      fs.rmSync(out, { force: true }); // a browser that timed out may have left a partial picture
+      throw err;
+    }
     return { w, h };
   } finally {
     fs.rmSync(profile, { recursive: true, force: true });
