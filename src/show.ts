@@ -69,11 +69,17 @@ export async function screenshot(browser: string, page: string, out: string, wid
   const url = pathToFileURL(page).href;
   const flags = ["--headless", "--disable-gpu", "--no-first-run", "--no-default-browser-check", "--hide-scrollbars", `--user-data-dir=${profile}`, "--virtual-time-budget=5000"];
   try {
-    const dom = await exec(browser, [...flags, `--window-size=${width},800`, "--dump-dom", url]);
-    const size = /<title>size:(\d+)x(\d+)<\/title>/.exec(dom);
-    if (!size) throw new Error("the page did not finish loading in 5 s");
+    const measure = async (at: number) => {
+      const dom = await exec(browser, [...flags, `--window-size=${at},800`, "--dump-dom", url]);
+      const size = /<title>size:(\d+)x(\d+)<\/title>/.exec(dom);
+      if (!size) throw new Error("the page did not finish loading in 5 s");
+      return { w: Number(size[1]), h: Number(size[2]) };
+    };
+    const first = await measure(width);
     // Never narrower than the page was laid out: a narrower window would reflow it and trim its right padding.
-    const [w, h] = [Math.min(Math.max(Number(size[1]), width), MAX_WIDTH), Math.min(Number(size[2]), MAX_HEIGHT)];
+    const w = Math.min(Math.max(first.w, width), MAX_WIDTH);
+    // A wider window can reflow the page (a media query), so its height is measured again at the width it gets.
+    const h = Math.min(w > width ? (await measure(w)).h : first.h, MAX_HEIGHT);
     await exec(browser, [...flags, "--force-device-scale-factor=2", `--window-size=${w},${h}`, `--screenshot=${out}`, url]);
     return { w, h };
   } finally {
