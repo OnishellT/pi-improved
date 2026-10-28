@@ -33,8 +33,8 @@ const MEASURE = `<script>addEventListener("load", () => setTimeout(() => {
   const boxes = [range, ...document.body.querySelectorAll("*")].map((e) => e.getBoundingClientRect());
   const edge = (side) => Math.ceil(Math.max(0, ...boxes.map((b) => b[side])));
   const body = getComputedStyle(document.body);
-  const gap = parseFloat(body.paddingBottom) + parseFloat(body.marginBottom);
-  document.title = "size:" + (edge("right") + 8) + "x" + Math.ceil(edge("bottom") + Math.max(gap, 8));
+  const gap = (side) => Math.max(parseFloat(body["padding" + side]) + parseFloat(body["margin" + side]), 8);
+  document.title = "size:" + Math.ceil(edge("right") + gap("Right")) + "x" + Math.ceil(edge("bottom") + gap("Bottom"));
 }))</script>`;
 
 const run: Run = (bin, args) =>
