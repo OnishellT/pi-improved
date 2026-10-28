@@ -116,6 +116,14 @@ test("pruneRenders deletes only files older than the limit, and tolerates a miss
   pruneRenders(dir, 5_000, now);
   assert.deepEqual(await fs.readdir(dir), ["new.png"]);
   pruneRenders(path.join(dir, "missing"), 5_000, now);
+
+  // An old folder is left alone, and does not stop the files after it from going.
+  await fs.mkdir(path.join(dir, "a-folder"));
+  await fs.writeFile(path.join(dir, "z-old.png"), "x");
+  await fs.utimes(path.join(dir, "a-folder"), new Date(now - 10_000), new Date(now - 10_000));
+  await fs.utimes(path.join(dir, "z-old.png"), new Date(now - 10_000), new Date(now - 10_000));
+  pruneRenders(dir, 5_000, now);
+  assert.deepEqual((await fs.readdir(dir)).sort(), ["a-folder", "new.png"]);
 });
 
 test("a wide measured page keeps its width, so the picture is not reflowed", async () => {
