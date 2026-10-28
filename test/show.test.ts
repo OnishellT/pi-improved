@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 import { Image, resetCapabilitiesCache, setCapabilities, Text } from "@earendil-works/pi-tui";
-import { findBrowser, pageFor, pruneRenders, registerShow, type Run } from "../src/show.ts";
+import { findBrowser, pageFor, pruneRenders, registerShow, screenshot, type Run } from "../src/show.ts";
 import { fakePi, tempDir, withEnv } from "./helpers.ts";
 
 const theme = { fg: (_c: string, s: string) => s } as any;
@@ -89,6 +89,18 @@ test("show renders markup at the measured size and keeps the page", async () => 
   });
 });
 
+test("screenshot measures the height again at a width the content needed beyond the requested one", async () => {
+  const calls: string[][] = [];
+  const exec: Run = async (_bin, args) => {
+    calls.push(args);
+    if (!args.includes("--dump-dom")) return "";
+    // Wide content at 500; a media query makes the page taller once the window is 700 wide.
+    return args.includes("--window-size=500,800") ? "<title>size:700x100</title>" : "<title>size:700x340</title>";
+  };
+  assert.deepEqual(await screenshot("chromium", "p.html", "p.png", 500, exec), { w: 700, h: 340 });
+  assert.deepEqual(calls.map((c) => c.find((a) => a.startsWith("--window-size="))), ["--window-size=500,800", "--window-size=700,800", "--window-size=700,340"]);
+});
+
 test("show renders an HTML file without leaving its page behind, and fails clearly", async () => {
   const agent = await tempDir();
   await withEnv({ PI_CODING_AGENT_DIR: agent }, async () => {
@@ -132,7 +144,7 @@ test("a wide measured page keeps its width, so the picture is not reflowed", asy
     const { calls, exec } = fakeBrowser("900x300");
     const { call } = await setup(exec);
     await call({ html: "<p>wide</p>", width: 700 });
-    assert.ok(calls[1].includes("--window-size=900,300"));
+    assert.ok(calls.at(-1)!.includes("--window-size=900,300"), "the window gets the measured width");
   });
 });
 
