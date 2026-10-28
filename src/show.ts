@@ -40,8 +40,8 @@ const MEASURE = `<script>addEventListener("load", () => setTimeout(() => {
 const run: Run = (bin, args) =>
   new Promise((resolve, reject) => execFile(bin, args, { timeout: 30_000, maxBuffer: 50e6 }, (err, stdout) => (err ? reject(err) : resolve(stdout))));
 
-export function findBrowser(pathEnv = process.env.PATH ?? ""): string | undefined {
-  for (const b of BROWSERS) {
+export function findBrowser(pathEnv = process.env.PATH ?? "", candidates = BROWSERS): string | undefined {
+  for (const b of candidates) {
     const found = path.isAbsolute(b) ? (fs.existsSync(b) ? b : undefined) : which(b, pathEnv);
     if (found) return found;
   }

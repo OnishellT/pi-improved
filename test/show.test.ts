@@ -40,7 +40,8 @@ test("findBrowser looks up Chromium or Chrome on the PATH", async () => {
   const dir = await tempDir();
   await fs.writeFile(path.join(dir, "google-chrome"), "", { mode: 0o755 });
   assert.equal(findBrowser(dir), path.join(dir, "google-chrome"));
-  assert.equal(findBrowser(await tempDir()), undefined);
+  // Only the names given are looked up, so a Chrome app installed on a Mac cannot make this fail.
+  assert.equal(findBrowser(await tempDir(), ["chromium", "google-chrome"]), undefined);
 });
 
 test("pageFor wraps a fragment, keeps a document, and points a file's page at its folder", async () => {
