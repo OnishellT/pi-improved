@@ -48,14 +48,19 @@ export function findBrowser(pathEnv = process.env.PATH ?? ""): string | undefine
   return undefined;
 }
 
-/** Deletes the files in dir last modified more than maxAgeMs before now; best effort. */
+/** Deletes the files in dir last modified more than maxAgeMs before now; best effort, an entry at a time. */
 export function pruneRenders(dir: string, maxAgeMs: number, now = Date.now()) {
+  let names: string[] = [];
   try {
-    for (const f of fs.readdirSync(dir)) {
-      const file = path.join(dir, f);
-      if (fs.statSync(file).mtimeMs < now - maxAgeMs) fs.rmSync(file, { force: true });
-    }
+    names = fs.readdirSync(dir);
   } catch {}
+  for (const f of names) {
+    try {
+      const file = path.join(dir, f);
+      const stat = fs.lstatSync(file);
+      if (stat.isFile() && stat.mtimeMs < now - maxAgeMs) fs.rmSync(file, { force: true });
+    } catch {}
+  }
 }
 
 /** Renders a page to a PNG as wide as the page was laid out and as tall as its content, at twice the CSS pixels. */
