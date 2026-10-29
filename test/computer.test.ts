@@ -1,20 +1,25 @@
 import assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { test } from "node:test";
-import { BROWSERS, browserStates, cdpServer, planBrowser } from "../src/computer/browsers.ts";
+import { BROWSERS, browserStates, cdpServer, isolatedServer, planBrowser, stopIsolated } from "../src/computer/browsers.ts";
 import { readComputerConfig, writeComputerConfig } from "../src/computer/config.ts";
 import { desktopMissing, desktopWrapper } from "../src/computer/desktop.ts";
 import { describeBrowser, registerComputer } from "../src/computer/index.ts";
 import { fakePi, fakeUI, tempProject, withEnv } from "./helpers.ts";
 
 const where = { home: "/home/u", platform: "linux" };
+const ISOLATED = "Isolated: a private headless Chromium with its own profile, no approval";
+const RELAY = "Relay: your own browser, with your logins (you approve remote debugging)";
+const BOTH = "Both: the isolated one as `browser`, yours as `my-browser`";
 
 /** A person with Brave installed, no tools on PATH, and an agent dir holding `config`. */
 async function person(config?: object, mcpJson?: object) {
   const home = await tempProject({});
   await fs.mkdir(path.join(home, process.platform === "darwin" ? "Library/Application Support/BraveSoftware/Brave-Browser" : ".config/BraveSoftware/Brave-Browser"), { recursive: true });
-  const agent = await tempProject({ ...(config ? { "computer.json": JSON.stringify(config) } : {}), ...(mcpJson ? { "mcp.json": JSON.stringify(mcpJson) } : {}) });
+  const agent = await tempProject({ ...(config ? { "pi-improved.json": JSON.stringify({ computer: config }) } : {}), ...(mcpJson ? { "mcp.json": JSON.stringify(mcpJson) } : {}) });
   const bin = await tempProject({});
   // PI_DESKTOP is the person's own value: the extension must hand it back, and withEnv restores it after the test.
   return { env: { HOME: home, PI_CODING_AGENT_DIR: agent, PATH: bin, PI_DESKTOP: "mine" }, home, agent, bin };
@@ -64,7 +69,13 @@ test("config: missing file is empty, a non-object is a readable error, writes ro
   assert.deepEqual(await readComputerConfig(dir), {});
   await writeComputerConfig({ browser: "brave", desktop: "on" }, dir);
   assert.deepEqual(await readComputerConfig(dir), { browser: "brave", desktop: "on" });
-  await fs.writeFile(path.join(dir, "computer.json"), "[1]");
+  await fs.writeFile(path.join(dir, "pi-improved.json"), JSON.stringify({ computer: [1], mode: "flow" }));
+  await assert.rejects(readComputerConfig(dir), /"computer" in .*pi-improved.json is not a JSON object/);
+  // Saving keeps the rest of the global file.
+  await fs.writeFile(path.join(dir, "pi-improved.json"), JSON.stringify({ mode: "flow" }));
+  await writeComputerConfig({ desktop: "off" }, dir);
+  assert.deepEqual(JSON.parse(await fs.readFile(path.join(dir, "pi-improved.json"), "utf8")), { mode: "flow", computer: { desktop: "off" } });
+  await fs.writeFile(path.join(dir, "pi-improved.json"), "[1]");
   await assert.rejects(readComputerConfig(dir), /is not a JSON object/);
 });
 
@@ -135,14 +146,14 @@ test("/computer picks a browser from what is installed, saves it and applies it 
   await withEnv(p.env, async () => {
     const h = fakePi();
     await registerComputer(h.pi);
-    const ui = fakeUI(["Brave"]);
+    const ui = fakeUI([RELAY, "Brave"]);
     const notes: string[] = [];
     await h.commands.get("computer").handler("", { ui: { ...ui, notify: (m: string) => notes.push(m) } });
     assert.match(ui.asked[0], /Browser the agent can drive \(now: off\)/);
-    assert.equal(ui.asked.length, 1, "no desktop question without Hyprland tools");
-    assert.deepEqual(await readComputerConfig(p.agent), { browser: "brave" });
+    assert.equal(ui.asked.length, 2, "mode, then the browser; no desktop question without Hyprland tools");
+    assert.deepEqual(await readComputerConfig(p.agent), { browser: { mode: "relay", relay: "brave" } });
     assert.deepEqual(targetsOf(server(h, "browser")).map((t: any) => t.id), ["brave"]);
-    assert.match(notes[0], /Browser: brave\. Desktop: off\./);
+    assert.match(notes[0], /Browser: relay \(relay: brave\)\. Desktop: off\./);
     assert.match(notes[0], /approve remote debugging/);
     assert.match(notes[0], /Desktop is not offered here: it needs .*hyprctl/);
 
@@ -150,6 +161,42 @@ test("/computer picks a browser from what is installed, saves it and applies it 
     assert.equal(server(h, "browser"), undefined);
     assert.deepEqual(await readComputerConfig(p.agent), { browser: "off" });
   });
+});
+
+test("the isolated browser outlives its session: only turning it off in /computer stops it", async () => {
+  const p = await person({ browser: { mode: "isolated" } });
+  const profile = path.join(p.agent, "browser-profile");
+  await fs.mkdir(profile, { recursive: true });
+  // Stands in for the detached Chromium: a live process whose command line names the profile.
+  const child = spawn(process.execPath, ["-e", "console.log('up'); setTimeout(() => {}, 60000)", "--", `--user-data-dir=${profile}`], { stdio: ["ignore", "pipe", "ignore"] });
+  await once(child.stdout, "data"); // past exec: before it, the command line is still the parent's
+  await fs.symlink(`host-${child.pid}`, path.join(profile, "SingletonLock"));
+  try {
+    await withEnv(p.env, async () => {
+      const h = fakePi();
+      await registerComputer(h.pi);
+      const notes: string[] = [];
+      await h.commands.get("computer").handler("", { ui: { ...fakeUI(["No changes"]), notify: (m: string) => notes.push(m) } });
+      assert.equal(child.exitCode, null, "unchanged config leaves the browser running");
+      await h.commands.get("computer").handler("", { ui: { ...fakeUI(["Off"]), notify: (m: string) => notes.push(m) } });
+      await once(child, "exit");
+      assert.match(notes.at(-1)!, /isolated browser was stopped/);
+    });
+  } finally {
+    child.kill();
+  }
+});
+
+test("stopIsolated kills only a process that is still that profile's browser", async () => {
+  const profile = path.join(await tempProject({}), "browser-profile");
+  await fs.mkdir(profile, { recursive: true });
+  const killed: number[] = [];
+  const stop = (command: string) => stopIsolated(profile, async () => command, (pid) => void killed.push(pid));
+  assert.equal(await stop("whatever"), false, "no SingletonLock: nothing to stop");
+  await fs.symlink("host-4242", path.join(profile, "SingletonLock"));
+  assert.equal(await stop("vim notes.txt"), false, "a pid reused by another program");
+  assert.equal(await stop(`chrome --user-data-dir=${profile} about:blank`), true);
+  assert.deepEqual(killed, [4242]);
 });
 
 test("/computer keeps what it is not asked to change, including a custom entry", async () => {
@@ -228,7 +275,7 @@ test("cancelling every question changes nothing and writes nothing", async () =>
     await registerComputer(h.pi);
     await h.commands.get("computer").handler("", { ui: fakeUI([undefined]) });
     assert.deepEqual(await readComputerConfig(p.agent), {});
-    await assert.rejects(fs.access(path.join(p.agent, "computer.json")));
+    await assert.rejects(fs.access(path.join(p.agent, "pi-improved.json")));
     assert.deepEqual(h.mcp, []);
   });
 });
@@ -263,4 +310,71 @@ test("a disabled mcp.json entry still wins, so it still counts as a conflict", a
     await h.emit("session_start", {}, { hasUI: true, ui: { notify: (m: string) => notes.push(m) } });
     assert.match(notes[0], /mcp\.json already defines "browser"/);
   });
+});
+
+test("planBrowser: modes, and the old values keep meaning relay", () => {
+  assert.deepEqual(planBrowser({ mode: "isolated" }, where), { kind: "isolated" });
+  assert.equal((planBrowser({ mode: "relay" }, where) as any).targets.length, BROWSERS.length, "relay defaults to auto");
+  assert.deepEqual((planBrowser({ mode: "relay", relay: "brave" }, where) as any).targets.map((t: any) => t.id), ["brave"]);
+  const both: any = planBrowser({ mode: "both", relay: { portFile: "/x/DevToolsActivePort", name: "Mine" } }, where);
+  assert.equal(both.kind, "both");
+  assert.deepEqual(both.targets, [{ id: "custom", name: "Mine", portFile: "/x/DevToolsActivePort" }]);
+  assert.deepEqual(planBrowser("brave", where), planBrowser({ mode: "relay", relay: "brave" }, where));
+  assert.deepEqual(planBrowser("auto", where), planBrowser({ mode: "relay", relay: "auto" }, where));
+  assert.deepEqual(planBrowser({ portFile: "/x/DevToolsActivePort" }, where), planBrowser({ mode: "relay", relay: { portFile: "/x/DevToolsActivePort" } }, where));
+  assert.throws(() => planBrowser({ mode: "sideways" } as any, where), /browser\.mode must be "isolated", "relay", "both"/);
+  assert.throws(() => planBrowser({ mode: "both", relay: "netscape" }, where), /Unknown browser "netscape"/);
+  assert.equal(planBrowser({ mode: "isolated" }, { home: "C:\\u", platform: "win32" }).kind, "isolated");
+});
+
+test("isolatedServer launches its own headless Chromium with a persistent profile; no approval", () => {
+  const config: any = isolatedServer("/agent/browser-profile");
+  const [target] = targetsOf(config);
+  assert.deepEqual(target.launch, { profile: "/agent/browser-profile" });
+  assert.equal(target.portFile, "/agent/browser-profile/DevToolsActivePort");
+  assert.match(config.description, /headless Chromium.*persistent profile.*no approval/);
+  assert.match((cdpServer([{ id: "b", name: "Brave", portFile: "/p" }], true) as any).description, /only when the task needs the user's logged-in sessions or the user asks for their browser/);
+  assert.doesNotMatch((cdpServer([{ id: "b", name: "Brave", portFile: "/p" }]) as any).description, /only when the task needs/);
+});
+
+test("mode both registers `browser` (isolated) and `my-browser` (relay); switching mode removes what no longer applies", async () => {
+  const p = await person({ browser: { mode: "both", relay: "brave" } });
+  await withEnv(p.env, async () => {
+    const h = fakePi();
+    await registerComputer(h.pi);
+    assert.ok(targetsOf(server(h, "browser"))[0].launch);
+    assert.deepEqual(targetsOf(server(h, "my-browser")).map((t: any) => t.id), ["brave"]);
+    assert.match(server(h, "my-browser").description, /only when the task needs the user's logged-in sessions/);
+
+    await h.commands.get("computer").handler("", { ui: fakeUI([ISOLATED]) });
+    assert.deepEqual(await readComputerConfig(p.agent), { browser: { mode: "isolated" } });
+    assert.ok(server(h, "browser"));
+    assert.equal(server(h, "my-browser"), undefined);
+
+    await h.commands.get("computer").handler("", { ui: fakeUI([BOTH, "Auto: the first browser with remote debugging on"]) });
+    assert.deepEqual(await readComputerConfig(p.agent), { browser: { mode: "both", relay: "auto" } });
+    assert.equal(targetsOf(server(h, "my-browser")).length, BROWSERS.length);
+
+    await h.commands.get("computer").handler("", { ui: fakeUI(["Off"]) });
+    assert.equal(server(h, "browser"), undefined);
+    assert.equal(server(h, "my-browser"), undefined);
+  });
+});
+
+test("old config values register as relay under the name `browser`", async () => {
+  for (const browser of ["brave", "auto", { portFile: "/x/DevToolsActivePort" }]) {
+    const p = await person({ browser });
+    await withEnv(p.env, async () => {
+      const h = fakePi();
+      await registerComputer(h.pi);
+      assert.equal(targetsOf(server(h, "browser"))[0].launch, undefined);
+      assert.equal(server(h, "my-browser"), undefined);
+    });
+  }
+});
+
+test("describeBrowser names the mode", () => {
+  assert.equal(describeBrowser({ mode: "isolated" }), "isolated");
+  assert.equal(describeBrowser({ mode: "both", relay: "brave" }), "both (relay: brave)");
+  assert.equal(describeBrowser({ mode: "relay" }), "relay (relay: auto)");
 });

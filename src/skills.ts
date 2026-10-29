@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { DEFAULT_ON_DEMAND, DEFAULT_SKILLS, OPT_IN, readManifest, updateManifest, type Phase } from "./manifest.ts";
+import { DEFAULT_ON_DEMAND, DEFAULT_SKILLS, globalMap, OPT_IN, patchMap, readManifest, updateManifest, type Phase } from "./manifest.ts";
 
 const MAX_BODY = 12_000;
 const KEEP = "No changes";
@@ -188,10 +188,13 @@ export function registerSkills(pi: ExtensionAPI) {
           else delete nextOD[key];
         }
       }
+      // Only what was changed goes into the project file; lists that come from the global file stay there.
       await updateManifest(root, (m) => {
-        if (Object.keys(next).length) m.skills = next;
+        const own = patchMap(m.skills, current, next, globalMap("skills"));
+        if (own) m.skills = own;
         else delete m.skills;
-        if (Object.keys(nextOD).length) m.skillsOnDemand = nextOD;
+        const ownOD = patchMap(m.skillsOnDemand, currentOD, nextOD, globalMap("skillsOnDemand"));
+        if (ownOD) m.skillsOnDemand = ownOD;
         else delete m.skillsOnDemand;
       });
       ctx.ui.notify(show(next, nextOD), "info");

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { ESCALATE_EVENT, REVIEW_EVENT, TASK_DONE_EVENT, VERIFY_EVENT, type EscalatePayload, type ReviewPayload, type TaskDonePayload, type VerifyPayload } from "./events.ts";
 import { checkContract, formatContract } from "./contract.ts";
+import { limitsOf } from "./config.ts";
 import { git } from "./git.ts";
 import { readManifest } from "./manifest.ts";
 import { restoreModel, switchModel } from "./models.ts";
@@ -10,12 +11,11 @@ import { resolvePolicyFailure } from "./policy.ts";
 import { reviewDiff } from "./review.ts";
 import { skillsBlock } from "./skills.ts";
 import { readTask, updateTask } from "./task-state.ts";
-import { formatVerify, isPolicyFailure, runVerify, validCap } from "./verify.ts";
+import { formatVerify, isNixMissingFailure, isPolicyFailure, runVerify, validCap } from "./verify.ts";
 
-const MAX_RETRIES = 2;
+const UNREADABLE = "unreadable";
 const MAX_REVIEWS = 1;
-// The 2nd failed verify diagnoses the bug and hands the attempt to the stronger model.
-const FAILURES_BEFORE_ESCALATION = 2;
+// `limits.verifyRetries` and `limits.failuresBeforeEscalation` (config.ts) set the retries and when the failed verify diagnoses the bug and hands the attempt to the stronger model.
 
 export function registerGate(pi: ExtensionAPI) {
   let start = "";
@@ -30,15 +30,16 @@ export function registerGate(pi: ExtensionAPI) {
   let warnedNoReviewModel = false;
 
   const snapshot = async (cwd: string) => {
-    const run = async (args: string[]) => (await git(pi.exec.bind(pi), cwd, args)) ?? "";
-    const out = [await run(["status", "--porcelain"]), await run(["diff", "HEAD"])].join("\n--\n");
-    return createHash("sha1").update(out).digest("hex");
+    const parts = [await git(pi.exec.bind(pi), cwd, ["status", "--porcelain"]), await git(pi.exec.bind(pi), cwd, ["diff", "HEAD"])];
+    // A snapshot git could not take (no Nix, no repository) is never equal to another: the work counts as changed, and verify says what is wrong.
+    if (parts.some((p) => p === undefined)) return UNREADABLE;
+    return createHash("sha1").update(parts.join("\n--\n")).digest("hex");
   };
   const verify = async (steps: string[], cwd: string, maxReport: unknown, emit = false) => {
     const t0 = Date.now();
     const result = await runVerify(steps, pi.exec.bind(pi), cwd, undefined, validCap(maxReport));
     if (emit) pi.events.emit(VERIFY_EVENT, { root: cwd, ok: result.ok, seconds: (Date.now() - t0) / 1000 } satisfies VerifyPayload);
-    return { ok: result.ok, report: formatVerify(result), policy: !result.ok && isPolicyFailure(result) };
+    return { ok: result.ok, report: formatVerify(result), nix: isNixMissingFailure(result), policy: !result.ok && isPolicyFailure(result) };
   };
   const review = async (cwd: string, task: NonNullable<Awaited<ReturnType<typeof readTask>>>, model: string, signal: AbortSignal) => {
     const t0 = Date.now();
@@ -75,16 +76,24 @@ export function registerGate(pi: ExtensionAPI) {
   pi.on("agent_before_settle", async (event, ctx) => {
     const manifest = await readManifest(ctx.cwd).catch(() => undefined);
     if (!manifest || manifest.setup !== "done" || !manifest.verify.length || event.outcome !== "completed") return;
+    const { verifyRetries, failuresBeforeEscalation } = limitsOf(manifest);
     const now = await snapshot(ctx.cwd);
-    if (now === start && !writes) return;
+    if (now === start && now !== UNREADABLE && !writes) return;
     const state = `${now}:${writes}`;
     if (state === verified) return;
+    // A state git could not read says nothing about the next one: never remember it as verified.
+    const remembered = now === UNREADABLE ? undefined : state;
 
     const task = await readTask(ctx.cwd).catch(() => undefined);
     // The pinned names are a contract: check them before spending verify time or a paid review on code that misses them.
-    if (task?.status === "implementing" && task.plan && contractRetries < MAX_RETRIES) {
+    if (task?.status === "implementing" && task.plan) {
       const problems = await checkContract(ctx.cwd, task.plan);
       if (problems.length) {
+        // Out of retries (none at all with verifyRetries 0): only the user lets a task with a missing interface go on.
+        if (contractRetries >= verifyRetries) {
+          const choice = ctx.hasUI ? await ctx.ui.select("The plan's interface is still missing after several attempts. What now?", ["Keep trying", "Leave it as is"]) : undefined;
+          if (choice !== "Keep trying") return deescalate(ctx).then(() => undefined);
+        }
         contractRetries++;
         return { entries: [{ type: "custom_message", customType: "contract-gate", content: `${formatContract(problems)}\n\nExpose exactly these names in these files (the plan's interface), then finish.`, display: true }], continue: true };
       }
@@ -110,7 +119,25 @@ export function registerGate(pi: ExtensionAPI) {
     const reviewing = wanted && task && reviewModel ? review(ctx.cwd, task, reviewModel, abort.signal) : undefined;
     if (reviewing) ctx.ui.setStatus("review", `reviewing the diff with ${reviewModel}…`);
     const clearStatus = () => ctx.ui.setStatus("review", undefined);
-    const { ok, report, policy } = await verify(manifest.verify, ctx.cwd, manifest.maxReport, true);
+    const { ok, report, policy, nix } = await verify(manifest.verify, ctx.cwd, manifest.maxReport, true);
+    if (nix) {
+      // Not a verify failure: the code cannot be at fault, so the model hears nothing and no retry is spent.
+      if (reviewing) {
+        abort.abort();
+        clearStatus();
+      }
+      const message = `Verify did not run. ${nix}`;
+      ctx.ui.notify(message, "error");
+      if (ctx.hasUI) {
+        // The work stays a task in progress either way; only the user decides to go on without checking it.
+        const choice = await ctx.ui.select(`${message}\n\nThe change cannot be checked until this is fixed.`, ["Leave the work unverified", "Stop here: I will fix it and finish again"]);
+        if (choice === "Leave the work unverified") verified = remembered;
+      } else {
+        ctx.ui.notify(`Unverified: ${nix} Nobody can answer here, so the task is not marked done.`, "warning");
+        verified = remembered;
+      }
+      return deescalate(ctx).then(() => undefined);
+    }
     if (!ok) {
       // The code will change, so this review is stale: stop its subagent now instead of paying for a verdict nobody uses.
       if (reviewing) {
@@ -127,24 +154,24 @@ export function registerGate(pi: ExtensionAPI) {
         }
         if (outcome === "failed") ctx.ui.notify("Could not record the agentlint exception. The model continues.", "warning");
       }
-      if (retries >= MAX_RETRIES) {
+      if (retries >= verifyRetries) {
         if (!ctx.hasUI) return deescalate(ctx).then(() => undefined);
         const choice = await ctx.ui.select("Verification still fails after several attempts. What now?", ["Keep trying", "Leave it as is"]);
         if (choice !== "Keep trying") return deescalate(ctx).then(() => undefined);
       } else retries++;
       if (!policy) failures++;
       const target = manifest.models?.escalate ?? manifest.models?.review ?? manifest.models?.setup;
-      if (failures >= FAILURES_BEFORE_ESCALATION && !escalatedFrom) {
+      if (failures >= failuresBeforeEscalation && !escalatedFrom) {
         const switched = await switchModel(pi, ctx, target);
         if (switched) {
           escalatedFrom = switched.previous;
-          ctx.ui.notify(`verify failed ${FAILURES_BEFORE_ESCALATION} times: ${switched.model} takes this attempt`, "warning");
+          ctx.ui.notify(`verify failed ${failuresBeforeEscalation} times: ${switched.model} takes this attempt`, "warning");
           pi.events.emit(ESCALATE_EVENT, { root: ctx.cwd, model: switched.model } satisfies EscalatePayload);
         }
       }
-      const diagnose = !policy && failures === FAILURES_BEFORE_ESCALATION;
+      const diagnose = !policy && failures === failuresBeforeEscalation;
       const content = policy
-        ? `${report}\n\nThis is an agentlint rule. Fix the code if the finding is right. If it needs an exception, finish again as is: the user will be asked to approve it.`
+        ? `${report}\n\nThis is an agentlint rule. Fix the code if the finding is right. If the code is right as it is, run \`${manifest.agentlint ?? "agentlint"} propose <selector> --summary "<why>"\` (selector from \`next --format json\`) so the user sees your reason, then finish again as is: the user will be asked to approve it.`
         : diagnose
           ? `${report}\n\n${await skillsBlock(ctx.cwd, "diagnose")}\n\nApply the diagnosing-bugs method to this failure before changing code: reproduce, isolate, state the hypothesis, then fix.`
           : `${report}\n\nFix it, then finish.`;
@@ -152,7 +179,7 @@ export function registerGate(pi: ExtensionAPI) {
       return { entries: [{ type: "custom_message", customType, content, display: true }], continue: true };
     }
 
-    verified = state;
+    verified = remembered;
     await deescalate(ctx);
     if (risk) ctx.ui.notify(`Risk ${risk.level}${risk.reasons.length ? `: ${risk.reasons.join("; ")}` : ""}${reviewing ? " (review requested)" : !risk.review ? " (review not requested)" : reviewModel ? " (already reviewed)" : " (no review model)"}`, "info");
     if (reviewing) {

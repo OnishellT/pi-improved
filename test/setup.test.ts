@@ -4,9 +4,11 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { registerAskUser } from "../src/ask.ts";
 import { readManifest, updateManifest } from "../src/manifest.ts";
+import { installMessage } from "../src/nix.ts";
+import { APPROVE, FIX } from "../src/policy.ts";
 import { checkOutputs, registerSetup } from "../src/setup.ts";
 import { setupPrompt } from "../src/setup-prompt.ts";
-import { fakeCtx, fakePi, fakeUI, tempProject } from "./helpers.ts";
+import { fakeCtx, fakePi, fakeUI, tempDir, tempProject, withEnv } from "./helpers.ts";
 
 const SKILL = "---\nname: domain-billing\ndescription: Billing rules\n---\n# Billing\n";
 const documented = { "AGENTS.md": "# App\n", "GLOSSARY.md": "# G\n", ".pi/skills/domain-billing/SKILL.md": SKILL, "package.json": "{}" };
@@ -41,6 +43,19 @@ test("/setup runs discovery, asks only about connectors, and hands one prompt to
   assert.match(sent[0], /setup_finish/);
 });
 
+test("/setup says Nix is missing instead of scanning an empty project", async () => {
+  const root = await tempProject({ "package.json": "{}" });
+  const { pi, commands, sent } = fakePi(() => ({ code: 127, stderr: installMessage() }));
+  registerSetup(pi);
+  const { ctx, ui } = ctxFor(root, []);
+  const notes: string[] = [];
+  (ui as any).notify = (m: string) => void notes.push(m);
+  await commands.get("setup").handler("", ctx);
+  assert.match(notes[0], /Nix is required and was not found/);
+  assert.equal(ui.asked.length, 0);
+  assert.equal(sent.length, 0);
+});
+
 test("choosing agentlint adds its steps to the prompt", async () => {
   const root = await tempProject({ "package.json": "{}", "pnpm-lock.yaml": "" });
   const { pi, commands, sent } = fakePi();
@@ -70,6 +85,37 @@ test("setup_finish requires the agentlint config and appends its gate to verify"
   assert.deepEqual((await readManifest(root)).verify, ["pnpm test", "pnpm agentlint check --all"]);
 });
 
+test("setup_finish: agentlint findings in existing code go to the user, one reason each, not back to the model", async () => {
+  const run = async (answers: unknown[]) => {
+    const root = await tempProject({ ...documented, ".agentlint/config.ts": "" });
+    await updateManifest(root, (m) => {
+      m.setup = "running";
+      m.agentlint = "npm exec agentlint --";
+    });
+    let open = 1;
+    const approved: string[] = [];
+    const { pi, tools } = fakePi((_cmd, args) => {
+      const script = args.slice(4);
+      if (script[0] === "next") return { code: 0, stdout: JSON.stringify(open ? { remaining: 1, selector: "sel", finding: { ruleTitle: "Slug needs ADR", file: "src/slugify.js", line: 2 } } : { remaining: 0 }) };
+      if (script[0] === "approve") return approved.push(script[2]), (open = 0), { code: 0 };
+      if (/check --all/.test(args[1])) return open ? { code: 1, stdout: "1 unresolved finding — gate closed" } : { code: 0 };
+      return { code: 0 };
+    });
+    registerSetup(pi);
+    const { ctx, ui } = ctxFor(root, answers);
+    const out = tools.get("setup_finish").execute("1", { verify: ["npm test"], summary: "s" }, undefined, undefined, ctx);
+    return { out, ui, approved, root };
+  };
+  const accepted = await run([APPROVE, "predates ADR 0001", true]);
+  await accepted.out;
+  assert.deepEqual(accepted.approved, ["predates ADR 0001"]);
+  assert.match(accepted.ui.asked[1], /Slug needs ADR\nsrc\/slugify\.js:2/);
+  assert.equal((await readManifest(accepted.root)).setup, "done");
+  const sentBack = await run([FIX]);
+  await assert.rejects(sentBack.out, /make it a `change` rule/);
+  assert.deepEqual(sentBack.approved, []);
+});
+
 test("setup_finish rejects incomplete output without asking the user", async () => {
   const root = await tempProject({});
   await updateManifest(root, (m) => void (m.setup = "running"));
@@ -96,6 +142,20 @@ test("setup_finish sends verify failures back to the model, then completes after
   assert.equal(manifest.setup, "done");
   assert.equal(manifest.mode, "direct");
   assert.deepEqual(manifest.verify, ["npm test"]);
+});
+
+test("setup_finish leaves mode unset in the project when the global file sets it", async () => {
+  const root = await tempProject(documented);
+  await updateManifest(root, (m) => void (m.setup = "running"));
+  const agent = await tempDir();
+  await fs.writeFile(path.join(agent, "pi-improved.json"), JSON.stringify({ mode: "flow" }));
+  const { pi, tools } = fakePi(() => ({ code: 0 }));
+  registerSetup(pi);
+  await withEnv({ PI_CODING_AGENT_DIR: agent }, async () => {
+    await tools.get("setup_finish").execute("1", { verify: ["true"], summary: "s" }, undefined, undefined, ctxFor(root, [true]).ctx);
+    assert.equal((await readManifest(root)).mode, "flow");
+  });
+  assert.equal(JSON.parse(await fs.readFile(path.join(root, ".pi/workflow.json"), "utf8")).mode, undefined);
 });
 
 test("rejecting the setup returns the user's feedback to the model", async () => {

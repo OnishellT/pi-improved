@@ -1,5 +1,5 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { readManifest, updateManifest, type PhaseModels } from "./manifest.ts";
+import { globalMap, patchMap, readManifest, updateManifest, type PhaseModels } from "./manifest.ts";
 
 const PHASES = [
   ["setup", "Setup"],
@@ -96,8 +96,10 @@ export function registerModels(pi: ExtensionAPI) {
         if (pick === SESSION) delete next[key];
         else next[key] = pick;
       }
+      // Only what was changed goes into the project file; models that come from the global file stay there.
       await updateManifest(root, (m) => {
-        if (Object.keys(next).length) m.models = next;
+        const own = patchMap(m.models, current, next, globalMap("models"));
+        if (own) m.models = own;
         else delete m.models;
       });
       ctx.ui.notify(PHASES.map(([key, name]) => `${name}: ${next[key] ?? "session model"}`).join("\n"), "info");

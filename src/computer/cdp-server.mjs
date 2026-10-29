@@ -1,8 +1,10 @@
 // Trust model: the endpoint is loopback only (see endpoint), and every page command goes to the one
 // target this server created, never to the person's tabs. `evaluate` runs arbitrary JS in that page and
 // is not a sandbox; URLs are limited by allowedUrl. The window is left open when this server exits.
-import {readFile} from 'node:fs/promises';
+import {spawn} from 'node:child_process';
+import {access, chmod, mkdir, readFile, readlink} from 'node:fs/promises';
 import {connect as tcp} from 'node:net';
+import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {McpServer} from '@modelcontextprotocol/sdk/server/mcp.js';
 import {StdioServerTransport} from '@modelcontextprotocol/sdk/server/stdio.js';
@@ -22,13 +24,17 @@ export function allowedUrl(value) {
   return url.href;
 }
 
-/** Targets are [{id, name, portFile}] in preference order; the first whose DevToolsActivePort exists is used. */
+/**
+ * Targets are [{id, name, portFile}] in preference order; the first whose DevToolsActivePort exists is used.
+ * A target with `launch: {profile}` is a headless Chromium (from Nix) this server starts itself, on first use.
+ */
 export function parseTargets(text) {
   const list = JSON.parse(text);
   if (!Array.isArray(list) || !list.length) throw Error('Expected a non-empty JSON array of browser targets');
   return list.map(t => {
     if (typeof t?.portFile !== 'string' || !t.portFile.startsWith('/')) throw Error('Each target needs an absolute portFile');
-    return {id:String(t.id ?? t.portFile), name:String(t.name ?? t.id ?? 'browser'), portFile:t.portFile};
+    if (t.launch && (typeof t.launch.profile !== 'string' || !t.launch.profile.startsWith('/'))) throw Error('launch needs an absolute profile folder');
+    return {id:String(t.id ?? t.portFile), name:String(t.name ?? t.id ?? 'browser'), portFile:t.portFile, ...(t.launch ? {launch:{profile:t.launch.profile}} : {})};
   });
 }
 
@@ -43,6 +49,17 @@ function listening(address) {
   });
 }
 
+/**
+ * Whether the browser with this pid became the profile's one browser and wrote its port file: another session may
+ * already use it (its own launch handed off to this one), so a start that gives up on it must not kill it.
+ */
+export async function servesProfile(profile, portFile, pid) {
+  try {
+    await access(portFile);
+    return Number((await readlink(join(profile, 'SingletonLock'))).split('-').pop()) === pid;
+  } catch { return false; }
+}
+
 export class OwnedBrowser {
   active;
   socket;
@@ -52,6 +69,44 @@ export class OwnedBrowser {
   pending = new Map();
 
   constructor(targets) { this.targets = targets; }
+
+  /**
+   * Starts the headless shell for a `launch` target unless one already listens on its port file (another pi session
+   * may own it). Chromium is the only record of itself: it refuses a second browser on one profile (the second launch
+   * hands off to the first and exits) and writes DevToolsActivePort and SingletonLock into the profile, so concurrent
+   * starters just wait for the same live port file. The browser is detached and outlives this server: other pi
+   * sessions reuse it, so none may kill it on exit. /computer finds its pid in SingletonLock to stop it.
+   */
+  async launch(target) {
+    const {profile} = target.launch;
+    // Private before Chromium fills it: the profile holds logins and the debugging port file.
+    await mkdir(profile, {recursive:true, mode:0o700});
+    await chmod(profile, 0o700);
+    const live = async () => { try { return await listening(endpoint(await readFile(target.portFile, 'utf8'))); } catch { return false; } };
+    if (await live()) return;
+    const {chromeHeadless, chromeEnv} = await import('../nix.ts');
+    const bin = await chromeHeadless();
+    const env = {...process.env, ...await chromeEnv()};
+    const child = spawn(bin, ['--disable-gpu', '--no-first-run', '--hide-scrollbars', '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], {env, stdio:'ignore', detached:true});
+    let failed;
+    child.once('error', error => { failed = error; });
+    child.unref();
+    // A start that fails must not leave a detached browser behind that nobody asked for (a launch that handed off has exited: harmless).
+    // Only this call's child, and not once it serves the profile: another session may be using it, and /computer stops it.
+    const stop = async () => {
+      if (await servesProfile(profile, target.portFile, child.pid)) return;
+      try { process.kill(-child.pid); } catch { try { child.kill(); } catch {} }
+    };
+    try {
+      for (let i = 0; i < 100; i++) {
+        // A leftover port file of a dead browser is not live; the new browser overwrites it. A launch that handed off exits with 0.
+        if (await live()) return;
+        if (failed || (child.exitCode !== null && child.exitCode !== 0)) throw Error(`${target.name} did not start${failed ? `: ${failed.message}` : ` (exit ${child.exitCode})`}`);
+        await new Promise(resolve => setTimeout(resolve, 150));
+      }
+      throw Error(`${target.name} did not start within 15 s`);
+    } catch (error) { await stop(); throw error; }
+  }
 
   get names() { return this.targets.map(t => t.name).join(' or '); }
   get label() { return this.active?.name ?? this.names; }
@@ -72,6 +127,7 @@ export class OwnedBrowser {
   async connect() {
     if (this.socket?.readyState === WebSocket.OPEN) return;
     if (this.socket) throw Error(`${this.label} disconnected; no automatic retry of browser actions. Reconnect the MCP server.`);
+    for (const target of this.targets) if (target.launch) await this.launch(target);
     const stale = [];
     for await (const {target, address} of this.candidates()) {
       // A file left by a browser that is gone: nothing listens. Skip it. Anything that does listen gets one try; if
@@ -198,8 +254,10 @@ const snapshot = `(() => ({
 }))()`;
 
 export function buildServer(browser) {
-  const server = new McpServer({name:'pi-browser',version:'1.0.0'}, {instructions:
-    `The browser (${browser.names}) uses the existing authenticated profile, but only a new target/window created by this server. Never enumerate or attach to personal tabs, read cookies/passwords, or close the browser. open requires the human to enable and approve runtime debugging. Use compact DOM observations; evaluate can batch authorized actions but is not a sandbox. Sending/publishing/purchasing/deletion needs user authorization. Do not retry partially delivered actions. Subagents cannot connect.`});
+  const isolated = browser.targets.some(t => t.launch);
+  const server = new McpServer({name:'pi-browser',version:'1.0.0'}, {instructions: isolated
+    ? `A private headless Chromium with its own persistent profile, started by open. It has none of the user's logins and needs no approval. Use compact DOM observations; evaluate can batch actions but is not a sandbox. Sending/publishing/purchasing/deletion needs user authorization. Do not retry partially delivered actions. Subagents cannot connect.`
+    : `The browser (${browser.names}) uses the existing authenticated profile, but only a new target/window created by this server. Never enumerate or attach to personal tabs, read cookies/passwords, or close the browser. open requires the human to enable and approve runtime debugging. Use compact DOM observations; evaluate can batch authorized actions but is not a sandbox. Sending/publishing/purchasing/deletion needs user authorization. Do not retry partially delivered actions. Subagents cannot connect.`});
   let queue = Promise.resolve();
   const tool = (name, description, inputSchema, run) => server.registerTool(name, {description,inputSchema}, args => {
     const job = queue.then(async () => {
@@ -215,16 +273,16 @@ export function buildServer(browser) {
     const state = {connected:browser.socket?.readyState === WebSocket.OPEN, ownedWindow:!!browser.target, targets:browser.targets.map(t => t.name)};
     return available.length
       ? {enabled:true, available, ...(state.connected ? {browser:browser.label} : {}), ...state}
-      : {enabled:false, ...state, action:`Enable chrome://inspect/#remote-debugging in ${browser.names}, then approve open.`};
+      : {enabled:false, ...state, action:isolated ? 'Call open: the private browser starts by itself.' : `Enable chrome://inspect/#remote-debugging in ${browser.names}, then approve open.`};
   });
   if (!process.env.PI_SUBAGENT_RUN_DIR) {
-    tool('open','Create/reuse our separate browser window with existing logins. First connection requires human approval; no personal tabs are inspected.',{url:z.string().default('about:blank')},({url})=>browser.open(url));
+    tool('open',isolated ? 'Start the private headless browser if needed and open a page of ours. No approval needed.' : 'Create/reuse our separate browser window with existing logins. First connection requires human approval; no personal tabs are inspected.',{url:z.string().default('about:blank')},({url})=>browser.open(url));
     tool('snapshot','Compact visible text and control labels from our window only; excludes input values.',{},()=>browser.evaluate(snapshot));
     tool('evaluate','Evaluate JavaScript only in our page; return bounded JSON. Batch known steps. Never read credentials or unrelated private data.',{expression:z.string().min(1).max(16000)},({expression})=>browser.evaluate(expression));
     tool('click','Click one visible, unobscured CSS-selected control in our page using CDP input; never the physical cursor.',{selector:z.string().min(1).max(1000)},({selector})=>browser.click(selector));
     tool('close','Close only the target created by this server; never the browser or personal tabs.',{},()=>browser.close());
   }
-  server.server.onclose = () => browser.socket?.close();
+  server.server.onclose = () => { browser.socket?.close(); };
   return server;
 }
 

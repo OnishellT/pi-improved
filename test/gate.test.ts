@@ -3,15 +3,17 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { test } from "node:test";
 import { registerGate } from "../src/gate.ts";
+import { APPROVE } from "../src/policy.ts";
 import { TASK_DONE_EVENT } from "../src/events.ts";
 import { ESCALATE_EVENT, REVIEW_EVENT, VERIFY_EVENT } from "../src/events.ts";
+import { installMessage } from "../src/nix.ts";
 import { readTask } from "../src/task-state.ts";
 import { fakePi, fakeUI, isSubagent, tempProject } from "./helpers.ts";
 
 const manifest = (setup: string) => JSON.stringify({ version: 1, setup, verify: ["check"], connectors: [] });
 const task = { id: "t1", title: "Do it", status: "implementing", allowedExtra: [], startedAt: "now" };
 
-async function setup(opts: { setup?: string; task?: boolean; pass?: boolean; answers?: unknown[]; review?: string } = {}) {
+async function setup(opts: { setup?: string; task?: boolean; pass?: boolean; answers?: unknown[]; review?: string; nix?: boolean | string } = {}) {
   const files: Record<string, string> = { ".pi/workflow.json": manifest(opts.setup ?? "done") };
   if (opts.review) files[".pi/workflow.json"] = JSON.stringify({ version: 1, setup: "done", verify: ["check"], connectors: [], models: { review: "p/m" }, review: { minLevel: "low" } });
   if (opts.task) files[".pi/task.json"] = JSON.stringify(task);
@@ -20,23 +22,27 @@ async function setup(opts: { setup?: string; task?: boolean; pass?: boolean; ans
   let verifies = 0;
   const subagent: string[] = [];
   const h = fakePi((cmd, args) => {
+    if (cmd === "git" && opts.nix !== undefined) return { code: 127, stderr: opts.nix === false ? installMessage() : String(opts.nix) };
     if (cmd === "git") return { code: 0, stdout: args[0] === "diff" ? diff : "" };
     if (isSubagent(cmd)) subagent.push(args[0]);
     if (isSubagent(cmd)) return args[0] === "spawn" ? { code: 0, stdout: "Spawned review (abc123)" } : args[0] === "wait" ? { code: 0, stdout: `abc123 finished\n\n${opts.review}` } : { code: 0 };
     verifies++;
+    if (opts.nix !== undefined) return { code: 127, stderr: opts.nix === false ? installMessage() : String(opts.nix) };
     return opts.pass ? { code: 0 } : { code: 1, stdout: "boom" };
   });
   const emitted: any[] = [];
   h.pi.events = { emit: (name: string, payload: any) => emitted.push({ name, payload }) };
   registerGate(h.pi);
   const ui = fakeUI(opts.answers ?? []);
+  const notes: string[] = [];
+  (ui as any).notify = (m: string) => void notes.push(m);
   const ctx: any = { cwd: root, hasUI: true, ui };
   const run = async () => {
     await h.emit("before_agent_start", { messageType: "user" }, ctx);
     diff = "changed";
   };
   const settle = () => h.emit("agent_before_settle", { outcome: "completed" }, ctx);
-  return { ...h, root, ctx, ui, emitted, run, settle, verifies: () => verifies, subagent };
+  return { ...h, root, ctx, ui, notes, emitted, run, settle, verifies: () => verifies, subagent };
 }
 
 test("does nothing when nothing changed", async () => {
@@ -71,6 +77,44 @@ test("retry cap asks the user, then stops", async () => {
   assert.equal((await t.settle()).continue, true);
   assert.equal(await t.settle(), undefined);
   assert.equal(t.ui.asked.length, 2);
+});
+
+test("missing Nix tells the user, asks whether to leave the work unverified, and sends nothing to the model", async () => {
+  const t = await setup({ nix: false, answers: Array(5).fill("Leave the work unverified") });
+  await t.run();
+  for (let i = 0; i < 5; i++) assert.equal(await t.settle(), undefined);
+  assert.equal(t.ui.asked.length, 5, "a state git could not read is never remembered as verified, so each turn asks again");
+  assert.match(t.ui.asked[0], /Verify did not run\. Nix is required and was not found/);
+  assert.match(t.notes[0], /^Verify did not run\. Nix is required and was not found/);
+  assert.equal(t.emitted.filter((e) => e.name === ESCALATE_EVENT).length, 0);
+  assert.notEqual((await readTask(t.root))?.status, "done");
+});
+
+test("a Nix build that fails shows Nix's own message, not the install hint", async () => {
+  const msg = "Nix could not build bash: Could not resolve host. Check your network and disk space, then run /doctor.";
+  const t = await setup({ nix: msg, answers: ["Stop here: I will fix it and finish again"] });
+  await t.run();
+  assert.equal(await t.settle(), undefined);
+  assert.equal(t.notes[0], `Verify did not run. ${msg}`);
+});
+
+test("without a UI, missing Nix leaves the task unverified and says so; when git itself fails the work still counts as changed", async () => {
+  const t = await setup({ nix: false, task: true });
+  t.ctx.hasUI = false;
+  await t.run();
+  assert.equal(await t.settle(), undefined);
+  assert.match(t.notes.join("\n"), /Verify did not run[\s\S]*Unverified: Nix is required[\s\S]*not marked done/);
+  assert.equal((await readTask(t.root))?.status, "implementing");
+});
+
+test("without a UI, a failed Nix build also leaves the task unverified with Nix's message", async () => {
+  const msg = "Nix could not build bash: Could not resolve host.";
+  const t = await setup({ nix: msg, task: true });
+  t.ctx.hasUI = false;
+  await t.run();
+  assert.equal(await t.settle(), undefined);
+  assert.match(t.notes.join("\n"), new RegExp(`Unverified: ${msg}[\\s\\S]*not marked done`));
+  assert.equal((await readTask(t.root))?.status, "implementing");
 });
 
 test("pass confirms the task, marks it done and emits the event; same state is not re-verified", async () => {
@@ -267,7 +311,7 @@ test("a repeated agentlint failure asks the user; approval records the exception
   });
   h.pi.events = { emit: () => {} };
   registerGate(h.pi);
-  const ui = fakeUI(["Approve the exception", "Cambio revisado por finanzas"]);
+  const ui = fakeUI([APPROVE, "Cambio revisado por finanzas"]);
   const ctx: any = { cwd: root, hasUI: true, ui };
   await h.emit("before_agent_start", { messageType: "user" }, ctx);
   await h.emit("tool_result", { toolName: "write" }, ctx);
@@ -311,6 +355,18 @@ test("contract misses do not use up the verify retries", async () => {
   const r = await t.settle();
   assert.equal(r.entries[0].customType, "verify-gate");
   assert.equal(t.ui.asked.length, 0);
+});
+
+test("with no verify retries a missing interface asks the user instead of passing", async () => {
+  const t = await setup({ pass: true, task: true, answers: ["Leave it as is", "Keep trying"] });
+  const plan = { summary: "s", steps: [], files: ["src/fee.ts"], decisions: [], interface: [{ file: "src/fee.ts", exports: ["fee"], source: "ticket" }], seams: [] };
+  await fs.writeFile(path.join(t.root, ".pi/task.json"), JSON.stringify({ ...task, plan }));
+  await fs.writeFile(path.join(t.root, ".pi/workflow.json"), JSON.stringify({ version: 1, setup: "done", verify: ["check"], connectors: [], limits: { verifyRetries: 0 } }));
+  await t.run();
+  assert.equal(await t.settle(), undefined);
+  assert.equal(t.verifies(), 0);
+  assert.equal(t.ui.asked.length, 1);
+  assert.equal((await t.settle()).entries[0].customType, "contract-gate");
 });
 
 test("a requested review without models.review is announced once; the Risk line says there is no review model", async () => {

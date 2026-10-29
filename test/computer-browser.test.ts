@@ -9,7 +9,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { WebSocketServer } from "ws";
 import { cdpServer } from "../src/computer/browsers.ts";
-import { allowedUrl, endpoint, parseTargets } from "../src/computer/cdp-server.mjs";
+import { OwnedBrowser, allowedUrl, endpoint, parseTargets, servesProfile } from "../src/computer/cdp-server.mjs";
 import { tempDir } from "./helpers.ts";
 
 const script = fileURLToPath(new URL("../src/computer/cdp-server.mjs", import.meta.url));
@@ -315,6 +315,40 @@ test("a browser that listens but rejects the connection is the answer: no second
     await main?.close();
     await stop(live);
     await new Promise((resolve) => denied.close(resolve));
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("a start that gives up kills its child only while that child does not serve the profile", async () => {
+  const profile = await fs.mkdtemp(path.join((await import("node:os")).tmpdir(), "serves-"));
+  const portFile = path.join(profile, "DevToolsActivePort");
+  try {
+    assert.equal(await servesProfile(profile, portFile, 4242), false, "no lock, no port file");
+    await fs.symlink("host-4242", path.join(profile, "SingletonLock"));
+    assert.equal(await servesProfile(profile, portFile, 4242), false, "owner without a port file: nobody can be using it");
+    await fs.writeFile(portFile, "9222\n/devtools/browser/x\n");
+    assert.equal(await servesProfile(profile, portFile, 4242), true, "another session may use it: keep it");
+    assert.equal(await servesProfile(profile, portFile, 4243), false, "a child that handed off or lost: its own to kill");
+  } finally {
+    await fs.rm(profile, { recursive: true, force: true });
+  }
+});
+
+test("launch starts nothing when the profile's browser already listens, and keeps the profile private", async () => {
+  const dir = await fs.mkdtemp(path.join((await import("node:os")).tmpdir(), "launch-"));
+  const profile = path.join(dir, "profile");
+  const server = (await import("node:net")).createServer().listen(0, "127.0.0.1");
+  await new Promise((resolve) => server.once("listening", resolve));
+  try {
+    await fs.mkdir(profile);
+    await fs.writeFile(path.join(profile, "DevToolsActivePort"), `${(server.address() as any).port}\n/devtools/browser/x\n`);
+    // Would need Nix to start anything: resolving means it used the running browser, the same one for concurrent starters.
+    const target = { id: "i", name: "Headless Chromium", portFile: path.join(profile, "DevToolsActivePort"), launch: { profile } };
+    await Promise.all([new OwnedBrowser([target]).launch(target), new OwnedBrowser([target]).launch(target)]);
+    assert.equal((await fs.stat(profile)).mode & 0o777, 0o700);
+    assert.deepEqual(await fs.readdir(profile), ["DevToolsActivePort"], "no lock or pid file of ours");
+  } finally {
+    server.close();
     await fs.rm(dir, { recursive: true, force: true });
   }
 });

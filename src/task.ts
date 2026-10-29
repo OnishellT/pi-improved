@@ -4,6 +4,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { writeAdr, type AdrInput } from "./adr.ts";
 import { selectOrType } from "./ask.ts";
+import { limitsOf } from "./config.ts";
 import { missingNames, relatesTo } from "./contract.ts";
 import { REVIEW_EVENT, type ReviewPayload } from "./events.ts";
 import { relatedTasks } from "./learn.ts";
@@ -17,7 +18,6 @@ import { inFiles, readTask, resolveInside, updateTask, writeTask, type Decision,
 import { QUESTION_NUDGE, TASK_NUDGE, planText, taskPrompt } from "./task-prompt.ts";
 
 const MAX_NUDGES = 2; // "call task_plan" / "use ask_user" reminders per user message
-const MAX_PLAN_CHECKS = 1; // paid plan checks per task
 const MAX_TICKET_TEXT = 300_000; // characters of tracker output kept as evidence
 // A ticket key at the start of the request (`PAY-142` or `PAY-142 add fees`); anywhere else it is free text.
 const TICKET = /^[A-Z][A-Z0-9]+-\d+$/;
@@ -161,7 +161,7 @@ export function registerTask(pi: ExtensionAPI) {
   /** One short strong-model read of the plan: cheaper than reviewing the diff it produces, and it fixes names before they exist. */
   const runPlanCheck = async (ctx: any, root: string, task: Task, plan: Plan, evidence: string, manifest: Manifest, signal?: AbortSignal) => {
     const checker = manifest.models?.review ?? manifest.models?.setup;
-    if (!checker || !planCheckWanted(manifest, plan.files) || (task.planChecks ?? 0) >= MAX_PLAN_CHECKS) return;
+    if (!checker || !planCheckWanted(manifest, plan.files) || (task.planChecks ?? 0) >= limitsOf(manifest).planChecks) return;
     await updateTask(root, (t) => void (t.planChecks = (t.planChecks ?? 0) + 1));
     ctx.ui.setStatus("plan-check", `checking the plan with ${checker}…`);
     const t0 = Date.now();
@@ -276,8 +276,10 @@ export function registerTask(pi: ExtensionAPI) {
         if (baseCommit) t.baseCommit = baseCommit;
       });
       ticketText.delete(root);
-      const decided = plan.decisions.filter((d) => d.answer).map((d) => `- ${d.question} -> ${d.answer}`);
-      const settled = decided.length ? `\n\nDecisions already made by the user (do not ask again):\n${decided.join("\n")}` : "";
+      const decided = plan.decisions.filter((d) => d.answer).map((d) => `- ${d.question} -> ${d.answer}${d.source ? ` (${d.source})` : ""}`);
+      const settled = decided.length
+        ? `\n\nDecisions already made by the user (do not ask again):\n${decided.join("\n")}\npi wrote each one as an ADR at the path shown. They belong to this change and go in the PR: keep them, do not rewrite or delete them, and do not write ADRs for these yourself.`
+        : "";
       // Implementation starts here; skills the plan block already loaded are not sent twice.
       const skills = await skillsBlock(root, "implement", await phaseSkills(root, "plan"));
       return {

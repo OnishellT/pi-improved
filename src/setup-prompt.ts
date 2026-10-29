@@ -1,3 +1,4 @@
+import { limitsOf } from "./config.ts";
 import { connectorById } from "./connectors.ts";
 import { agentlintCheck, type Discovery } from "./discover.ts";
 import type { Manifest } from "./manifest.ts";
@@ -8,7 +9,7 @@ const AGENTLINT_SKILLS = "node_modules/@aurelienbbn/agentlint/skills/agentlint";
 
 const INSTALL_DEV: Record<string, string> = { npm: "npm install -D", pnpm: "pnpm add -D", yarn: "yarn add -D", bun: "bun add -d" };
 
-function agentlintStep(cmd: string, found: Discovery) {
+function agentlintStep(cmd: string, found: Discovery, rules: number) {
   const install = found.agentlint
     ? "agentlint is already configured in `.agentlint/config.ts`. Keep its rules."
     : `Install it with \`${INSTALL_DEV[found.packageManager ?? "npm"] ?? INSTALL_DEV.npm} @aurelienbbn/agentlint\`, then run \`${cmd} init\`.`;
@@ -16,9 +17,11 @@ function agentlintStep(cmd: string, found: Discovery) {
    - ${install}
    - Read \`${AGENTLINT_SKILLS}/rule-advisor/SKILL.md\` and follow it.
    - From the MUST / NEVER rules in AGENTS.md, pick those where a code pattern can find the cases but a person still has to judge them. Purely mechanical rules belong in the existing linter or tests.
-   - Ask the user with \`ask_user\` which ones to enforce, at most 3 to start. Only enforce what the user selects. Use \`authority: "human"\` unless the user says the agent may decide.
-   - Write each rule in \`.agentlint/config.ts\` with fixtures. Run \`${cmd} rules test\`, then \`${cmd} rules scan\` to see the findings in the existing code.
-   - If a rule finds many cases in existing code, narrow \`binding.include\` or make it a \`change\` rule. NEVER bulk-accept findings with a generic reason.
+   - Ask the user with \`ask_user\` which ones to enforce, at most ${rules} to start. Only enforce what the user selects. Use \`authority: "human"\` unless the user says the agent may decide.
+   - agentlint has no warning or calibration mode: every configured rule blocks verify until each finding is fixed or a person accepts it. Never offer a rule "without enforcement".
+   - Pick the lifecycle by what the rule judges. A rule about changing something ("changing X needs Y") is \`lifecycle: "change"\`: it judges the diff against the merge base, so existing code is never flagged. \`lifecycle: "state"\` judges the current code, existing code included. A change detector is \`detect({ context })\`: loop \`context.change.files\` (\`path\`, \`status\`, \`hunks[].lines[]\` with \`kind\` "addition" | "deletion" | "context") and call \`context.report({ key, file, message, evidence })\`; its fixtures are \`{ before: { path: text }, after: { path: text } }\`.
+   - Write each rule in \`.agentlint/config.ts\` with fixtures. Run \`${cmd} rules test\`, then \`${cmd} rules scan\` and tell the user how many findings each rule has in the existing code.
+   - For existing findings: narrow the detector or \`binding.include\`, or turn the rule into a \`change\` rule. What is left, setup_finish shows to the user one by one to accept with their own reason. Never run \`approve\`, \`accept\` or \`review\` yourself, and NEVER bulk-accept findings with a generic reason.
    - \`${agentlintCheck(cmd)}\` runs as part of verify and must exit 0.`;
 }
 
@@ -29,13 +32,14 @@ export function setupPrompt(found: Discovery, manifest: Manifest, resuming: bool
     return `   - ${known?.name ?? c.id}: ${known?.purpose ?? ""} (MCP server "${c.id}", read-only)`;
   });
 
+  const limits = limitsOf(manifest);
   const steps = [
     "Read the existing docs and agent files listed above. Then explore the code: entry points, main modules, data flow, tests.",
     connectors.length
       ? `Read recent context from these connectors (find their tools with tool_search). Never create or change anything there.\n${connectors.join("\n")}`
       : "No connectors are enabled. Skip this step.",
     `List what you could not determine and any contradictions between the code, the docs and the connectors.
-   Interview the user following the grilling skill, ONE question at a time via \`ask_user\`, until the domain and the main workflows are clear (max ~12 questions).
+   Interview the user following the grilling skill, ONE question at a time via \`ask_user\`, until the domain and the main workflows are clear (max ~${limits.interviewQuestions} questions).
    Give 2-4 options per question, recommended option first. Don't ask anything the code already answers.`,
     `Write \`GLOSSARY.md\` at the repo root following GLOSSARY-FORMAT.md, and ADRs following ADR-FORMAT.md in \`docs/adr/\` (reuse existing GLOSSARY.md / docs/agents/ if present: never duplicate).${found.glossary ? " GLOSSARY.md already exists: extend it." : ""}${found.agentDocs ? " docs/agents/ already exists: link to it instead of repeating it." : ""}`,
     `Write AGENTS.md and the domain skills following the technical-writing skill (Diátaxis; short sentences):
@@ -44,7 +48,7 @@ export function setupPrompt(found: Discovery, manifest: Manifest, resuming: bool
    - \`.pi/skills/domain-<name>/SKILL.md\`, one per business area. Use frontmatter with \`name\` and \`description\`, then the vocabulary, invariants, key files and pitfalls.
    - \`docs/adr/NNNN-<title>.md\` for each architecture decision that the code shows or the user confirmed.`,
     `Create the project's verification skill following pstack-create-verification-skill at \`.pi/skills/verify-app/SKILL.md\`, with a runnable script when the app can be driven headlessly. Its evidence, maps and scratch files live under \`.pi/evidence/\` inside the repo (never under the home directory or outside the repo); the command must not create directories elsewhere.${found.uiDrivers?.length ? ` For behavior a headless run cannot reach (desktop windows, Electron), the script may use these GUI drivers: ${uiDriverHint(found.uiDrivers)}` : ""} Add its command to the verify list passed to \`setup_finish\` only if it runs green.`,
-    ...(manifest.agentlint ? [agentlintStep(manifest.agentlint, found)] : []),
+    ...(manifest.agentlint ? [agentlintStep(manifest.agentlint, found, limits.agentlintRules)] : []),
     "Make sure verification exists. Use the proposed verify steps, fix them if they are wrong, or add a missing script or target. Order them fastest first: the stack's compiler, type checker or linter (whatever this project already has) before the tests, so the agent gets static feedback before behavior feedback. Do not change application code and do not install other dependencies without asking.",
     "Call `setup_finish` with the final verify steps and a short summary. If it reports problems, fix them and call it again.",
   ];
