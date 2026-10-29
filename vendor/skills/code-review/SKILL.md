@@ -18,4 +18,4 @@ Keep the axes separate so one cannot mask the other.
 
 - List findings per axis, ranked: hard violations and spec failures first, judgement calls last.
 - Quote the hunk and name the fix for each.
-- End with the count per axis and the worst finding in each. Do not rank across axes.
+- Then give the count per axis and the worst finding in each. Do not rank across axes. End with the VERDICT line when the brief asks for one.

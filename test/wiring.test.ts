@@ -21,7 +21,7 @@ test("DEFAULT_SKILLS gives each role only the skills it uses", () => {
 
 test("on-demand defaults per phase; interrogate and reflect stay opt-in", () => {
   assert.deepEqual(DEFAULT_ON_DEMAND, { setup: ["research"], plan: ["how", "architect", "codebase-design"], implement: ["handoff"],
-    diagnose: ["why", "benchmark-checklist", "principle-explain-the-number"], review: ["benchmark-checklist", "principle-explain-the-number"],
+    diagnose: ["why", "benchmark-checklist", "principle-explain-the-number"], review: [],
     learn: ["pstack-maintain-verification-skill"] });
   const all = new Set([...Object.values(DEFAULT_SKILLS), ...Object.values(DEFAULT_ON_DEMAND)].flat());
   for (const name of ["interrogate", "reflect"]) assert.ok(!all.has(name));

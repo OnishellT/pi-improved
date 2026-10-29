@@ -306,9 +306,8 @@ test("setup prompt asks for the before-finishing and /task sections with the ver
 test("the gitignore list covers the state paths their owners define", async () => {
   const { IGNORED_STATE } = await import("../src/setup.ts");
   const { TASK_PATH } = await import("../src/task-state.ts");
-  const { CONTRACT_PATH } = await import("../src/contract.ts");
   const { METRICS_DIR } = await import("../src/telemetry.ts");
-  for (const owned of [TASK_PATH, CONTRACT_PATH, METRICS_DIR]) assert.ok(IGNORED_STATE.includes(owned), owned);
+  for (const owned of [TASK_PATH, METRICS_DIR]) assert.ok(IGNORED_STATE.includes(owned), owned);
 });
 
 test("an agentlint config with zero rules does not block setup", async () => {

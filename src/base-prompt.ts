@@ -12,7 +12,7 @@ export const BASE_LINES = [
 export async function basePromptText(root?: string): Promise<string> {
   const bundled = await listSkills();
   const parts: string[] = [];
-  if (bundled.includes("unslop")) parts.push(`## Skill: unslop\n\n${clean((await loadSkill("unslop")).body, bundled)}`);
+  if (bundled.includes("unslop")) parts.push(`## Skill: unslop\n\n${clean((await loadSkill("unslop")).body, ["unslop"])}`);
   // Direct mode edits code too, so it gets the laws rule; a project without LAWS.bend gets exactly the lines it had.
   parts.push((root && (await findBend(root)) ? [...BASE_LINES, LAWS_RULE] : BASE_LINES).join("\n"));
   return parts.join("\n\n");

@@ -1,6 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { bendCheck, findBend, type BendProject } from "./bend.ts";
+import { exists } from "./config.ts";
 import { detectConnectors, type ConnectorSignal } from "./connectors.ts";
 import { detectUiDrivers } from "./ui-driver.ts";
 
@@ -54,7 +55,6 @@ const DOC_CANDIDATES = ["README.md", "CONTRIBUTING.md", "ARCHITECTURE.md", "docs
 const AGENT_FILES = ["AGENTS.md", "CLAUDE.md", ".cursorrules", ".github/copilot-instructions.md", ".pi/skills"];
 const CHECK_SCRIPTS = ["typecheck", "lint", "test", "build"];
 
-const exists = (file: string) => fs.access(file).then(() => true, () => false);
 const readText = (file: string) => fs.readFile(file, "utf8").catch(() => "");
 
 /** The project's package.json, or {} when it is missing or not valid JSON. */

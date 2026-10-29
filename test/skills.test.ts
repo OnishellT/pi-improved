@@ -80,10 +80,26 @@ test("/skills saves a per-phase selection", async () => {
 test("clean matches a referenced skill as a whole token and keeps ordinary lines", () => {
   const bundled = ["pr", "how", "pstack-create-verification-skill"];
   const out = clean("This skill runs after /pstack-create-verification-skill has written the first one, and checks how it ages.", bundled);
-  assert.equal(out, "(The referenced skill how, pstack-create-verification-skill, if bundled, is included below.)");
+  assert.equal(out, "(The referenced skill how, pstack-create-verification-skill is included in this prompt.)");
   assert.doesNotMatch(clean("Unrelated /pstack-x line about a probe.", bundled), /referenced skill/);
   const path = "Launch the reviewer with ~/.cursor/rules/pstack-models.mdc as its rules.";
   assert.equal(clean(path, bundled), path);
+});
+
+test("tdd's reference files resolve to real paths in the plan block", async () => {
+  const { existsSync } = await import("node:fs");
+  const paths = [...(await skillsBlock(await tempProject({}), "plan")).matchAll(/`(\S+\/tdd\/references\/\w+\.md)`/g)].map((m) => m[1]);
+  assert.equal(paths.length, 2);
+  for (const p of paths) assert.ok(existsSync(p), p);
+});
+
+test("a phase block claims only the skills it injects are included", async () => {
+  const root = await tempProject({});
+  const learn = await skillsBlock(root, "learn");
+  assert.match(learn, /## Skill: retro/);
+  assert.doesNotMatch(learn, /referenced skill writing-for-agents/);
+  assert.doesNotMatch(await skillsBlock(root, "setup"), /referenced skill pstack-maintain-verification-skill/);
+  assert.match(await skillsBlock(root, "setup"), /referenced skill pstack-create-verification-skill|## Skill: pstack-create-verification-skill/);
 });
 
 test("/skills Escape after a toggle restores the phase and saves nothing", async () => {

@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { exists } from "./config.ts";
 import type { Exec } from "./git.ts";
 import { readManifest } from "./manifest.ts";
 import { isNixFailure, NixError } from "./nix.ts";
@@ -140,7 +141,7 @@ export async function gatherFacts(exec: Exec, root: string, wanted?: string): Pr
     gh: (await run("gh", ["--version"])) !== undefined,
     origin: (await run("git", ["remote", "get-url", "origin"]))?.trim() || undefined,
     template,
-    hasEvidenceSkill: await fs.access(path.join(root, EVIDENCE_SKILL)).then(() => true, () => false),
+    hasEvidenceSkill: await exists(path.join(root, EVIDENCE_SKILL)),
   };
 }
 

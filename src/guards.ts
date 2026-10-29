@@ -53,7 +53,7 @@ export function registerGuards(pi: ExtensionAPI) {
       const file = String((event.input as { path?: unknown }).path ?? "");
       if (OWNED.test(path.posix.normalize(file)) || (file && OWNED.test(toolPath(file, ctx.cwd).split(path.sep).join("/")))) return { block: true, reason: `${file} is workflow state managed by the extension. Do not edit it; ask the user (/models, /setup) if it needs to change.` };
       if (file && isGlobalConfig(file, ctx.cwd)) return { block: true, reason: `${file} is the user's own configuration (limits, review policy, self-compact). Do not edit it; ask the user to change it.` };
-      if (file && toolPath(file, ctx.cwd) === canonical(path.resolve(ctx.cwd, ACCEPTANCES))) return { block: true, reason: `${file} holds the exceptions the user approved. Do not edit it; run \`agentlint accept <id> --reason '<text>'\` and the user is asked.` };
+      if (file && toolPath(file, ctx.cwd) === canonical(path.resolve(ctx.cwd, ACCEPTANCES))) return { block: true, reason: `${file} holds the exceptions the user approved. Do not edit it; run \`agentlint propose <selector> --summary '<why>'\` and the user is asked to approve it.` };
       return;
     }
     if (event.toolName !== "bash") return;

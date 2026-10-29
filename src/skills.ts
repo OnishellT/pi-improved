@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { findBend, LAWS_RULE } from "./bend.ts";
+import { exists } from "./config.ts";
 import { DEFAULT_ON_DEMAND, DEFAULT_SKILLS, globalMap, OPT_IN, patchMap, readManifest, updateManifest, type Phase } from "./manifest.ts";
 
 const MAX_BODY = 12_000;
@@ -35,7 +36,7 @@ export async function listSkills(root = skillsDir()): Promise<string[]> {
   const entries = await fs.readdir(root, { withFileTypes: true }).catch(() => []);
   const names: string[] = [];
   for (const e of entries) {
-    if (e.isDirectory() && (await fs.access(path.join(root, e.name, "SKILL.md")).then(() => true, () => false))) names.push(e.name);
+    if (e.isDirectory() && (await exists(path.join(root, e.name, "SKILL.md")))) names.push(e.name);
   }
   return names.sort();
 }
@@ -67,8 +68,8 @@ export const phaseOnDemand = async (root: string, phase: Phase) => (await phaseL
 /** Cross-harness boilerplate that ends every pstack skill: the same ~1 KB would repeat in each phase prompt. */
 const BOILERPLATE = "## Agent integration boundary";
 
-/** Drops "call the Skill tool" / slash-invocation lines (the model has no such tool) and the boilerplate section; points to bundled skills instead. */
-export function clean(text: string, bundled: string[]) {
+/** Drops "call the Skill tool" / slash-invocation lines (the model has no such tool) and the boilerplate section; points to the skills `included` in the same prompt instead. */
+export function clean(text: string, included: string[]) {
   const out: string[] = [];
   let boilerplate = false;
   let fenced = false;
@@ -78,8 +79,8 @@ export function clean(text: string, bundled: string[]) {
     if (boilerplate) continue;
     // The slash form must start a token, so paths like ~/.cursor/rules/pstack-x.mdc are kept.
     if (/Skill tool/i.test(line) || /(^|[\s`(])\/pstack-[\w-]+/.test(line)) {
-      const refs = bundled.filter((n) => new RegExp(`(?<![\\w-])${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w-])`).test(line));
-      if (refs.length) out.push(`(The referenced skill ${refs.join(", ")}, if bundled, is included below.)`);
+      const refs = included.filter((n) => new RegExp(`(?<![\\w-])${n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w-])`).test(line));
+      if (refs.length) out.push(`(The referenced skill ${refs.join(", ")} is included in this prompt.)`);
       continue;
     }
     out.push(line);
@@ -101,11 +102,11 @@ export async function skillsBlock(root: string, phase: Phase, skip: string[] = [
   // Bend text (the laws rule, the skill) reaches only a project that keeps laws: every other project pays nothing for it.
   const laws = (phase === "plan" || phase === "implement") && (await findBend(root));
   const sections: string[] = [];
-  for (const name of injected) {
-    if (!bundled.includes(name) || skip.includes(name)) continue;
+  const included = injected.filter((n) => bundled.includes(n) && !skip.includes(n));
+  for (const name of included) {
     const skill = await loadSkill(name);
-    sections.push(`## Skill: ${name}\n\n${cap(clean(skill.body, bundled))}`);
-    for (const f of skill.files) sections.push(`### ${f.name}\n\n${cap(clean(f.content.trim(), bundled))}`);
+    sections.push(`## Skill: ${name}\n\n${cap(clean(skill.body, included))}`);
+    for (const f of skill.files) sections.push(`### ${f.name}\n\n${cap(clean(f.content.trim(), included))}`);
   }
   if (laws && phase === "implement") sections.push(LAWS_RULE);
   const bend = laws ? ["bend-laws"] : [];

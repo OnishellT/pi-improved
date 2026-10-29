@@ -1,6 +1,6 @@
 ---
 name: benchmark-checklist
-description: "Vet a performance measurement (limiter, tuning, limits, errors, repeatability, relevance, did the work happen) before you report or act on it. Use when you run a benchmark or report a speedup or regression you measured."
+description: "Use when you run a benchmark or report a speedup or regression you measured: vet the measurement (limiter, tuning, limits, errors, repeatability, relevance)."
 ---
 
 # Benchmark checklist

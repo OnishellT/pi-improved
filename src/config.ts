@@ -84,6 +84,9 @@ export async function writeFileAtomicAsync(file: string, text: string) {
   }
 }
 
+/** Whether a path exists (any kind of entry); never throws. */
+export const exists = (file: string) => fsp.access(file).then(() => true, () => false);
+
 /** Read-modify-write of the global file, keeping every key the change does not touch. */
 export function updateGlobal(change: (config: Record<string, any>) => void, dir = agentDir()) {
   const config = readGlobal(dir);
