@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { BEND_INSTALL, findBend } from "./bend.ts";
 import { resolveBin } from "./bin.ts";
@@ -127,8 +128,11 @@ export async function runDoctor(pi: ExtensionAPI, ctx: ExtensionContext, version
     // The project's own command, as verify and the policy run it, only when the user runs /doctor: a repo's command never runs at session start.
     const own = nix.resolve ? manifest?.agentlint : undefined;
     const agentlint = own ?? resolveBin("agentlint");
-    const ok = own ? await probe("bash", ["-lc", `${own} --help`]) : await probe(agentlint, ["--help"]);
-    checks.push({ name: "agentlint", ok, detail: ok ? agentlint : "not found or not running" });
+    // At session start only pi-improved's own copy runs: a bare name would be whatever the project puts on PATH.
+    if (nix.resolve || path.isAbsolute(agentlint)) {
+      const ok = own ? await probe("bash", ["-lc", `${own} --help`]) : await probe(agentlint, ["--help"]);
+      checks.push({ name: "agentlint", ok, detail: ok ? agentlint : "not found or not running" });
+    }
   }
   // Bend matters only to a project that keeps laws.
   if (await findBend(ctx.cwd)) {
