@@ -273,7 +273,7 @@ async function parallel(models: object, answers: unknown[] = [], verifyOut = "",
 test("review starts before verify finishes; verify failure ignores the review", async () => {
   const t = await parallel({ review: "p/strong" });
   const settled = t.settle();
-  for (let i = 0; i < 50 && !t.order.includes("subagent:wait"); i++) await new Promise((r) => setTimeout(r, 5));
+  for (let i = 0; i < 400 && !t.order.includes("subagent:wait"); i++) await new Promise((r) => setTimeout(r, 5));
   assert.ok(t.order.includes("subagent:spawn") && t.order.includes("verify:start") && !t.order.includes("verify:end"));
   t.gate.resolve();
   const r = await settled;

@@ -121,7 +121,7 @@ export function cdpServer(targets: BrowserTarget[], alongsideIsolated = false): 
     args: [serverFile(), JSON.stringify(targets)],
     exposure: "codemode",
     description: `Your browser (${names}) with its existing logins, restricted to a new window this server creates. No personal tab enumeration. Human runtime-debugging approval required; subagents cannot connect.${when}`,
-    timeout: 120,
+    timeout: 180, // a first open: up to 90 s for approval, then createTarget, attach and navigate at up to 20 s each
   };
 }
 
