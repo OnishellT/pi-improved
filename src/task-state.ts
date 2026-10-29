@@ -1,5 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { writeFileAtomicAsync } from "./config.ts";
 import type { Baseline } from "./verify.ts";
 
 export type TaskStatus = "planning" | "implementing" | "done";
@@ -50,6 +51,8 @@ export interface Task {
   baseline?: Baseline;
   /** Failure lines the last verify showed, all of which were already failing at baseline. /pr says so under verify. */
   predates?: string[];
+  /** The model in use before /task switched to the implement one: put back when the task ends. */
+  model?: string;
   startedAt: string;
   completedAt?: string;
 }
@@ -91,15 +94,15 @@ export async function readTask(root: string): Promise<Task | undefined> {
     return JSON.parse(await fs.readFile(path.join(root, TASK_PATH), "utf8"));
   } catch (error: any) {
     if (error.code === "ENOENT") return undefined;
-    throw new Error(`${TASK_PATH} is not valid JSON: ${error.message}`);
+    throw new Error(`${TASK_PATH} ${error.code ? "cannot be read" : "is not valid JSON"}: ${error.message}`);
   }
 }
 
 export async function writeTask(root: string, task: Task | undefined) {
   const file = path.join(root, TASK_PATH);
   if (!task) return fs.rm(file, { force: true });
-  await fs.mkdir(path.dirname(file), { recursive: true });
-  await fs.writeFile(file, `${JSON.stringify(task, null, 2)}\n`);
+  // Temp file + rename: a crash mid-write never leaves a truncated task that blocks /task.
+  await writeFileAtomicAsync(file, `${JSON.stringify(task, null, 2)}\n`);
 }
 
 export async function updateTask(root: string, change: (task: Task) => void): Promise<Task> {

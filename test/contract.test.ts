@@ -67,3 +67,8 @@ test("a qualified name counts as present when each segment is a word, whatever t
   assert.deepEqual(missingNames({ file: "src/name.rs", exports: ["BuffName::Superconduct"] }, "Add a Superconduct entry to BuffName", false), []);
   assert.deepEqual(missingNames({ file: "src/name.rs", exports: ["BuffName::Superconduct"] }, "Add a Superconduct entry", false), ["BuffName::Superconduct"]);
 });
+
+test("relatesTo: a shared question word (should, which, about) is not a shared topic", () => {
+  assert.equal(relatesTo("Should we use Redis or Memcached for sessions?", "the build should be fast"), false);
+  assert.equal(relatesTo("Which store holds sessions?", "# Sessions\nkept in Redis"), true);
+});

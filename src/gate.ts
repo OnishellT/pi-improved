@@ -11,7 +11,7 @@ import { checkAcceptances } from "./guards.ts";
 import { resolvePolicyFailure } from "./policy.ts";
 import { reviewDiff } from "./review.ts";
 import { skillsBlock } from "./skills.ts";
-import { oneLine, readTask, updateTask } from "./task-state.ts";
+import { oneLine, readTask, updateTask, type Task } from "./task-state.ts";
 import { type Signature, carryOnWhenPredated, failedLines, failureSignature, agentlintStepOf, verifySteps, formatVerify, infraFailure, isPolicyFailure, predatesBaseline, runVerify, sameFailure, validCap } from "./verify.ts";
 
 const UNREADABLE = "unreadable";
@@ -41,16 +41,28 @@ async function advice(cwd: string, report: string, kind: "policy" | "diagnose" |
 }
 // `limits.verifyRetries` and `limits.failuresBeforeEscalation` (config.ts) set the retries and when the failed verify diagnoses the bug and hands the attempt to the stronger model.
 
+/** Marks the active task done: learn records it, and the model /task switched away from comes back. */
+export async function completeTask(pi: ExtensionAPI, ctx: any): Promise<Task> {
+  const done = await updateTask(ctx.cwd, (t) => {
+    t.status = "done";
+    t.completedAt = new Date().toISOString();
+  });
+  pi.events.emit(TASK_DONE_EVENT, { root: ctx.cwd, task: done, hasUI: ctx.hasUI } satisfies TaskDonePayload);
+  await restoreModel(pi, ctx, done.model);
+  return done;
+}
+
 export function registerGate(pi: ExtensionAPI) {
   let start = "";
   let writes = 0;
   let retries = 0;
   let contractRetries = 0;
   let reviews = 0;
-  // Tasks a review already ran for: `reviews` resets every turn, and a task can stay open across turns.
-  const reviewed = new Set<string>();
+  // The working copy each task was last reviewed at: `reviews` resets every turn, and the same diff is never paid for twice.
+  const reviewed = new Map<string, string>();
   let failures = 0;
   let escalatedFrom: string | undefined;
+  let escalatedTo: string | undefined;
   let verified: string | undefined;
   let policyRepeats = 0;
   let lastSignature: Signature | undefined;
@@ -109,12 +121,13 @@ export function registerGate(pi: ExtensionAPI) {
     return result;
   };
   const deescalate = async (ctx: any) => {
-    const from = escalatedFrom;
-    escalatedFrom = undefined;
+    const [from, to] = [escalatedFrom, escalatedTo];
+    escalatedFrom = escalatedTo = undefined;
     failures = 0;
     lastSignature = undefined;
     repeats = 0;
-    if (from) await restoreModel(pi, ctx, from);
+    // A model picked since (by /task cancel, /task done or the user) stays.
+    if (from && (!ctx.model || `${ctx.model.provider}/${ctx.model.id}` === to)) await restoreModel(pi, ctx, from);
   };
 
   pi.on("before_agent_start", async (event, ctx) => {
@@ -139,7 +152,8 @@ export function registerGate(pi: ExtensionAPI) {
   pi.on("agent_before_settle", async (event, ctx) => {
     // An exception the user never saw must not open the gate, even one a background process wrote after the last command.
     await checkAcceptances(ctx);
-    const manifest = await readManifest(ctx.cwd).catch(() => undefined);
+    // A broken manifest (a merge conflict) must not turn the gate off unnoticed.
+    const manifest = await readManifest(ctx.cwd).catch((e: Error) => void ctx.ui.notify(`Verify did not run: ${e.message}`, "error"));
     if (!manifest || manifest.setup !== "done" || !manifest.verify.length || event.outcome !== "completed") return;
     const { verifyRetries, failuresBeforeEscalation } = limitsOf(manifest);
     const now = await snapshot(ctx.cwd);
@@ -166,8 +180,8 @@ export function registerGate(pi: ExtensionAPI) {
     const reviewModel = manifest.models?.review;
     const abort = new AbortController();
     skip = undefined;
-    let wanted = task?.status === "implementing" && !!reviewModel && reviews < MAX_REVIEWS;
-    // The level is measured and reported (except under review.always/never, which short-circuit); whether it asks for a model review is the manifest's policy.
+    let wanted = task?.status === "implementing" && !!reviewModel && reviews < MAX_REVIEWS && (now === UNREADABLE || reviewed.get(task.id) !== now);
+    // The level is measured and reported; whether it asks for a model review is the manifest's policy.
     const risk = task?.status === "implementing" ? await assessRisk(pi.exec.bind(pi), ctx.cwd, task, manifest) : undefined;
     if (wanted && reviewModel && risk) {
       if (!risk.review) {
@@ -202,9 +216,12 @@ export function registerGate(pi: ExtensionAPI) {
       if (ctx.hasUI) {
         // The work stays a task in progress either way; only the user decides to go on without checking it.
         const choice = await ctx.ui.select(`${message}\n\nThe change cannot be checked until this is fixed.`, ["Leave the work unverified", "Stop here: I will fix it and finish again"]);
-        if (choice === "Leave the work unverified") verified = remembered;
+        if (choice === "Leave the work unverified") {
+          verified = remembered;
+          if (task?.status === "implementing") ctx.ui.notify("The task stays open: /task done closes it.", "info");
+        }
       } else {
-        ctx.ui.notify(`Unverified: ${infra} Nobody can answer here, so the task is not marked done.`, "warning");
+        ctx.ui.notify(`Unverified: ${infra} Nobody can answer here, so the task is not marked done; /task done closes it.`, "warning");
         verified = remembered;
       }
       return deescalate(ctx).then(() => undefined);
@@ -244,6 +261,7 @@ export function registerGate(pi: ExtensionAPI) {
         const switched = await switchModel(pi, ctx, target);
         if (switched) {
           escalatedFrom = switched.previous;
+          escalatedTo = switched.model;
           ctx.ui.notify(`verify failed ${failuresBeforeEscalation} times: ${switched.model} takes this attempt`, "warning");
           pi.events.emit(ESCALATE_EVENT, { root: ctx.cwd, model: switched.model } satisfies EscalatePayload);
         }
@@ -265,7 +283,7 @@ export function registerGate(pi: ExtensionAPI) {
       if (review.status === "skipped") ctx.ui.notify(`Review skipped: ${review.report}`, "warning");
       else ctx.ui.notify(review.status === "approved" ? "Diff review: approved." : "Diff review: changes requested. The agent fixes them.", review.status === "approved" ? "info" : "warning");
       reviews++;
-      if (task) reviewed.add(task.id);
+      if (task) reviewed.set(task.id, now);
       // One round: the fixes are checked by verify, not by another paid review.
       if (review.status === "changes") {
         verified = undefined;
@@ -273,15 +291,16 @@ export function registerGate(pi: ExtensionAPI) {
         return { entries: [{ type: "custom_message", customType: "diff-review", content, display: true }], continue: true };
       }
     }
-    if (task?.status === "implementing" && ctx.hasUI && (await ctx.ui.confirm(predated ? "Only old failures remain" : "Verification OK", `Is the task "${oneLine(task.title, 80)}" done?${predated ? `\n\nThese steps still fail, as they did before the task:\n${failing.map((s) => `- ${s}`).join("\n")}` : ""}${dialogNotes(risk)}`))) {
-      // Before the task is marked done: telemetry looks up the active task, and a done one is not.
-      if (skip && !reviewed.has(task.id)) pi.events.emit(REVIEW_EVENT, skip satisfies ReviewPayload);
-      const done = await updateTask(ctx.cwd, (t) => {
-        t.status = "done";
-        t.completedAt = new Date().toISOString();
-      });
-      pi.events.emit(TASK_DONE_EVENT, { root: ctx.cwd, task: done, hasUI: ctx.hasUI } satisfies TaskDonePayload);
+    if (task?.status !== "implementing") return;
+    // Headless, a pass is the answer; with old failures only a person can call it done.
+    const done = ctx.hasUI ? await ctx.ui.confirm(predated ? "Only old failures remain" : "Verification OK", `Is the task "${oneLine(task.title, 80)}" done?${predated ? `\n\nThese steps still fail, as they did before the task:\n${failing.map((s) => `- ${s}`).join("\n")}` : ""}${dialogNotes(risk)}`) : !predated;
+    if (!done) {
+      ctx.ui.notify(`The task stays open${ctx.hasUI ? "" : `: verify still fails as it did before the task (${failing.join(", ")})`}. /task done closes it.`, "info");
+      return;
     }
+    // Before the task is marked done: telemetry looks up the active task, and a done one is not.
+    if (skip && !reviewed.has(task.id)) pi.events.emit(REVIEW_EVENT, skip satisfies ReviewPayload);
+    await completeTask(pi, ctx);
   });
 
   pi.registerCommand("verify", {

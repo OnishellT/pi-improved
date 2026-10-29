@@ -6,7 +6,8 @@ import { updateManifest } from "../src/manifest.ts";
 import { readTask, writeTask } from "../src/task-state.ts";
 import { planCheckWanted, registerTask, specFiles } from "../src/task.ts";
 import { planText } from "../src/task-prompt.ts";
-import { VERIFY_EVENT } from "../src/events.ts";
+import { TASK_DONE_EVENT, VERIFY_EVENT } from "../src/events.ts";
+import { installMessage } from "../src/nix.ts";
 import { fakeCtx, fakePi, fakeUI, isSubagent, tempProject } from "./helpers.ts";
 
 const plan = (decisions: any[] = [], extra: any = {}) => ({
@@ -522,14 +523,15 @@ test("a passing baseline is stored as ok with its duration", async () => {
   assert.deepEqual([baseline.ok, baseline.failing, typeof baseline.seconds], [true, undefined, "number"]);
 });
 
-test("a baseline cut short by the abort signal is not stored", async () => {
+test("a baseline cut short by the abort signal is not stored and the plan is not approved", async () => {
   const t = await baselineSetup(() => ({ code: 1, stdout: "FAIL x" }));
   const ctl = new AbortController();
   const base = t.pi.exec;
   t.pi.exec = (cmd: string, args: string[], o: any) => (cmd === "bash" && ctl.abort(), base(cmd, args, o));
-  await t.tools.get("task_plan").execute("1", plan(), ctl.signal, undefined, t.ctxFor(["Accept the proposed names", true]));
+  await assert.rejects(t.tools.get("task_plan").execute("1", plan(), ctl.signal, undefined, t.ctxFor(["Accept the proposed names", true])), /Cancelled while verify ran/);
+  // Still planning: an implementing task without a baseline would count every old failure as new.
   assert.equal((await readTask(t.root))!.baseline, undefined);
-  assert.equal((await readTask(t.root))!.status, "implementing");
+  assert.equal((await readTask(t.root))!.status, "planning");
 });
 
 test("/task titles a long pasted ticket by its first line and keeps the whole text in the prompt and the evidence", async () => {
@@ -556,4 +558,109 @@ test("/task titles a long pasted ticket by its first line and keeps the whole te
   const plain = (await readTask(root))!;
   assert.equal(plain.title, "Add fee");
   assert.equal(plain.body, undefined);
+});
+
+/** A task session whose model switches are recorded: starts on p/mine, the implement model is p/cheap. */
+async function modelSetup() {
+  const t = await setup();
+  await updateManifest(t.root, (m) => void (m.models = { implement: "p/cheap" }));
+  const set: string[] = [];
+  const emitted: any[] = [];
+  t.pi.setModel = async (m: any) => (set.push(`${m.provider}/${m.id}`), true);
+  t.pi.events = { emit: (name: string, payload: any) => emitted.push({ name, payload }) };
+  const mk = (id: string) => ({ provider: "p", id });
+  const registry = { find: (_p: string, id: string) => mk(id), getAvailable: () => [mk("cheap"), mk("mine")] };
+  const ctxFor = (answers: unknown[], extra: object = {}) => fakeCtx(t.root, answers, { model: mk("mine"), modelRegistry: registry, ...extra });
+  return { ...t, set, emitted, ctxFor };
+}
+
+test("/task done closes an implementing task (done, event, model back); declining the dialog is no dead end", async () => {
+  const t = await modelSetup();
+  await t.commands.get("task").handler("Add fee", t.ctxFor([]).ctx);
+  assert.equal((await readTask(t.root))!.model, "p/mine");
+  await t.commands.get("task").handler("done", t.ctxFor([]).ctx);
+  assert.equal((await readTask(t.root))!.status, "planning", "a task still being planned is not done");
+  await writeTask(t.root, { ...(await readTask(t.root))!, status: "implementing" });
+  await t.commands.get("task").handler("done", t.ctxFor([]).ctx);
+  const done = (await readTask(t.root))!;
+  assert.equal(done.status, "done");
+  assert.ok(done.completedAt);
+  assert.deepEqual(t.emitted.map((e) => e.name), [TASK_DONE_EVENT]);
+  assert.deepEqual(t.set, ["p/cheap", "p/mine"]);
+});
+
+test("/task cancel puts the model back; a replaced task hands it on", async () => {
+  const t = await modelSetup();
+  await t.commands.get("task").handler("First", t.ctxFor([]).ctx);
+  await t.commands.get("task").handler("Second", t.ctxFor(["Replace it"], { model: { provider: "p", id: "cheap" } }).ctx);
+  assert.equal((await readTask(t.root))!.model, "p/mine");
+  await t.commands.get("task").handler("cancel", t.ctxFor([]).ctx);
+  assert.deepEqual(t.set, ["p/cheap", "p/mine"]);
+});
+
+test("an unreadable task file: /task says how out, /task cancel removes it", async () => {
+  const t = await setup();
+  await fs.writeFile(path.join(t.root, ".pi/task.json"), '{"id": "t1", "tit');
+  const notes: string[] = [];
+  const { ctx } = t.ctxFor([]);
+  ctx.ui.notify = (m: string) => void notes.push(m);
+  await t.commands.get("task").handler("", ctx);
+  assert.match(notes[0], /\.pi\/task\.json is not valid JSON.*\/task cancel removes it/);
+  await t.commands.get("task").handler("cancel", ctx);
+  assert.equal(notes[1], "Task cancelled.");
+  assert.equal(await readTask(t.root), undefined);
+});
+
+test("writeTask leaves no temp file and a read error that is not JSON says it cannot be read", async () => {
+  const root = await tempProject({});
+  await writeTask(root, { id: "t", title: "T", status: "planning", allowedExtra: [], startedAt: "" });
+  assert.deepEqual(await fs.readdir(path.join(root, ".pi")), ["task.json"]);
+  await fs.rm(path.join(root, ".pi/task.json"));
+  await fs.mkdir(path.join(root, ".pi/task.json"));
+  await assert.rejects(readTask(root), /\.pi\/task\.json cannot be read: EISDIR/);
+});
+
+test("a session that starts with an open task says so once; a reload or a done task says nothing", async () => {
+  const t = await setup();
+  const notes: string[] = [];
+  const { ctx } = t.ctxFor([]);
+  ctx.ui.notify = (m: string) => void notes.push(m);
+  await t.emit("session_start", { reason: "startup" }, ctx);
+  assert.deepEqual(notes, []);
+  await t.commands.get("task").handler("Add fee", t.ctxFor([]).ctx);
+  await t.emit("session_start", { reason: "reload" }, ctx);
+  assert.deepEqual(notes, []);
+  await t.emit("session_start", { reason: "resume" }, ctx);
+  assert.deepEqual(notes, ['Task "Add fee" is planning: /task to continue, /task done or /task cancel to end it.']);
+  await writeTask(t.root, { ...(await readTask(t.root))!, status: "done" });
+  await t.emit("session_start", { reason: "startup" }, ctx);
+  assert.equal(notes.length, 1);
+});
+
+test("without a UI, /task with a task already open says how to end it instead of returning silently", async () => {
+  const t = await setup();
+  await t.commands.get("task").handler("First", t.ctxFor([]).ctx);
+  const notes: string[] = [];
+  const { ctx } = fakeCtx(t.root, [], { hasUI: false });
+  ctx.ui.notify = (m: string) => void notes.push(m);
+  await t.commands.get("task").handler("Second", ctx);
+  assert.match(notes[0], /A task is already active: First\. \/task done or \/task cancel ends it\./);
+  assert.equal((await readTask(t.root))!.title, "First");
+});
+
+test("plan check: one that did not run does not use up the budget", async () => {
+  const { tools, verdicts, spawns, ctxFor, root } = await planCheckSetup();
+  verdicts.push("no verdict here");
+  await tools.get("task_plan").execute("1", plan(), undefined, undefined, ctxFor([true]).ctx);
+  assert.equal(spawns.length, 1);
+  assert.equal((await readTask(root))!.planChecks ?? 0, 0);
+});
+
+test("a baseline that cannot run says failures that already exist will count as new", async () => {
+  const t = await baselineSetup((cmd) => (cmd === "bash" ? { code: 127, stderr: installMessage() } : { code: 0 }) as any);
+  const ctx = t.ctxFor(["Accept the proposed names", true]);
+  const notes: string[] = [];
+  ctx.ui.notify = (m: string) => void notes.push(m);
+  await t.tools.get("task_plan").execute("1", plan(), undefined, undefined, ctx);
+  assert.ok(notes.some((n) => /Verify could not run before the change/.test(n)), notes.join("\n"));
 });

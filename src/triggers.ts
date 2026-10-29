@@ -159,6 +159,7 @@ export function registerTriggers(pi: ExtensionAPI) {
 
   pi.on("tool_call", async (event: any, ctx: ExtensionContext) => {
     const task = await readTask(ctx.cwd).catch(() => undefined);
+    if (task?.status === "planning" && (event.toolName === "write" || event.toolName === "edit")) return { block: true, reason: "Planning edits nothing. Submit the plan with task_plan; edits start once it is approved." };
     if (task?.status !== "implementing") return;
     // Headless: the scope and migration gates are off; a new dependency is denied, since nobody can approve it.
     if (!ctx.hasUI) return headlessDependency(event, ctx);
