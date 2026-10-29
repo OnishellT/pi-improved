@@ -73,8 +73,9 @@ export const isPiState = (file: string) => file.startsWith(".pi/");
  * The part of `.pi/` that stays on this machine: /setup puts it in `.gitignore`, /pr leaves it out of the commit.
  * Everything else under `.pi/` (workflow.json, memory/tasks.jsonl, skills/) is versioned project state.
  * An entry ending in `/` is a folder. Its owner (telemetry.ts) defines the same string; a test keeps them in step.
+ * `.pi/contract.json` is legacy: nothing writes it any more, but a stale tracked or staged copy must never reach a PR.
  */
-export const LOCAL_STATE = [TASK_PATH, ".pi/metrics/", ".pi/evidence/"];
+export const LOCAL_STATE = [TASK_PATH, ".pi/contract.json", ".pi/metrics/", ".pi/evidence/"];
 export const isLocalState = (file: string) => LOCAL_STATE.some((entry) => (entry.endsWith("/") ? file.startsWith(entry) : file === entry));
 
 /** Records of finished tasks (JSONL); lines that do not parse are skipped. */
