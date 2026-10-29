@@ -24,6 +24,8 @@ const MAX_TICKET_TEXT = 300_000; // characters of tracker output kept as evidenc
 // A request that is only a ticket key (`PAY-142`); `PAY-142 add fees` or `UTF-8 handling` is free text.
 const TICKET = /^[A-Z][A-Z0-9]+-\d+$/;
 const TRACKERS = ["jira", "linear"];
+/** The commands that end this task: only an implementing one can be called done. */
+const endsIt = (task: Task) => (task.status === "implementing" ? "/task done or /task cancel" : "/task cancel");
 const PLAN_STATUS = { ok: "plan-ok", fix: "plan-fix", skipped: "skipped" } as const;
 // Doc files named in a request: relative or absolute paths ending in .md/.txt/..., bare or quoted, with prose punctuation around them.
 const SPEC_FILE = /(?:^|[\s:(\[`"'])((?:\.{1,2}\/|\/|[\w.-]+\/)?[\w.-]+(?:\/[\w.-]+)*\.(?:md|markdown|txt|rst|adoc))(?=$|[\s:,;.)\]`"'])/g;
@@ -230,7 +232,7 @@ export function registerTask(pi: ExtensionAPI) {
       if (manifest.setup !== "done") return ctx.ui.notify("Run /setup first.", "error");
 
       if (active && active.status !== "done") {
-        if (!ctx.hasUI) return ctx.ui.notify(`A task is already active: ${oneLine(active.title, 80)}. /task done or /task cancel ends it.`, "error");
+        if (!ctx.hasUI) return ctx.ui.notify(`A task is already active: ${oneLine(active.title, 80)}. ${endsIt(active)} ends it.`, "error");
         const choice = await ctx.ui.select(`A task is already active: ${oneLine(active.title, 80)}`, ["Continue it", "Replace it", "Cancel"]);
         if (choice === "Continue it") {
           if (active.status === "planning") return start(ctx, manifest, active);
@@ -338,7 +340,7 @@ export function registerTask(pi: ExtensionAPI) {
   pi.on("session_start", async (event, ctx) => {
     if (event.reason === "reload") return;
     const task = await readTask(ctx.cwd).catch(() => undefined);
-    if (task && task.status !== "done") ctx.ui.notify(`Task "${oneLine(task.title, 80)}" is ${task.status}: /task to continue, /task done or /task cancel to end it.`, "info");
+    if (task && task.status !== "done") ctx.ui.notify(`Task "${oneLine(task.title, 80)}" is ${task.status}: /task to continue, ${endsIt(task)} to end it.`, "info");
   });
   pi.on("tool_result", async (event, ctx) => {
     if (event.toolName !== "ask_user" || (await readTask(ctx.cwd).catch(() => undefined))?.status !== "planning") return;

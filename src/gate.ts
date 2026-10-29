@@ -73,7 +73,11 @@ export function registerGate(pi: ExtensionAPI) {
   let warnedNoReviewModel = false;
 
   const snapshot = async (cwd: string) => {
-    const parts = [await git(pi.exec.bind(pi), cwd, ["status", "--porcelain"]), await git(pi.exec.bind(pi), cwd, ["diff", "HEAD"]), await git(pi.exec.bind(pi), cwd, ["rev-parse", "HEAD"])];
+    const exec = pi.exec.bind(pi);
+    // `git diff` leaves out untracked files: their contents count too, or editing one would look like no change.
+    const untracked = (await git(exec, cwd, ["ls-files", "--others", "--exclude-standard", "-z"]))?.split("\0").filter(Boolean);
+    const contents = !untracked ? undefined : untracked.length ? await git(exec, cwd, ["hash-object", "--", ...untracked]) : "";
+    const parts = [await git(exec, cwd, ["status", "--porcelain"]), await git(exec, cwd, ["diff", "HEAD"]), await git(exec, cwd, ["rev-parse", "HEAD"]), contents];
     // A snapshot git could not take (no Nix, no repository) is never equal to another: the work counts as changed, and verify says what is wrong.
     if (parts.some((p) => p === undefined)) return UNREADABLE;
     // HEAD is part of it: a change committed through bash leaves the tree clean, and that is still a change.
@@ -283,7 +287,8 @@ export function registerGate(pi: ExtensionAPI) {
       if (review.status === "skipped") ctx.ui.notify(`Review skipped: ${review.report}`, "warning");
       else ctx.ui.notify(review.status === "approved" ? "Diff review: approved." : "Diff review: changes requested. The agent fixes them.", review.status === "approved" ? "info" : "warning");
       reviews++;
-      if (task) reviewed.set(task.id, now);
+      // A review that did not run (no tmux, a failed child) is tried again on the same diff, and still counts as one for the low-risk skip.
+      if (task) reviewed.set(task.id, review.status === "skipped" ? "" : now);
       // One round: the fixes are checked by verify, not by another paid review.
       if (review.status === "changes") {
         verified = undefined;

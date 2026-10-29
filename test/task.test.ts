@@ -631,10 +631,13 @@ test("a session that starts with an open task says so once; a reload or a done t
   await t.emit("session_start", { reason: "reload" }, ctx);
   assert.deepEqual(notes, []);
   await t.emit("session_start", { reason: "resume" }, ctx);
-  assert.deepEqual(notes, ['Task "Add fee" is planning: /task to continue, /task done or /task cancel to end it.']);
+  assert.deepEqual(notes, ['Task "Add fee" is planning: /task to continue, /task cancel to end it.']);
+  await writeTask(t.root, { ...(await readTask(t.root))!, status: "implementing" });
+  await t.emit("session_start", { reason: "fork" }, ctx);
+  assert.equal(notes[1], 'Task "Add fee" is implementing: /task to continue, /task done or /task cancel to end it.');
   await writeTask(t.root, { ...(await readTask(t.root))!, status: "done" });
   await t.emit("session_start", { reason: "startup" }, ctx);
-  assert.equal(notes.length, 1);
+  assert.equal(notes.length, 2);
 });
 
 test("without a UI, /task with a task already open says how to end it instead of returning silently", async () => {
@@ -644,7 +647,7 @@ test("without a UI, /task with a task already open says how to end it instead of
   const { ctx } = fakeCtx(t.root, [], { hasUI: false });
   ctx.ui.notify = (m: string) => void notes.push(m);
   await t.commands.get("task").handler("Second", ctx);
-  assert.match(notes[0], /A task is already active: First\. \/task done or \/task cancel ends it\./);
+  assert.equal(notes[0], "A task is already active: First. /task cancel ends it.");
   assert.equal((await readTask(t.root))!.title, "First");
 });
 
