@@ -40,6 +40,9 @@ export function verifyFiles(commands: string[]): string[] {
 export type RiskLevel = "none" | "low" | "high";
 type ReviewPolicy = NonNullable<Manifest["review"]>;
 
+/** The risk level from which a model review runs: `review.minLevel`, "high" when unset. */
+export const minLevelOf = (rule: ReviewPolicy | undefined) => rule?.minLevel ?? "high";
+
 const globRegex = (glob: string) =>
   new RegExp(`^${glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*\/|\*\*/g, (m) => (m.endsWith("/") ? "\u0000" : "\u0001")).replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]").replace(/\u0000/g, "(?:.*/)?").replace(/\u0001/g, ".*")}$`);
 
@@ -95,7 +98,7 @@ export interface RiskAssessment {
 
 /**
  * How risky the diff since the task's base commit is. The level is computed from the diff (`review.always`/`review.never` short-circuit it); a model review is only requested when
- * the manifest opts in: `review.always`, or `review.minLevel` "low" (above none) or "high". Default "off".
+ * the manifest asks for it: `review.always`, or `review.minLevel` "low" (above none) or "high" (the default). "off" never reviews.
  * Cheap: git and regexes, no LLM. Doubt goes up a level, never down.
  */
 export async function assessRisk(exec: Exec, root: string, task: Task | undefined, manifest: Manifest): Promise<RiskAssessment> {
@@ -146,6 +149,7 @@ export async function assessRisk(exec: Exec, root: string, task: Task | undefine
   if (!task?.plan) raise("low", "no plan");
   else if (task.plan.decisions.some((d) => d.status === "decided")) raise("low", "new user decisions");
   const final = level as RiskLevel; // `raise` assigns it in a closure, which narrowing does not see
-  const review = rule?.minLevel === "low" ? final !== "none" : rule?.minLevel === "high" ? final === "high" : false;
+  const min = minLevelOf(rule);
+  const review = min === "low" ? final !== "none" : min === "high" ? final === "high" : false;
   return { review, level: final, reasons, ...listed };
 }

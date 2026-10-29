@@ -386,6 +386,7 @@ test("/task cancel says so when there is no task; 'Continue it' on an implementi
 test("plan check is off by default and follows review.plan, review.always and risky plan files", () => {
   const on = (review: any, files: string[] = ["src/fee.ts"]) => planCheckWanted({ version: 1, setup: "done", verify: [], connectors: [], review } as any, files);
   assert.equal(on(undefined), false);
+  assert.equal(on(undefined, ["package.json"]), true, "the review level defaults to high");
   assert.equal(on({ minLevel: "off" }, ["package.json"]), false);
   assert.equal(on({ minLevel: "high" }, ["package.json"]), true);
   assert.equal(on({ minLevel: "high" }), false);

@@ -679,6 +679,55 @@ test("a requested review without models.review is announced once; the Risk line 
   assert.ok(notes.some((n) => /^Risk high.*\(no review model\)$/.test(n)));
 });
 
+/** A high-risk diff (package.json changed) with models.review set and the given review policy. */
+async function highRisk(review?: object, models: object = { review: "p/m" }) {
+  const root = await tempProject({
+    ".pi/workflow.json": JSON.stringify({ version: 1, setup: "done", verify: ["check"], connectors: [], models, ...(review && { review }) }),
+    ".pi/task.json": JSON.stringify({ ...task, plan: { summary: "s", steps: [], files: ["package.json"], decisions: [], interface: [], seams: [] } }),
+  });
+  let started = false;
+  const spawned: string[] = [];
+  const h = fakePi((cmd, args) => {
+    if (cmd === "git") return { code: 0, stdout: args.includes("--numstat") ? "3\t0\tpackage.json\0" : started ? "changed" : "" };
+    if (isSubagent(cmd)) {
+      spawned.push(args[0]);
+      return args[0] === "spawn" ? { code: 0, stdout: "Spawned review (abc123)" } : args[0] === "wait" ? { code: 0, stdout: "abc123 finished\n\nVERDICT: APPROVED" } : { code: 0 };
+    }
+    return { code: 0 };
+  });
+  const emitted: any[] = [];
+  h.pi.events = { emit: (name: string, payload: any) => emitted.push({ name, payload }) };
+  registerGate(h.pi);
+  const ui: any = fakeUI([true]);
+  const notes: string[] = [];
+  ui.notify = (m: string) => void notes.push(m);
+  const ctx: any = { cwd: root, hasUI: true, ui };
+  await h.emit("before_agent_start", { messageType: "user" }, ctx);
+  started = true;
+  await h.emit("agent_before_settle", { outcome: "completed" }, ctx);
+  return { notes, spawned, status: emitted.find((e) => e.name === REVIEW_EVENT)?.payload.status };
+}
+
+test("review.minLevel is high by default: a high-risk diff gets a review when models.review is set", async () => {
+  const r = await highRisk();
+  assert.ok(r.spawned.includes("spawn"));
+  assert.equal(r.status, "approved");
+  assert.ok(r.notes.some((n) => /^Risk high.*\(review requested\)$/.test(n)));
+});
+
+test("a review that is off is reported as not requested, with how to turn it on, not as a low-risk skip", async () => {
+  const r = await highRisk({ minLevel: "off" });
+  assert.deepEqual(r.spawned, []);
+  assert.equal(r.status, "not-requested");
+  assert.ok(r.notes.some((n) => /^Review not requested \(risk high\).*Set review\.minLevel/.test(n)));
+  assert.equal((await highRisk({ never: true })).status, "not-requested");
+});
+
+test("with review off and no models.review the Risk line says the model is missing", async () => {
+  const r = await highRisk({ minLevel: "off" }, {});
+  assert.ok(r.notes.some((n) => /^Risk high.*\(review not requested; models\.review is not set\)$/.test(n)));
+});
+
 test("the done dialog names the task on one line, even when the title holds a whole ticket", async () => {
   const t = await setup({ pass: true, answers: [true] });
   await fs.mkdir(path.join(t.root, ".pi"), { recursive: true });

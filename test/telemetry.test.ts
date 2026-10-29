@@ -101,9 +101,10 @@ test("/metrics without data", async () => {
 test("/metrics shows skipped reviews as · and the savings line", async () => {
   const mk = (id: string, reviews: object[]) => JSON.stringify({ id, metrics: { phases: {}, verifyFailures: 0, reviews } });
   const root = await tempProject({
-    ".pi/memory/tasks.jsonl": [mk("A", [{ status: "approved", model: "m", seconds: 1, cost: 0.4 }]), mk("B", [{ status: "skipped-low-risk", model: "m", seconds: 0 }]), mk("C", [{ status: "skipped-low-risk", model: "m", seconds: 0 }])].join("\n"),
+    ".pi/memory/tasks.jsonl": [mk("A", [{ status: "approved", model: "m", seconds: 1, cost: 0.4 }]), mk("B", [{ status: "skipped-low-risk", model: "m", seconds: 0 }]), mk("C", [{ status: "skipped-low-risk", model: "m", seconds: 0 }]), mk("D", [{ status: "not-requested", model: "m", seconds: 0 }])].join("\n"),
   });
   const report = await metricsReport(root);
+  assert.match(report, /^D\s.*review: ·$/m);
   assert.match(report, /^B\s.*review: ·$/m);
   assert.match(report, /Reviews avoided: 2 \(≈ \$0\.80 saved\)/);
 });

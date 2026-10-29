@@ -6,7 +6,7 @@ import { limitsOf } from "./config.ts";
 import { git } from "./git.ts";
 import { readManifest, type Manifest } from "./manifest.ts";
 import { restoreModel, switchModel } from "./models.ts";
-import { assessRisk } from "./risk.ts";
+import { assessRisk, minLevelOf } from "./risk.ts";
 import { checkAcceptances } from "./guards.ts";
 import { resolvePolicyFailure } from "./policy.ts";
 import { reviewDiff } from "./review.ts";
@@ -168,8 +168,11 @@ export function registerGate(pi: ExtensionAPI) {
       if (!risk.review) {
         wanted = false;
         reviews++;
-        ctx.ui.notify(`Review skipped (risk ${risk.level}): ${risk.reasons.join("; ") || "small diff outside sensitive areas"}`, "info");
-        pi.events.emit(REVIEW_EVENT, { root: ctx.cwd, status: "skipped-low-risk", model: reviewModel, seconds: 0, cost: 0 } satisfies ReviewPayload);
+        const why = risk.reasons.join("; ") || "small diff outside sensitive areas";
+        // Off by policy is not the same as too small to need one: only the second counts as a saving.
+        const off = !!manifest.review?.never || minLevelOf(manifest.review) === "off";
+        ctx.ui.notify(off ? `Review not requested (risk ${risk.level}): ${why}.${manifest.review?.never ? "" : ' Set review.minLevel to "high" or "low" in .pi/workflow.json to have the diff reviewed.'}` : `Review skipped (risk ${risk.level}): ${why}`, "info");
+        pi.events.emit(REVIEW_EVENT, { root: ctx.cwd, status: off ? "not-requested" : "skipped-low-risk", model: reviewModel, seconds: 0, cost: 0 } satisfies ReviewPayload);
       }
     }
     // A review the policy asks for cannot run without a model: say so once instead of skipping silently.
@@ -251,7 +254,7 @@ export function registerGate(pi: ExtensionAPI) {
 
     verified = remembered;
     await deescalate(ctx);
-    if (risk) ctx.ui.notify(`Risk ${risk.level}${risk.reasons.length ? `: ${risk.reasons.join("; ")}` : ""}${reviewing ? " (review requested)" : !risk.review ? " (review not requested)" : reviewModel ? " (already reviewed)" : " (no review model)"}`, "info");
+    if (risk) ctx.ui.notify(`Risk ${risk.level}${risk.reasons.length ? `: ${risk.reasons.join("; ")}` : ""}${reviewing ? " (review requested)" : !risk.review ? ` (review not requested${reviewModel ? "" : "; models.review is not set"})` : reviewModel ? " (already reviewed)" : " (no review model)"}`, "info");
     if (reviewing) {
       const review = await reviewing.finally(clearStatus);
       if (review.status === "skipped") ctx.ui.notify(`Review skipped: ${review.report}`, "warning");

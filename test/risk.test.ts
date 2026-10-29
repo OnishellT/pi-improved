@@ -89,11 +89,11 @@ test("thresholds are configurable and high never sits below low", async () => {
   assert.equal((await risk(exec([["a.ts", 101]]), task, inverted)).level, "high");
 });
 
-test("minLevel decides when a review is requested; default is off; always beats never", async () => {
+test("minLevel decides when a review is requested; default is high; always beats never", async () => {
   const med = exec([["src/a.ts", 300]]);
   const high = exec([["package.json", 1]]);
   const withLevel = (minLevel?: any) => ({ ...base, review: { minLevel } });
-  assert.deepEqual([(await risk(med, task, withLevel())).review, (await risk(high, task, withLevel())).review], [false, false]);
+  assert.deepEqual([(await risk(med, task, withLevel())).review, (await risk(high, task, withLevel())).review], [false, true]);
   assert.deepEqual([(await risk(med, task, withLevel("off"))).review, (await risk(high, task, withLevel("off"))).review], [false, false]);
   assert.deepEqual([(await risk(med, task, withLevel("low"))).review, (await risk(high, task, withLevel("low"))).review], [true, true]);
   assert.deepEqual([(await risk(med, task, withLevel("high"))).review, (await risk(high, task, withLevel("high"))).review], [false, true]);
