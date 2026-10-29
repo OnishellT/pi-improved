@@ -11,6 +11,8 @@ test("remoteFor picks the remote of the PR's repository, not origin", () => {
   assert.equal(remoteFor("OnishellT/pi-improved", remotes), "upstream");
   assert.equal(remoteFor("me/pi-improved", remotes), "origin");
   assert.throws(() => remoteFor("other/repo", remotes), /no git remote points at other\/repo/);
+  // Only fetch URLs count: a push URL to the repository does not make a fork's remote fit.
+  assert.throws(() => remoteFor("x/y", "fork\thttps://github.com/me/y (fetch)\nfork\thttps://github.com/x/y (push)"), /no git remote/);
 });
 
 test("graphqlArgs sends strings raw with -f and numbers with -F", () => {

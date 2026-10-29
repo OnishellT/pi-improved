@@ -46,6 +46,12 @@ test("an unreadable linked issue is skipped, not fatal", async () => {
     return `body ${number}`;
   });
   assert.deepEqual(issues, [{ number: 1, body: "body 1" }]);
+  await assert.rejects(
+    linkedIssueBodies("Fixes #2", async () => {
+      throw new Error("HTTP 502");
+    }),
+    /HTTP 502/,
+  );
 });
 
 test("an oversized review context fails before the reviewer runs", () => {

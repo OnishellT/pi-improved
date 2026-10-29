@@ -38,8 +38,8 @@ export function linkedIssues(body: string): number[] {
   return [...new Set(numbers)];
 }
 
-// Bodies of the linked issues. One that cannot be read (a typo, a deleted or transferred
-// issue, or prose quoting the keyword) is skipped instead of aborting the review.
+// Bodies of the linked issues. One that does not exist (a typo, a deleted or transferred
+// issue, or prose quoting the keyword) is skipped; any other failure (network, auth) throws.
 export async function linkedIssueBodies(
   body: string,
   fetchBody: (number: number) => Promise<string>,
@@ -49,6 +49,7 @@ export async function linkedIssueBodies(
     try {
       issues.push({ number, body: await fetchBody(number) });
     } catch (cause) {
+      if (!/could not resolve to an issue/i.test(String(cause))) throw cause;
       console.error(`skipping linked issue #${number}: ${cause instanceof Error ? cause.message : String(cause)}`);
     }
   }

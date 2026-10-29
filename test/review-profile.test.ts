@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { lstatSync, mkdirSync, readlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { lstatSync, mkdirSync, readlinkSync, symlinkSync, writeFileSync } from "node:fs";
+import { join, relative } from "node:path";
 import { test } from "node:test";
 import { linkCredentials } from "../scripts/review/profile.ts";
 import { tempDir } from "./helpers.ts";
@@ -34,4 +34,22 @@ test("models-store.json is linked when present", async () => {
 test("a missing auth.json names the provider to sign in to", async () => {
   const { main, pi } = await dirs();
   assert.throws(() => linkCredentials(main, pi, "anthropic"), /auth\.json is missing: sign pi in to the anthropic provider/);
+});
+
+test("a link to another main profile is replaced", async () => {
+  const { main, pi } = await dirs();
+  const other = join(main, "..", "other");
+  mkdirSync(other);
+  writeFileSync(join(other, "auth.json"), "{}");
+  writeFileSync(join(main, "auth.json"), "{}");
+  symlinkSync(join(other, "auth.json"), join(pi, "auth.json"));
+  linkCredentials(main, pi, "openai");
+  assert.equal(readlinkSync(join(pi, "auth.json")), join(main, "auth.json"));
+});
+
+test("a relative main dir is linked by its absolute path", async () => {
+  const { main, pi } = await dirs();
+  writeFileSync(join(main, "auth.json"), "{}");
+  linkCredentials(relative(process.cwd(), main), pi, "openai");
+  assert.equal(readlinkSync(join(pi, "auth.json")), join(main, "auth.json"));
 });
