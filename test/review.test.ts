@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { buildBrief, parseVerdict, reviewDiff, subagentCost } from "../src/review.ts";
 import { ownRuns } from "../src/subagent-view.ts";
 import type { Task } from "../src/task-state.ts";
-import { fakeSubagentExec, isSubagent, ok, tempDir } from "./helpers.ts";
+import { fakeSubagentExec, isSubagent, ok, tempDir, withEnv } from "./helpers.ts";
 
 const task: Task = {
   id: "t1",
@@ -92,6 +92,7 @@ test("an aborted review stops its subagent and reports itself as cancelled", asy
   const controller = new AbortController();
   const exec = async (cmd: string, args: string[], opts: any) => {
     if (cmd === "git") return { stdout: args[0] === "diff" ? "diff --git a/x b/x\n+1" : "", stderr: "", code: 0, killed: false };
+    if (cmd === "tmux") return ok("");
     calls.push(args[0]);
     if (args[0] === "spawn") return ok("Spawned review (abc123)");
     if (args[0] === "wait") {
@@ -167,4 +168,16 @@ test("an untracked file over the budget is skipped without being read; small one
   await reviewDiff(exec, root, task, "p/m");
   assert.match(f.brief(), /- big\.bin \(read it directly\)/);
   assert.match(f.brief(), /### small\.ts\n```\nexport const a = 1;/);
+});
+
+test("the review brief carries the plan's intent when there is one, and nothing when an old plan has none", () => {
+  const diff = { diff: "", truncated: false, untracked: [] };
+  assert.match(buildBrief({ ...task, plan: { ...task.plan, intent: "Let people log in" } } as any, diff), /Login form summary\nIntent \(the ticket, restated\): Let people log in\n### Steps/);
+  assert.doesNotMatch(buildBrief(task as any, diff), /Intent/);
+});
+
+test("the review brief shows each interface entry's usage line", () => {
+  const plan = { ...task.plan, interface: [{ file: "src/fee.ts", exports: ["fee"], usage: "fee(100)", source: "ticket" }, { file: "src/m.ts", exports: ["m"] }] };
+  const brief = buildBrief({ ...task, plan } as any, { diff: "", truncated: false, untracked: [] });
+  assert.match(brief, /- src\/fee\.ts → fee \(source: ticket\) \(usage: fee\(100\)\)\n- src\/m\.ts → m\n/);
 });

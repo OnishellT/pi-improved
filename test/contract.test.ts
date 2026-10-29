@@ -49,3 +49,21 @@ test("checkContract flags an interface file that does not exist even when only a
   const problems = await checkContract(root, plan([{ file: "src/a.ts", exports: ["a"] }, { file: "test/a.test.ts", exports: ["t"] }]));
   assert.deepEqual(problems, ["test/a.test.ts: the file does not exist"]);
 });
+
+test("checkContract looks at the exports only: a usage line is plan text, not a gate", async () => {
+  const root = await tempProject({ "src/fee.ts": "export function fee(n: number) { return n; }\n" });
+  const usage = 'fee("a").toUpperCase(); expect(parseInt(fee(1)))';
+  assert.deepEqual(await checkContract(root, plan([{ file: "src/fee.ts", exports: ["fee"], usage }])), []);
+  assert.deepEqual(await checkContract(root, plan([{ file: "src/fee.ts", exports: ["gone"], usage: "fee(1)" }])), ["src/fee.ts: missing gone"]);
+});
+
+test("a qualified name counts as present when each segment is a word, whatever the separator", async () => {
+  const root = await tempProject({ "src/name.rs": "pub enum BuffName {\n    ResMinus,\n    Superconduct,\n}\n", "src/other.rs": "pub enum BuffName { ResMinus }\n" });
+  for (const name of ["BuffName::Superconduct", "BuffName.Superconduct", "BuffName#Superconduct", "BuffName/Superconduct"]) {
+    assert.deepEqual(await checkContract(root, plan([{ file: "src/name.rs", exports: [name] }])), [], name);
+    assert.deepEqual(await checkContract(root, plan([{ file: "src/other.rs", exports: [name] }])), [`src/other.rs: missing ${name}`], name);
+  }
+  // evidence side: the ticket says "Superconduct buff" and names BuffName, never the joined string
+  assert.deepEqual(missingNames({ file: "src/name.rs", exports: ["BuffName::Superconduct"] }, "Add a Superconduct entry to BuffName", false), []);
+  assert.deepEqual(missingNames({ file: "src/name.rs", exports: ["BuffName::Superconduct"] }, "Add a Superconduct entry", false), ["BuffName::Superconduct"]);
+});

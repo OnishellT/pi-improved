@@ -6,7 +6,7 @@ import { writeAdr, type AdrInput } from "./adr.ts";
 import { selectOrType } from "./ask.ts";
 import { limitsOf } from "./config.ts";
 import { missingNames, relatesTo } from "./contract.ts";
-import { REVIEW_EVENT, type ReviewPayload } from "./events.ts";
+import { REVIEW_EVENT, VERIFY_EVENT, type ReviewPayload, type VerifyPayload } from "./events.ts";
 import { relatedTasks } from "./learn.ts";
 import { usePhaseModel } from "./models.ts";
 import { gitHead } from "./git.ts";
@@ -14,7 +14,8 @@ import { checkPlan } from "./plan-check.ts";
 import { highRiskReasons, planRiskReasons } from "./risk.ts";
 import { phaseSkills, skillsBlock } from "./skills.ts";
 import { readManifest, type Manifest } from "./manifest.ts";
-import { inFiles, readTask, resolveInside, updateTask, writeTask, type Decision, type Plan, type Task } from "./task-state.ts";
+import { inFiles, oneLine, readTask, resolveInside, updateTask, writeTask, type Decision, type Plan, type Task } from "./task-state.ts";
+import { runBaseline } from "./verify.ts";
 import { QUESTION_NUDGE, TASK_NUDGE, planText, taskPrompt } from "./task-prompt.ts";
 
 const MAX_NUDGES = 2; // "call task_plan" / "use ask_user" reminders per user message
@@ -63,7 +64,7 @@ const readInside = async (root: string, rel: string) => {
   return abs ? fs.readFile(abs, "utf8").catch(() => "") : "";
 };
 
-type PlanParams = Omit<Plan, "decisions"> & { decisions: { question: string; options: string[]; source?: string }[] };
+type PlanParams = Omit<Plan, "decisions" | "intent"> & { intent: string; decisions: { question: string; options: string[]; source?: string }[] };
 /** An ADR is only written once the user approves the plan. */
 type PendingAdr = { decision: Decision; adr: AdrInput };
 
@@ -77,7 +78,7 @@ export function registerTask(pi: ExtensionAPI) {
   const asked = new Map<string, { question: string; options: string[]; answer: string }>();
 
   const evidenceFor = async (root: string, task: Task) => {
-    const parts = [task.title, ...(task.ticket ? [task.ticket] : []), ticketText.get(root) ?? ""];
+    const parts = [task.title, ...(task.body ? [task.body] : []), ...(task.ticket ? [task.ticket] : []), ticketText.get(root) ?? ""];
     for (const spec of task.spec ?? []) parts.push(await readInside(root, spec));
     return parts.join("\n");
   };
@@ -88,7 +89,7 @@ export function registerTask(pi: ExtensionAPI) {
     asked.clear();
     ticketText.delete(ctx.cwd);
     await usePhaseModel(pi, ctx, "implement");
-    pi.sendUserMessage(taskPrompt(task.title, task.ticket, tracker(manifest), await relatedTasks(ctx.cwd, task.title), await skillsBlock(ctx.cwd, "plan"), task.spec));
+    pi.sendUserMessage(taskPrompt(task.title, task.ticket, tracker(manifest), await relatedTasks(ctx.cwd, task.body ?? task.title), await skillsBlock(ctx.cwd, "plan"), task.spec, task.body));
     return ctx.waitForIdle();
   };
 
@@ -105,6 +106,7 @@ export function registerTask(pi: ExtensionAPI) {
 
   /** Shape gates: new files need a pinned interface, and every seam's test file must be in the plan. */
   const checkShape = async (root: string, params: PlanParams) => {
+    if (!params.intent?.trim()) throw new Error("The plan has no intent. Restate the ticket in your own words (one short paragraph), then call task_plan again.");
     const isNew = async (f: string) => !f.endsWith("/") && !(await exists(path.join(root, f)));
     if (!params.interface.length && (await Promise.all(params.files.map(isNew))).some(Boolean))
       throw new Error("The plan creates new files but interface is empty. Pin the file and export names (cite their source), then call task_plan again.");
@@ -174,6 +176,16 @@ export function registerTask(pi: ExtensionAPI) {
     } else ctx.ui.notify("Plan check: OK.", "info");
   };
 
+  /** Before the first edit: what already fails is not the change's fault (the gate checks against it). Takes as long as verify normally may. */
+  const baselineRun = async (ctx: any, root: string, manifest: Manifest, signal?: AbortSignal) => {
+    ctx.ui.setStatus("baseline", "running verify before the change…");
+    const baseline = await runBaseline(manifest.verify, pi.exec.bind(pi), root, manifest.maxReport, signal)
+      .catch(() => undefined)
+      .finally(() => ctx.ui.setStatus("baseline", undefined));
+    if (baseline) pi.events?.emit(VERIFY_EVENT, { root, kind: "baseline", ok: baseline.ok, seconds: baseline.seconds } satisfies VerifyPayload);
+    return baseline;
+  };
+
   /** Fast path: a small plan with no risk trigger already passed the same deterministic gates; the dialog adds only cost. */
   const approve = async (ctx: any, plan: Plan, manifest: Manifest) => {
     const risk = planRiskReasons(plan, manifest);
@@ -190,7 +202,7 @@ export function registerTask(pi: ExtensionAPI) {
       const root = ctx.cwd;
       const arg = args.trim();
       const active = await readTask(root);
-      if (!arg) return ctx.ui.notify(active ? `${active.title} (${active.status})` : "No active task. Use /task <description or ticket>.", "info");
+      if (!arg) return ctx.ui.notify(active ? `${oneLine(active.title)} (${active.status})` : "No active task. Use /task <description or ticket>.", "info");
       if (arg === "cancel") {
         if (!active) return ctx.ui.notify("No active task to cancel.", "info");
         await writeTask(root, undefined);
@@ -200,7 +212,7 @@ export function registerTask(pi: ExtensionAPI) {
       if (manifest.setup !== "done") return ctx.ui.notify("Run /setup first.", "error");
 
       if (active && active.status !== "done") {
-        const choice = await ctx.ui.select(`A task is already active: ${active.title}`, ["Continue it", "Replace it", "Cancel"]);
+        const choice = await ctx.ui.select(`A task is already active: ${oneLine(active.title, 80)}`, ["Continue it", "Replace it", "Cancel"]);
         if (choice === "Continue it") {
           if (active.status === "planning") return start(ctx, manifest, active);
           return ctx.ui.notify(`The task is already ${active.status}: keep working in the session.`, "info");
@@ -210,7 +222,10 @@ export function registerTask(pi: ExtensionAPI) {
 
       const ticket = TICKET.test(arg) ? arg : undefined;
       const spec = await specFiles(root, arg);
-      const task: Task = { id: `t${Date.now()}`, title: arg, ticket, status: "planning", allowedExtra: [], startedAt: new Date().toISOString(), ...(spec.length && { spec }) };
+      // A request that is only a spec file is titled by the file's first line; a long or multi-line one keeps its text in `body`.
+      const onlyFile = spec.length === 1 && arg.replace(/^@/, "") === spec[0];
+      const title = oneLine(onlyFile ? await readInside(root, spec[0]) : arg) || arg;
+      const task: Task = { id: `t${Date.now()}`, title, ...(!onlyFile && title !== arg && { body: arg }), ticket, status: "planning", allowedExtra: [], startedAt: new Date().toISOString(), ...(spec.length && { spec }) };
       await writeTask(root, task);
       await start(ctx, manifest, task);
     },
@@ -221,6 +236,7 @@ export function registerTask(pi: ExtensionAPI) {
     label: "Task plan",
     description: "Submit the plan for the active task. Code resolves undocumented decisions with the user and asks for approval. Call it once exploration is done.",
     parameters: Type.Object({
+      intent: Type.String({ minLength: 1, description: "The ticket restated in your own words, one short paragraph" }),
       summary: Type.String(),
       steps: Type.Array(Type.String(), { minItems: 1 }),
       files: Type.Array(Type.String(), { description: "Repo-relative files to create or change; directories end with /" }),
@@ -237,6 +253,7 @@ export function registerTask(pi: ExtensionAPI) {
           file: Type.String(),
           exports: Type.Array(Type.String()),
           signatures: Type.Optional(Type.Array(Type.String())),
+          usage: Type.Optional(Type.String({ description: 'For callables: the call a test would make, in the ticket\'s words, e.g. slugify("Hello World"). The call only, no assertion.' })),
           source: Type.Optional(Type.String({ description: '"ticket", a doc/GLOSSARY.md/existing file path that gives the names, or "user" when nobody gave them. The names must appear literally in that source.' })),
         }),
         { description: "File and export names the tests will import. May be [] only when no file in `files` is new" },
@@ -262,7 +279,7 @@ export function registerTask(pi: ExtensionAPI) {
       const evidence = await evidenceFor(root, task);
       const pending: PendingAdr[] = [];
       const decisions = [...(await askInterface(ctx, root, task, params, evidence, pending)), ...(await askDecisions(ctx, root, task, params, pending))];
-      const plan: Plan = { summary: params.summary, steps: params.steps, files: params.files, decisions, interface: params.interface, seams: params.seams };
+      const plan: Plan = { intent: params.intent, summary: params.summary, steps: params.steps, files: params.files, decisions, interface: params.interface, seams: params.seams };
 
       const manifest = await readManifest(root);
       await runPlanCheck(ctx, root, task, plan, evidence, manifest, signal);
@@ -270,10 +287,13 @@ export function registerTask(pi: ExtensionAPI) {
 
       for (const { decision, adr } of pending) decision.source = await writeAdr(root, adr);
       const baseCommit = task.baseCommit ?? (await gitHead(pi.exec.bind(pi), root));
+      const baseline = manifest.setup === "done" ? await baselineRun(ctx, root, manifest, signal) : undefined;
       await updateTask(root, (t) => {
         t.plan = plan;
         t.status = "implementing";
         if (baseCommit) t.baseCommit = baseCommit;
+        if (baseline) t.baseline = baseline;
+        else delete t.baseline;
       });
       ticketText.delete(root);
       const decided = plan.decisions.filter((d) => d.answer).map((d) => `- ${d.question} -> ${d.answer}${d.source ? ` (${d.source})` : ""}`);

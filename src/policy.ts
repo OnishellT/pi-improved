@@ -27,7 +27,8 @@ export const describeFinding = (f: any) =>
  */
 export async function resolvePolicyFailure(pi: ExtensionAPI, ctx: ExtensionContext, manifest: Manifest, report: string): Promise<"approved" | "fix" | "stop" | "failed"> {
   const findings = policyFindings(report);
-  const choice = await ctx.ui.select(`agentlint blocks the finish:\n${findings.join("\n") || report.slice(-300)}\nWhat now?`, [APPROVE, FIX, STOP]);
+  ctx.ui.notify(`agentlint blocks the finish:\n${findings.join("\n") || report.slice(-300)}`, "warning"); // a dialog title is one line, or the options scroll off screen
+  const choice = await ctx.ui.select("agentlint blocks the finish. What now?", [APPROVE, FIX, STOP]);
   if (choice === FIX) return "fix";
   if (choice !== APPROVE) return "stop";
   const cmd = manifest.agentlint ?? resolveBin("agentlint");

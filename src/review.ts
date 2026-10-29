@@ -4,7 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { resolveBin } from "./bin.ts";
 import { ownRuns } from "./subagent-view.ts";
-import type { Task } from "./task-state.ts";
+import { oneLine, type Task } from "./task-state.ts";
 import { agentDir, ensureTrusted } from "./subagent-ext.ts";
 import { diffBase, git, untrackedFiles, type Exec } from "./git.ts";
 
@@ -50,7 +50,7 @@ export function buildBrief(task: Task, d: { diff: string; truncated: boolean; un
   const plan = task.plan;
   const list = (items: string[]) => (items.length ? items.map((i) => `- ${i}`).join("\n") : "- (none)");
   return [
-    `# Diff review: ${task.title}`,
+    `# Diff review: ${oneLine(task.title)}`,
     ...(skills ? [skills] : []),
     "You are a strict code reviewer. Review ONLY the diff below against the plan, the decisions, AGENTS.md and docs/adr (read them with your tools).",
     "CHANGES is only for blocking problems: wrong behavior, crashes, data loss, security holes, or breaking the plan, its decisions, the agreed interface, AGENTS.md or an ADR. Style, naming, extra tests, refactors and anything you are not sure about are not blocking: approve and leave them out.",
@@ -58,6 +58,7 @@ export function buildBrief(task: Task, d: { diff: string; truncated: boolean; un
     "Finish with a line `VERDICT: APPROVED` or `VERDICT: CHANGES`; for CHANGES follow it with a numbered list of blocking findings only (file, problem, fix).",
     "## Plan",
     plan?.summary ?? "(no plan)",
+    ...(plan?.intent ? [`Intent (the ticket, restated): ${plan.intent}`] : []),
     "### Steps",
     list(plan?.steps ?? []),
     "### Files",
@@ -65,7 +66,7 @@ export function buildBrief(task: Task, d: { diff: string; truncated: boolean; un
     "### Decisions",
     list((plan?.decisions ?? []).map((x) => `${x.question} -> ${x.answer ?? x.source ?? x.status}`)),
     "## Interface",
-    ...(plan?.interface?.length ? plan.interface.map((i) => `- ${i.file} → ${[...i.exports, ...(i.signatures ?? [])].join("; ")}${i.source ? ` (source: ${i.source})` : ""}`) : ["- (none)"]),
+    ...(plan?.interface?.length ? plan.interface.map((i) => `- ${i.file} → ${[...i.exports, ...(i.signatures ?? [])].join("; ")}${i.source ? ` (source: ${i.source})` : ""}${i.usage ? ` (usage: ${i.usage})` : ""}`) : ["- (none)"]),
     "Any deviation of the diff from this interface (file, export name or signature) is BLOCKING.",
     "## Seams",
     ...(plan?.seams?.length ? plan.seams.map((x) => `- ${x.name} → ${x.testFile}: catches ${x.catches}${x.misses ? `; misses ${x.misses}` : ""}`) : ["- (none)"]),
