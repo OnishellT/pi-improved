@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { dirname } from "node:path";
 import { test } from "node:test";
 import { registerGuards } from "../src/guards.ts";
-import { fakePi, fakeUI } from "./helpers.ts";
+import { fakePi, fakeUI, tempProject } from "./helpers.ts";
 
 test("agentlint commands that open the review UI are blocked", async () => {
   const { pi, emit } = fakePi();
@@ -31,6 +31,9 @@ test("an edit of the acceptances file points the agent at propose, not accept", 
   assert.equal(r?.block, true);
   assert.match(r.reason, /agentlint propose <selector> --summary.*agentlint next --format json/);
   assert.doesNotMatch(r.reason, /agentlint accept/);
+  const root = await tempProject({ ".pi/workflow.json": JSON.stringify({ version: 1, setup: "done", agentlint: "pnpm agentlint" }) });
+  const configured = await emit("tool_call", { toolName: "write", input: { path: ".agentlint/acceptances.jsonl" } }, { cwd: root });
+  assert.match(configured.reason, /`pnpm agentlint propose <selector>.*`pnpm agentlint next --format json`/);
 });
 
 test("a symlink to the global config or a workflow state file is blocked like the file itself", async () => {
