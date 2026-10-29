@@ -84,8 +84,12 @@ export async function writeFileAtomicAsync(file: string, text: string) {
   }
 }
 
-/** Whether a path exists (any kind of entry); never throws. */
-export const exists = (file: string) => fsp.access(file).then(() => true, () => false);
+/** Whether a path exists (any kind of entry). A missing path or parent is false; any other error (permissions, a symlink loop) is thrown. */
+export const exists = (file: string) =>
+  fsp.access(file).then(() => true, (error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT" || error.code === "ENOTDIR") return false;
+    throw error;
+  });
 
 /** Read-modify-write of the global file, keeping every key the change does not touch. */
 export function updateGlobal(change: (config: Record<string, any>) => void, dir = agentDir()) {

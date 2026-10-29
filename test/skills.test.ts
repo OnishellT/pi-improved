@@ -88,7 +88,7 @@ test("clean matches a referenced skill as a whole token and keeps ordinary lines
 
 test("tdd's reference files resolve to real paths in the plan block", async () => {
   const { existsSync } = await import("node:fs");
-  const paths = [...(await skillsBlock(await tempProject({}), "plan")).matchAll(/`(\S+\/tdd\/references\/\w+\.md)`/g)].map((m) => m[1]);
+  const paths = [...(await skillsBlock(await tempProject({}), "plan")).matchAll(/`([^`]+\/tdd\/references\/\w+\.md)`/g)].map((m) => m[1]);
   assert.equal(paths.length, 2);
   for (const p of paths) assert.ok(existsSync(p), p);
 });
