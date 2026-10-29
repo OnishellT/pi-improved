@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { writeAdr } from "./adr.ts";
+import { canonical, givenPath } from "./guards.ts";
 import { inScope, isPiState, readTask, updateTask, type Task } from "./task-state.ts";
 
 const ADR_DIR = "docs/adr/";
@@ -12,45 +13,73 @@ const INSTALLERS = /^(?:sudo\s+)?(?:(?:npm|pnpm|yarn|bun)\s+(?:add|install|i)|(?
 export const toRelative = (cwd: string, p: string) => path.relative(cwd, path.resolve(cwd, p)).split(path.sep).join("/");
 export const isMigration = (p: string) => MIGRATION.test(p);
 export const isManifest = (p: string) => MANIFEST.test(p);
+/** The file a write or edit touches, as the tool resolves it (guards.ts), and its path from the project root. `names` adds the path as given, since a symlink and its target can have different names and either can make it a manifest or migration. */
+const target = (event: any, cwd: string) => {
+  const given = givenPath(String(event.input?.path ?? ""), cwd);
+  const abs = canonical(given);
+  const file = toRelative(canonical(cwd), abs);
+  return { abs, file, names: [...new Set([file, toRelative(cwd, given)])] };
+};
 
-/** Package names a shell command installs; bare installs and `-r`/`-e` installs yield none. */
+/** Package names (or local paths) a shell command installs; bare installs and `-r`/`-e` installs yield none. */
 export function addedPackagesFromCommand(command: string): string[] {
   const names: string[] = [];
   for (const segment of command.split(/&&|\|\||[;|\n]/)) {
     const args = INSTALLERS.exec(segment.trim())?.[1].split(/\s+/);
     if (!args || args.some((a) => /^(-r|-e|--requirement|--editable)$/.test(a))) continue;
     for (const a of args) {
-      if (!a || a.startsWith("-") || /^[./~]/.test(a) || a.includes("=") && !/[<>~!]=/.test(a) && !a.includes("==")) continue;
-      names.push(a.replace(/^(@?[^@=<>~!\[]+).*$/, "$1"));
+      // A local path (`./lib`) is a dependency too; `.` is the project itself.
+      const local = /^(\.{1,2}\/|\/|~|file:)/.test(a);
+      if (!a || /^\.\/?$/.test(a) || a.startsWith("-") || !local && a.includes("=") && !/[<>~!]=/.test(a) && !a.includes("==")) continue;
+      names.push(local ? a : a.replace(/^(@?[^@=<>~!\[]+).*$/, "$1"));
     }
   }
   return [...new Set(names)];
 }
 
+/** A TOML dotted key as its parts: split on dots outside quotes, each trimmed and unquoted. `"a" . b` is [a, b]; `"a.b"` stays one part. */
+export function keyPath(key: string): string[] {
+  const parts = [""];
+  let quote = "";
+  for (const c of key) {
+    if (!quote && c === ".") parts.push("");
+    else {
+      if (quote ? c === quote : c === '"' || c === "'") quote = quote ? "" : c;
+      parts[parts.length - 1] += c;
+    }
+  }
+  return parts.map((p) => p.trim().replace(/^(["'])(.*)\1$/, "$2"));
+}
+
 const quoted = (line: string) => [...line.matchAll(/["']([A-Za-z0-9_.-]+)[^"']*["']/g)].map((m) => m[1].toLowerCase());
 
-function tomlNames(content: string, python: boolean) {
+/** Dependency names in a TOML manifest; undefined when a key or header has an escape (`\u0069`), which this reader does not decode. */
+function tomlNames(content: string, python: boolean): Set<string> | undefined {
   const names = new Set<string>();
-  let section = "";
+  let section: string[] = [];
   let inArray = false;
   for (const raw of content.split("\n")) {
     const line = raw.replace(/\s+#.*$/, "").trim();
     const header = /^\[+([^\]]+)\]+$/.exec(line);
     if (header) {
-      section = header[1].trim();
+      if (header[1].includes("\\")) return undefined;
+      section = keyPath(header[1]);
       inArray = false;
-      const sub = /dependencies\.([\w.-]+)$/.exec(section);
-      if (sub) names.add(sub[1]);
+      // `[dependencies.serde]`: a table per dependency.
+      if (section.length > 1 && /dependencies$/.test(section.at(-2)!)) names.add(section.at(-1)!);
       continue;
     }
-    const depSection = /(^|[.-])dependencies$/.test(section) || section === "dependency-groups";
-    if (inArray || (python && /^(dependencies|[\w.-]+)\s*=\s*\[/.test(line) && (depSection || /^dependencies\s*=/.test(line)))) {
-      quoted(line.replace(/^[\w.-]+\s*=\s*/, "")).forEach((n) => names.add(n));
+    const table = section.at(-1) ?? "";
+    const depSection = /(^|-)dependencies$/.test(table) || section.join(".") === "dependency-groups";
+    // The key before the first `=` outside quotes, and the value after it.
+    const eq = /^((?:"[^"]*"|'[^']*'|[^"'=])+)=/.exec(line);
+    if (eq?.[1].includes("\\")) return undefined;
+    const key = eq ? keyPath(eq[1]) : [];
+    const value = eq ? line.slice(eq[0].length).trim() : line;
+    if (inArray || (python && value.startsWith("[") && (depSection || key.join(".") === "dependencies"))) {
+      quoted(inArray ? line : value).forEach((n) => names.add(n));
       inArray = !line.includes("]");
-    } else if (depSection) {
-      const key = /^([\w.-]+)\s*=/.exec(line)?.[1];
-      if (key && key !== "python") names.add(key);
-    }
+    } else if (depSection && key[0] && key[0] !== "python") names.add(key[0]);
   }
   return names;
 }
@@ -66,7 +95,8 @@ export function dependencyNames(file: string, content: string): Set<string> | un
       return undefined;
     }
   }
-  if (base.endsWith(".txt")) return new Set(content.split("\n").map((l) => /^([A-Za-z0-9_.-]+)/.exec(l.trim())?.[1]?.toLowerCase()).filter(Boolean) as string[]);
+  // An include (`-r other.txt`) counts as an entry, so adding one is a dependency change; its path keeps its case.
+  if (base.endsWith(".txt")) return new Set(content.split("\n").flatMap((l) => /^(?:-r|--requirement).*|^[A-Za-z0-9_.-]+/.exec(l.trim())?.[0] ?? []).map((n) => (n.startsWith("-") ? n : n.toLowerCase())));
   if (base === "go.mod") return new Set([...content.matchAll(/^\s*(?:require\s+)?([\w.-]+\.[\w.-]+\/[^\s]+)\s+v[\w.+-]+/gm)].map((m) => m[1]));
   if (base === "Cargo.toml") return tomlNames(content, false);
   if (base === "pyproject.toml") return tomlNames(content, true);
@@ -93,16 +123,18 @@ async function approveDependency(task: Task, ctx: ExtensionContext, title: strin
   await writeAdr(ctx.cwd, { title: `Add dependency ${names.join(", ")}`, context: task.title, decision });
 }
 
-/** The dependency names an edit adds to a manifest; undefined when the edit cannot be parsed. */
-async function addedByEdit(event: any, abs: string, file: string) {
-  const before = dependencyNames(file, await read(abs));
-  let after: Set<string> | undefined;
-  if (event.toolName === "write") after = dependencyNames(file, event.input.content ?? "");
-  else {
-    const next = applyEdits(await read(abs), event.input.edits ?? []);
-    after = next === undefined ? undefined : dependencyNames(file, next);
+/** The dependency names an edit adds to a manifest, read as each manifest name the file has; undefined when the edit cannot be parsed. */
+async function addedByEdit(event: any, abs: string, files: string[]) {
+  const original = await read(abs);
+  const next: string | undefined = event.toolName === "write" ? event.input.content ?? "" : applyEdits(original, event.input.edits ?? []);
+  const added = new Set<string>();
+  for (const file of files) {
+    const before = dependencyNames(file, original);
+    const after = next === undefined ? undefined : dependencyNames(file, next);
+    if (!before || !after) return undefined;
+    for (const n of after) if (!before.has(n)) added.add(n);
   }
-  return before && after ? [...after].filter((n) => !before.has(n)) : undefined;
+  return [...added];
 }
 
 /** Nobody can approve a dependency in a headless run, so every new one is denied, with the reason for the model, and so is a manifest edit that cannot be checked. A plan that names a manifest does not say which package it may get, so it approves none. */
@@ -113,10 +145,11 @@ async function headlessDependency(event: any, ctx: ExtensionContext) {
     return names.length ? deny(`The new dependency ${names.join(", ")} needs approval`) : undefined;
   }
   if (event.toolName !== "write" && event.toolName !== "edit") return;
-  const abs = path.resolve(ctx.cwd, event.input?.path ?? "");
-  const file = toRelative(ctx.cwd, abs);
-  if (!isManifest(file)) return;
-  const added = await addedByEdit(event, abs, file);
+  const { abs, names } = target(event, ctx.cwd);
+  const manifests = names.filter(isManifest);
+  if (!manifests.length) return;
+  const file = manifests.join(", ");
+  const added = await addedByEdit(event, abs, manifests);
   if (added === undefined) return deny(`This edit touches dependencies in ${file} in a way that cannot be checked`);
   if (added.length) return deny(`The new dependency ${added.join(", ")} needs approval`);
 }
@@ -137,9 +170,8 @@ export function registerTriggers(pi: ExtensionAPI) {
       return;
     }
     if (event.toolName !== "write" && event.toolName !== "edit") return;
-    const abs = path.resolve(ctx.cwd, event.input?.path ?? "");
-    const file = toRelative(ctx.cwd, abs);
-    if (isPiState(file) || file.startsWith(ADR_DIR)) return;
+    const { abs, file, names } = target(event, ctx.cwd);
+    if (names.every((n) => isPiState(n) || n.startsWith(ADR_DIR))) return;
 
     if (!inScope(task, file)) {
       // A file in the project root has no folder to allow: "./" would match nothing, and the whole project is not what the person is asked about.
@@ -150,13 +182,15 @@ export function registerTriggers(pi: ExtensionAPI) {
       } else return { block: true, reason: `${file} is outside the approved plan and the user blocked it. Stay within the plan files, or ask the user to extend the plan.` };
     }
 
-    if (isManifest(file)) {
-      const added = await addedByEdit(event, abs, file);
-      if (added === undefined || added.length) return approveDependency(task, ctx, added ? `New dependency in ${file}` : `This edit touches dependencies in ${file}`, added, `Edit of \`${file}\``);
+    const manifests = names.filter(isManifest);
+    if (manifests.length) {
+      const manifest = manifests.join(", ");
+      const added = await addedByEdit(event, abs, manifests);
+      if (added === undefined || added.length) return approveDependency(task, ctx, added ? `New dependency in ${manifest}` : `This edit touches dependencies in ${manifest}`, added, `Edit of \`${manifest}\``);
     }
 
     const migrationKey = `${task.id}:${file}`;
-    if (isMigration(file) && !approvedMigrations.has(migrationKey)) {
+    if (names.some(isMigration) && !approvedMigrations.has(migrationKey)) {
       const pick = await ctx.ui.select(`Schema change or migration: ${file}`, ["Approve", "Block"]);
       if (pick !== "Approve") return BLOCK(`the schema/migration change in ${file}`);
       approvedMigrations.add(migrationKey);
