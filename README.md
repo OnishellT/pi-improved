@@ -88,5 +88,22 @@ Scripts in `scripts/`:
 - `usage-report.mjs`: the cost report above.
 - `skill-tokens.mjs [--json]`: skill sizes per phase and per skill.
 - `contract-check.mjs [contract]`: checks `.pi/contract.json` against the code; exit 0 means the contract is met.
+- `review-pr.ts <pr>`: the local pull request reviewer, below.
+
+### Reviewing pull requests
+
+`npm run review -- <pr> [--dry-run] [--force]` (run from an up-to-date `main` checkout) reviews a PR with pi and posts
+one GitHub review: inline comments, a summary and a confidence score from 1 (must not merge) to 5 (safe to merge).
+The reviewer reads the PR head in a throwaway worktree, read-only, with an empty home and no secrets in its environment.
+Its context is `README.md`, `docs/*.md`, any `CLAUDE.md`, `AGENTS.md` and `CONTRIBUTING.md`, the PR text, the linked
+issue, earlier review threads and the diff. Follow-up rounds judge only what changed since the last reviewed commit;
+a head that already has a review is skipped, and a fourth round needs `--force` unless the last review had confidence 4 or more. Markdown-only PRs are skipped (unless an earlier review is waiting on the code changed since)
+by design (there is no code to review).
+`--dry-run` prints the review instead of posting it, and it ignores both gates.
+
+It needs pi signed in to the `openai` provider. Defaults: model `gpt-6.1-terra`, thinking `xhigh`; override with
+`REVIEW_MODEL` and `REVIEW_THINKING`. It keeps its own pi profile in `~/.pi/reviewer-pi-improved` (`REVIEW_PI_DIR`),
+rebuilt from `scripts/review/pi-settings.json`, with `auth.json` symlinked from `~/.pi/agent`. The prompt and
+settings are read from the PR's base branch, so a PR cannot change the reviewer that judges it.
 
 pi-subagent is pinned to a commit in `package.json`; bump the sha deliberately. `package-lock.json` is gitignored on purpose. Module map: [docs/WORKFLOW.md](docs/WORKFLOW.md#internals).
