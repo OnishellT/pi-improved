@@ -1,7 +1,6 @@
 import { existsSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { ComputerConfig } from "./computer/config.ts";
 import { agentlintCheck } from "./discover.ts";
 import { globalPath, globalPreferences, merge, readGlobal, withValidLimits, writeFileAtomicAsync, type Limits } from "./config.ts";
 import type { ProfileFile } from "./self-compact/config.ts";
@@ -80,10 +79,6 @@ export interface Manifest {
   review?: { paths?: string[]; always?: boolean; never?: boolean; plan?: boolean; minLevel?: "off" | "low" | "high"; maxLines?: number; maxFiles?: number; highLines?: number; highFiles?: number };
   /** Numbers the workflow used to hardcode; see `Limits` in config.ts for the keys and DEFAULT_LIMITS for the defaults. Unchecked here: `resolveLimits` fills defaults and reports bad values. */
   limits?: { [K in keyof Limits]?: unknown } | undefined;
-  /** What /computer saves: the browser and desktop the agent can drive. Meant for the global file. */
-  computer?: ComputerConfig;
-  /** `"tern"` opens subagent panes in Tern when pi runs in it (default: tmux only). */
-  subagentPanes?: string;
   /** Self-compact thresholds per model, the shape of the old `self-compact.json`. */
   selfCompact?: ProfileFile;
 }

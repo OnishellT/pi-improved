@@ -38,6 +38,11 @@ test("agentlint uses the project's package manager", async () => {
   assert.equal(agentlintCmd(found.packageManager), "pnpm agentlint");
 });
 
+test("npm runs agentlint from its scoped package, never the unrelated `agentlint` one", () => {
+  assert.equal(agentlintCmd("npm"), "npm exec --package=@aurelienbbn/agentlint -- agentlint");
+  assert.equal(agentlintCmd(undefined), agentlintCmd("npm"));
+});
+
 test("python checks come from pyproject tool sections", async () => {
   const root = await tempProject({ "pyproject.toml": "[tool.ruff]\n[tool.pytest.ini_options]\n" });
   assert.deepEqual((await discover(root, noGit)).verify, ["ruff check .", "pytest -q"]);

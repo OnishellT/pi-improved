@@ -105,7 +105,8 @@ async function proposeVerify(root: string, stacks: string[], pm: string | undefi
   return [...steps, ...(await agentlintStep(root, pm))];
 }
 
-const AGENTLINT_CMD: Record<string, string> = { npm: "npm exec agentlint --", pnpm: "pnpm agentlint", yarn: "yarn agentlint", bun: "bun run agentlint" };
+// npm exec names a package: plain `agentlint` would fetch an unrelated registry package when the project has none installed.
+const AGENTLINT_CMD: Record<string, string> = { npm: "npm exec --package=@aurelienbbn/agentlint -- agentlint", pnpm: "pnpm agentlint", yarn: "yarn agentlint", bun: "bun run agentlint" };
 export const agentlintCmd = (pm: string | undefined) => AGENTLINT_CMD[pm ?? "npm"] ?? AGENTLINT_CMD.npm;
 export const agentlintCheck = (cmd: string) => `${cmd} check --all`;
 

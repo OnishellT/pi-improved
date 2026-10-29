@@ -8,9 +8,6 @@ import { agentDir } from "./subagent-ext.ts";
 export const GLOBAL_FILE = "pi-improved.json";
 export const globalPath = (dir = agentDir()) => path.join(dir, GLOBAL_FILE);
 
-/** Written by /setup and true of one repo: ignored in the global file. */
-export const STATE_KEYS = ["version", "setup", "language", "startedAt", "completedAt", "verify", "agentlint", "connectors"];
-
 /** Preferences the global file may hold (the project file may hold the same ones). */
 export const PREFERENCE_KEYS = ["mode", "models", "skills", "skillsOnDemand", "basePrompt", "useAgentlint", "useBend", "maxReport", "contextWarn", "review", "limits", "computer", "subagentPanes", "selfCompact"];
 
