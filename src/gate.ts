@@ -170,7 +170,8 @@ export function registerGate(pi: ExtensionAPI) {
     if (!manifest || manifest.setup !== "done" || !manifest.verify.length || event.outcome !== "completed") return;
     const { verifyRetries, failuresBeforeEscalation } = limitsOf(manifest);
     const now = await snapshot(ctx.cwd);
-    if (now === start && now !== UNREADABLE && !writes) return;
+    // A deferred gate runs on the next turn even when that turn changes nothing.
+    if (now === start && now !== UNREADABLE && !writes && !deferred) return;
     const state = `${now}:${writes}`;
     if (state === verified) return;
     // A state git could not read says nothing about the next one: never remember it as verified.

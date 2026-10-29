@@ -340,7 +340,7 @@ export function registerTask(pi: ExtensionAPI) {
   pi.on("session_start", async (event, ctx) => {
     if (event.reason === "reload") return;
     const task = await readTask(ctx.cwd).catch(() => undefined);
-    if (task && task.status !== "done") ctx.ui.notify(`Task "${oneLine(task.title, 80)}" is ${task.status}: /task to continue, ${endsIt(task)} to end it.`, "info");
+    if (task && task.status !== "done") ctx.ui.notify(`Task "${oneLine(task.title, 80)}" is ${task.status}: ${endsIt(task)} ends it.`, "info");
   });
   pi.on("tool_result", async (event, ctx) => {
     if (event.toolName !== "ask_user" || (await readTask(ctx.cwd).catch(() => undefined))?.status !== "planning") return;

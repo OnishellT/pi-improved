@@ -635,10 +635,10 @@ test("a session that starts with an open task says so once; a reload or a done t
   await t.emit("session_start", { reason: "reload" }, ctx);
   assert.deepEqual(notes, []);
   await t.emit("session_start", { reason: "resume" }, ctx);
-  assert.deepEqual(notes, ['Task "Add fee" is planning: /task to continue, /task cancel to end it.']);
+  assert.deepEqual(notes, ['Task "Add fee" is planning: /task cancel ends it.']);
   await writeTask(t.root, { ...(await readTask(t.root))!, status: "implementing" });
   await t.emit("session_start", { reason: "fork" }, ctx);
-  assert.equal(notes[1], 'Task "Add fee" is implementing: /task to continue, /task done or /task cancel to end it.');
+  assert.equal(notes[1], 'Task "Add fee" is implementing: /task done or /task cancel ends it.');
   await writeTask(t.root, { ...(await readTask(t.root))!, status: "done" });
   await t.emit("session_start", { reason: "startup" }, ctx);
   assert.equal(notes.length, 2);
