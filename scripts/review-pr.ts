@@ -17,7 +17,8 @@ import { homedir, tmpdir } from "node:os";
 import { parseEnv } from "node:util";
 import { dirname, join, resolve } from "node:path";
 import { contextDocs, linkedIssues, skipsMarkdownOnly } from "./review/context.ts";
-import { commentableLines, splitDiffByFile } from "./review/diff.ts";
+import { addedLines, commentableLines, splitDiffByFile } from "./review/diff.ts";
+import { collectPages, type Page } from "./review/pages.ts";
 import { parsePiStream } from "./review/pi-stream.ts";
 import {
   buildReviewPayload,
@@ -147,9 +148,62 @@ interface PrData {
 }
 
 const threadsQuery = `
-query($owner:String!,$name:String!,$pr:Int!){repository(owner:$owner,name:$name){
-pullRequest(number:$pr){reviewThreads(first:100){pageInfo{hasNextPage}nodes{id isResolved path line
-comments(first:50){nodes{databaseId createdAt author{login} body}}}}}}}`;
+query($owner:String!,$name:String!,$pr:Int!,$after:String){repository(owner:$owner,name:$name){
+pullRequest(number:$pr){reviewThreads(first:100,after:$after){pageInfo{hasNextPage endCursor}nodes{id isResolved path line
+comments(first:50){pageInfo{hasNextPage endCursor}nodes{databaseId createdAt author{login} body}}}}}}}`;
+
+const threadCommentsQuery = `
+query($id:ID!,$after:String){node(id:$id){... on PullRequestReviewThread{
+comments(first:50,after:$after){pageInfo{hasNextPage endCursor}nodes{databaseId createdAt author{login} body}}}}}`;
+
+interface ThreadComment {
+  databaseId: number;
+  createdAt: string;
+  author: { login: string } | null;
+  body: string;
+}
+
+interface ThreadNode {
+  id: string;
+  isResolved: boolean;
+  path: string;
+  line: number | null;
+  comments: Page<ThreadComment>;
+}
+
+async function graphqlPage<T>(query: string, vars: Record<string, string | number>, cursor: string | null) {
+  const args = Object.entries(vars).flatMap(([key, value]) => ["-F", `${key}=${value}`]);
+  if (cursor !== null) args.push("-F", `after=${cursor}`);
+  return JSON.parse(await sh(["gh", "api", "graphql", ...args, "-f", `query=${query}`])) as T;
+}
+
+async function fetchThreads(owner: string, name: string, pr: number): Promise<ThreadNode[]> {
+  const nodes = await collectPages(
+    async (cursor) =>
+      (
+        await graphqlPage<{
+          data: { repository: { pullRequest: { reviewThreads: Page<ThreadNode> } } };
+        }>(threadsQuery, { owner, name, pr }, cursor)
+      ).data.repository.pullRequest.reviewThreads,
+  );
+  // A thread with more than 50 comments loses the rest of them without this.
+  for (const node of nodes) {
+    if (!node.comments.pageInfo.hasNextPage) continue;
+    const rest = await collectPages(
+      async (cursor) =>
+        (
+          await graphqlPage<{ data: { node: { comments: Page<ThreadComment> } } }>(
+            threadCommentsQuery,
+            { id: node.id },
+            cursor,
+          )
+        ).data.node.comments,
+      node.comments,
+    );
+    node.comments.nodes = rest;
+  }
+  return nodes;
+}
 
 async function fetchPr(pr: number): Promise<PrData> {
   const repo = (
@@ -174,43 +228,7 @@ async function fetchPr(pr: number): Promise<PrData> {
     baseRefName: string;
     reviews: { body: string; submittedAt: string; author: { login: string } | null }[];
   };
-  const graphql = JSON.parse(
-    await sh([
-      "gh",
-      "api",
-      "graphql",
-      "-F",
-      `owner=${owner}`,
-      "-F",
-      `name=${name}`,
-      "-F",
-      `pr=${pr}`,
-      "-f",
-      `query=${threadsQuery}`,
-    ]),
-  ) as {
-    data: {
-      repository: {
-        pullRequest: {
-          reviewThreads: {
-            pageInfo: { hasNextPage: boolean };
-            nodes: {
-              id: string;
-              isResolved: boolean;
-              path: string;
-              line: number | null;
-              comments: {
-                nodes: { databaseId: number; createdAt: string; author: { login: string } | null; body: string }[];
-              };
-            }[];
-          };
-        };
-      };
-    };
-  };
-  const threadData = graphql.data.repository.pullRequest.reviewThreads;
-  if (threadData.pageInfo.hasNextPage)
-    console.error("warning: only the first 100 review threads are included");
+  const threadNodes = await fetchThreads(owner, name, pr);
   const me = (await sh(["gh", "api", "user", "--jq", ".login"])).trim();
   const myReviews = view.reviews.filter((review) => review.author?.login === me);
   const issues = [];
@@ -227,7 +245,7 @@ async function fetchPr(pr: number): Promise<PrData> {
       const marker = parseMarker(review.body);
       return marker ? [{ sha: marker.sha, at: review.submittedAt }] : [];
     }),
-    threadComments: threadData.nodes.flatMap((node) =>
+    threadComments: threadNodes.flatMap((node) =>
       node.comments.nodes
         .filter((comment) => comment.author?.login === me)
         .map((comment) => ({ threadId: node.id, body: comment.body, at: comment.createdAt })),
@@ -241,7 +259,7 @@ async function fetchPr(pr: number): Promise<PrData> {
     sha: view.headRefOid,
     base: view.baseRefName,
     issues,
-    threads: threadData.nodes.map((node) => ({
+    threads: threadNodes.map((node) => ({
       id: node.id,
       isResolved: node.isResolved,
       firstCommentId: node.comments.nodes[0]?.databaseId ?? 0,
@@ -633,7 +651,8 @@ async function main() {
       openThreads.has(verdict.threadId),
     );
     const notFixed = verdicts.filter((verdict) => verdict.verdict === "not_fixed").length;
-    const deltaLines = delta === undefined ? undefined : commentableLines(delta);
+    // Added lines only: unchanged hunk context is not "changed since the last review".
+    const deltaLines = delta === undefined ? undefined : addedLines(delta);
     const deltaPaths = new Set(splitDiffByFile(delta ?? "").map((file) => file.path));
     const review = finalizeReview(
       rawReview,
