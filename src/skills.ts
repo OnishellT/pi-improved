@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { findBend, LAWS_RULE } from "./bend.ts";
 import { DEFAULT_ON_DEMAND, DEFAULT_SKILLS, globalMap, OPT_IN, patchMap, readManifest, updateManifest, type Phase } from "./manifest.ts";
 
 const MAX_BODY = 12_000;
@@ -97,6 +98,8 @@ const cap = (text: string) => (text.length > MAX_BODY ? `${text.slice(0, MAX_BOD
 export async function skillsBlock(root: string, phase: Phase, skip: string[] = []): Promise<string> {
   const bundled = await listSkills();
   const { injected, onDemand } = await phaseLists(root, phase);
+  // Bend text (the laws rule, the skill) reaches only a project that keeps laws: every other project pays nothing for it.
+  const laws = (phase === "plan" || phase === "implement") && (await findBend(root));
   const sections: string[] = [];
   for (const name of injected) {
     if (!bundled.includes(name) || skip.includes(name)) continue;
@@ -104,7 +107,9 @@ export async function skillsBlock(root: string, phase: Phase, skip: string[] = [
     sections.push(`## Skill: ${name}\n\n${cap(clean(skill.body, bundled))}`);
     for (const f of skill.files) sections.push(`### ${f.name}\n\n${cap(clean(f.content.trim(), bundled))}`);
   }
-  const index = await onDemandIndex(onDemand.filter((n) => bundled.includes(n) && !injected.includes(n)));
+  if (laws && phase === "implement") sections.push(LAWS_RULE);
+  const bend = laws ? ["bend-laws"] : [];
+  const index = await onDemandIndex([...onDemand, ...bend].filter((n) => bundled.includes(n) && !injected.includes(n)));
   if (index) sections.push(index);
   return sections.join("\n\n");
 }

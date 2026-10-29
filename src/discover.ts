@@ -1,5 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { bendCheck, findBend, type BendProject } from "./bend.ts";
 import { detectConnectors, type ConnectorSignal } from "./connectors.ts";
 import { detectUiDrivers } from "./ui-driver.ts";
 
@@ -23,6 +24,8 @@ export interface Discovery {
   agentDocs: boolean;
   /** Ids of the GUI drivers the verify-app script can use (on PATH, or the desktop /computer turned on). Absent when none. */
   uiDrivers?: string[];
+  /** The project keeps Bend laws (LAWS.bend). Absent otherwise. */
+  bend?: BendProject;
 }
 
 const STACK_MARKERS: [string, string][] = [
@@ -139,7 +142,13 @@ export async function discover(root: string, run: Run, pathEnv?: string): Promis
 
   const agentlint = await hasAgentlintConfig(root);
   const uiDrivers = await detectUiDrivers(pathEnv);
-  return { stacks, packageManager, verify: await proposeVerify(root, stacks, packageManager), ci, docs, agentFiles, agentlint, connectors, glossary: await exists(path.join(root, "GLOSSARY.md")), agentDocs: await exists(path.join(root, "docs/agents")), ...(uiDrivers.length ? { uiDrivers } : {}) };
+  const bend = await findBend(root);
+  // Verify runs in a login shell, so that shell's PATH decides, not ours.
+  if (bend) bend.installed = Boolean((await run("bash", ["-lc", "command -v bend"])).trim());
+  const verify = await proposeVerify(root, stacks, packageManager);
+  // A proof check only runs when bend can: a missing binary would fail verify for a reason the agent cannot fix.
+  if (bend?.proof && bend.installed) verify.push(bendCheck(bend.proof));
+  return { stacks, packageManager, verify, ci, docs, agentFiles, agentlint, connectors, glossary: await exists(path.join(root, "GLOSSARY.md")), agentDocs: await exists(path.join(root, "docs/agents")), ...(uiDrivers.length ? { uiDrivers } : {}), ...(bend ? { bend } : {}) };
 }
 
 /** A directory looks like a project when it is a git repo or has a stack marker. */

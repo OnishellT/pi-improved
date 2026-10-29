@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { BEND_INSTALL, findBend } from "./bend.ts";
 import { resolveBin } from "./bin.ts";
 import { which } from "./computer/which.ts";
 import { bundledExtension, hasGlobalSubagent } from "./subagent-ext.ts";
@@ -120,6 +121,11 @@ export async function runDoctor(pi: ExtensionAPI, ctx: ExtensionContext, version
     const agentlint = resolveBin("agentlint");
     const ok = await probe(agentlint, ["--help"]);
     checks.push({ name: "agentlint", ok, detail: ok ? agentlint : "not found or not running" });
+  }
+  // Bend matters only to a project that keeps laws.
+  if (await findBend(ctx.cwd)) {
+    const version = await pi.exec("bash", ["-lc", "BEND_NO_TELEMETRY=1 bend version"], { cwd: ctx.cwd, timeout: 15_000 }).then((r) => (r.code === 0 ? r.stdout.trim() : ""), () => "");
+    checks.push({ name: "bend", ok: Boolean(version), detail: version || `not found, and LAWS.bend needs it: ${BEND_INSTALL}` });
   }
   const mode = manifest?.mode;
   if (mode !== undefined) {

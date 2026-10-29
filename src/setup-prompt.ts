@@ -1,3 +1,4 @@
+import { BEND_INSTALL, bendCheck } from "./bend.ts";
 import { limitsOf } from "./config.ts";
 import { connectorById } from "./connectors.ts";
 import { agentlintCheck, type Discovery } from "./discover.ts";
@@ -25,6 +26,13 @@ function agentlintStep(cmd: string, found: Discovery, rules: number) {
    - setup_finish adds \`${agentlintCheck(cmd)}\` to verify as a step of its own, and it must exit 0; do not add agentlint to the other steps or scripts.`;
 }
 
+function bendStep(bend: NonNullable<Discovery["bend"]>) {
+  if (!bend.installed) return `The project has \`${bend.laws}\` (Bend) but \`bend\` is not on PATH. Do not install it. Tell the user how in your summary: ${BEND_INSTALL}. Do not add a Bend step to verify, but keep one that is already there.`;
+  return bend.proof
+    ? `\`${bend.laws}\` holds the user's laws and \`${bend.proof}\` their proofs. The verify steps must include \`${bendCheck(bend.proof)}\`: add it if missing. Never edit \`${bend.laws}\`.`
+    : `\`${bend.laws}\` has no \`PROOF.bend\` yet. Do not write one now: tell the user in your summary that a \`/task\` can prove the laws in \`PROOF.bend\`, and that running \`/setup\` again then adds the proof check to verify.`;
+}
+
 /** The one model-facing instruction for setup. Short on purpose: cheap models follow short lists. */
 export function setupPrompt(found: Discovery, manifest: Manifest, resuming: boolean, skills = "") {
   const connectors = manifest.connectors.map((c) => {
@@ -48,6 +56,7 @@ export function setupPrompt(found: Discovery, manifest: Manifest, resuming: bool
    - \`.pi/skills/domain-<name>/SKILL.md\`, one per business area. Use frontmatter with \`name\` and \`description\`, then the vocabulary, invariants, key files and pitfalls.
    - \`docs/adr/NNNN-<title>.md\` for each architecture decision that the code shows or the user confirmed.`,
     `Create the project's verification skill following pstack-create-verification-skill at \`.pi/skills/verify-app/SKILL.md\`, with a runnable script when the app can be driven headlessly. Its evidence and scratch files live under \`.pi/evidence/\` inside the repo (never under the home directory or outside the repo); the command must not create directories elsewhere. The feature map is versioned in the skill's own \`features/\` folder: \`README.md\`, one file per feature, and \`coverage.json\`; setup_finish checks it.${found.uiDrivers?.length ? ` For behavior a headless run cannot reach (desktop windows, Electron), the script may use these GUI drivers: ${uiDriverHint(found.uiDrivers)}` : ""} Add its command to the verify list passed to \`setup_finish\` only if it runs green.`,
+    ...(found.bend ? [bendStep(found.bend)] : []),
     ...(manifest.agentlint ? [agentlintStep(manifest.agentlint, found, limits.agentlintRules)] : []),
     "Make sure verification exists. Use the proposed verify steps, fix them if they are wrong, or add a missing script or target. Order them fastest first: the stack's compiler, type checker or linter (whatever this project already has) before the tests, so the agent gets static feedback before behavior feedback. Do not change application code and do not install other dependencies without asking.",
     "Call `setup_finish` with the final verify steps and a short summary. If it reports problems, fix them and call it again.",
