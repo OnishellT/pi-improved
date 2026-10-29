@@ -66,6 +66,8 @@ export interface Manifest {
   skillsOnDemand?: Partial<Record<Phase, string[]>>;
   /** Whether /setup adds agentlint rules: `ask` (default) asks, `always` adds them without asking, `never` neither asks nor enforces them. */
   useAgentlint?: "ask" | "always" | "never";
+  /** Bend laws: "ask" (default) lets /setup offer to record the domain's invariants as laws, "always" drafts them without asking first, "never" leaves Bend out of setup. A project that already has LAWS.bend is unaffected. */
+  useBend?: "ask" | "always" | "never";
   /** Append the unslop skill and two working-style lines to the main session's system prompt (default true; false turns it off). */
   basePrompt?: boolean;
   /** Characters of failing-step output kept in a verify report (default 4000, minimum 200). Smaller is cheaper on every retry. */

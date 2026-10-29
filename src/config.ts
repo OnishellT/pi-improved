@@ -12,7 +12,7 @@ export const globalPath = (dir = agentDir()) => path.join(dir, GLOBAL_FILE);
 export const STATE_KEYS = ["version", "setup", "language", "startedAt", "completedAt", "verify", "agentlint", "connectors"];
 
 /** Preferences the global file may hold (the project file may hold the same ones). */
-export const PREFERENCE_KEYS = ["mode", "models", "skills", "skillsOnDemand", "basePrompt", "useAgentlint", "maxReport", "contextWarn", "review", "limits", "computer", "subagentPanes", "selfCompact"];
+export const PREFERENCE_KEYS = ["mode", "models", "skills", "skillsOnDemand", "basePrompt", "useAgentlint", "useBend", "maxReport", "contextWarn", "review", "limits", "computer", "subagentPanes", "selfCompact"];
 
 export const isObject = (value: unknown): value is Record<string, any> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 

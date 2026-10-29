@@ -19,7 +19,7 @@ description: This project keeps laws in LAWS.bend. Read before changing logic a 
 
 1. Worth a law only when the rule is pure, small and costly to break. Not for I/O, regex/JSON/HTTP (Bend has none; strings are lists), or floats.
 2. Model: write the function in Bend (`Risk.bend` or similar), as simple as the rule, with `main` reading `IO.args` and printing the answer.
-3. Prove every law about the model in `PROOF.bend` until the gate passes.
+3. Prove every law about the model in `PROOF.bend` until the gate passes. If `verify` has no `bend --check-only` step yet, tell the user that `/setup` adds it now that `PROOF.bend` exists (do not edit `.pi/workflow.json`).
 4. Bridge, when the real code is not Bend: add a test in the project's own test suite that runs many inputs (a table, or a property test) through both the real function and the model, and asserts equal results. Call the model with `bend Model.bend <args>` (about 0.07 s), or build it once: `bend Model.bend -o model` (native) or `-o model.mjs`. Keep it in the existing test command, so verify runs it.
 5. A model and the code can drift apart only if the bridge test misses an input: cover the edges the laws talk about.
 6. A project written in Bend proves its own code directly; no model or bridge.
