@@ -303,7 +303,7 @@ export function registerTask(pi: ExtensionAPI) {
       // Implementation starts here; skills the plan block already loaded are not sent twice.
       const skills = await skillsBlock(root, "implement", await phaseSkills(root, "plan"));
       return {
-        content: [{ type: "text", text: "Plan approved. First write the tests at the agreed seams in the listed test files and run ONLY those test files to see them fail; then implement until they pass. Change only the listed files, use the agreed interface names and follow the decisions (read the ADRs they cite). Do not run the full verify; it runs automatically." + settled + (skills ? `\n\n${skills}` : "") }],
+        content: [{ type: "text", text: "Plan approved. First write the tests at the agreed seams in the listed test files and run ONLY those test files to see them fail; then implement until they pass. Change only the listed files, use the agreed interface names and follow the decisions (read the ADRs they cite). Do not change existing tests or the verify configuration (test scripts, verify commands) to make verify pass, unless the ticket asks for it: a failing existing test means the code is wrong. Do not run the full verify; it runs automatically." + settled + (skills ? `\n\n${skills}` : "") }],
         details: { plan },
       };
     },

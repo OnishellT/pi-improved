@@ -415,6 +415,7 @@ test("fast path: a small plan with no risk trigger skips the approval dialog but
   assert.equal(ui.asked.length, 0);
   assert.equal((await readTask(root))?.status, "implementing");
   assert.match(result.content[0].text, /Plan approved/);
+  assert.match(result.content[0].text, /Do not change existing tests or the verify configuration/);
   assert.match(result.content[0].text, /## Skill: principles-implement/);
   assert.doesNotMatch(result.content[0].text, /## Skill: tdd/);
   const bad = plan([], { interface: [{ file: "src/fee.ts", exports: ["computeTotal"], source: "ticket" }] });

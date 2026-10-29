@@ -21,6 +21,10 @@ const PROGRESS_TIMEOUT = 60_000;
 const PROGRESS_MAX_BASELINE = 30;
 const PROGRESS_TAIL = 1200;
 const PREDATES_SHOWN = 5;
+const TOUCHED_SHOWN = 10;
+/** The dialog lists the tests and verify files the task changed, so the person sees what could have turned verify green before accepting. */
+const touchedNote = (files: string[] = []) =>
+  files.length ? `\n\nTests and verify setup changed (check before accepting):\n${files.slice(0, TOUCHED_SHOWN).map((f) => `- ${f}`).join("\n")}${files.length > TOUCHED_SHOWN ? `\n- and ${files.length - TOUCHED_SHOWN} more` : ""}` : "";
 /** Added to the escalation prompt when the same failure came back: the fixes so far share a wrong assumption. */
 const PREMISE = [
   "The same failure came back after a fix, so every fix so far assumed something false. Write that one premise in a sentence.",
@@ -259,7 +263,7 @@ export function registerGate(pi: ExtensionAPI) {
         return { entries: [{ type: "custom_message", customType: "diff-review", content, display: true }], continue: true };
       }
     }
-    if (task?.status === "implementing" && ctx.hasUI && (await ctx.ui.confirm("Verification OK", `Is the task "${oneLine(task.title, 80)}" done?`))) {
+    if (task?.status === "implementing" && ctx.hasUI && (await ctx.ui.confirm("Verification OK", `Is the task "${oneLine(task.title, 80)}" done?${touchedNote(risk?.touched)}`))) {
       const done = await updateTask(ctx.cwd, (t) => {
         t.status = "done";
         t.completedAt = new Date().toISOString();

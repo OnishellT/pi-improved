@@ -14,9 +14,9 @@ import { failureSignature } from "../src/verify.ts";
 import { fakePi, fakeUI, isSubagent, tempProject } from "./helpers.ts";
 
 const manifest = (setup: string) => JSON.stringify({ version: 1, setup, verify: ["check"], connectors: [] });
-const task = { id: "t1", title: "Do it", status: "implementing", allowedExtra: [], startedAt: "now" };
+const task = { id: "t1", title: "Do it", status: "implementing", allowedExtra: [], startedAt: "2026-10-01T00:00:00.000Z" };
 
-async function setup(opts: { setup?: string; task?: boolean; pass?: boolean; answers?: unknown[]; review?: string; nix?: boolean | string } = {}) {
+async function setup(opts: { setup?: string; task?: boolean; pass?: boolean; answers?: unknown[]; review?: string; nix?: boolean | string; status?: string } = {}) {
   const files: Record<string, string> = { ".pi/workflow.json": manifest(opts.setup ?? "done") };
   if (opts.review) files[".pi/workflow.json"] = JSON.stringify({ version: 1, setup: "done", verify: ["check"], connectors: [], models: { review: "p/m" }, review: { minLevel: "low" } });
   if (opts.task) files[".pi/task.json"] = JSON.stringify(task);
@@ -26,7 +26,8 @@ async function setup(opts: { setup?: string; task?: boolean; pass?: boolean; ans
   const subagent: string[] = [];
   const h = fakePi((cmd, args) => {
     if (cmd === "git" && opts.nix !== undefined) return { code: 127, stderr: opts.nix === false ? installMessage() : String(opts.nix) };
-    if (cmd === "git") return { code: 0, stdout: args[0] === "diff" ? diff : "" };
+    // rev-list: the commit before the task started, the diff base of a task without baseCommit.
+    if (cmd === "git") return { code: 0, stdout: args.includes("--name-status") ? opts.status ?? "" : args[0] === "diff" ? diff : args[0] === "rev-list" ? "a".repeat(40) : "" };
     if (isSubagent(cmd)) subagent.push(args[0]);
     if (isSubagent(cmd)) return args[0] === "spawn" ? { code: 0, stdout: "Spawned review (abc123)" } : args[0] === "wait" ? { code: 0, stdout: `abc123 finished\n\n${opts.review}` } : { code: 0 };
     verifies++;
@@ -134,6 +135,18 @@ test("without a UI, a failed Nix build also leaves the task unverified with Nix'
   assert.equal(await t.settle(), undefined);
   assert.match(t.notes.join("\n"), new RegExp(`Unverified: ${msg}[\\s\\S]*not marked done`));
   assert.equal((await readTask(t.root))?.status, "implementing");
+});
+
+test("the completion dialog lists the pre-existing tests and verify files the task changed", async () => {
+  const t = await setup({ pass: true, task: true, answers: [true], status: "M\0test/old.test.ts\0M\0src/a.ts\0" });
+  await t.run();
+  await t.settle();
+  assert.match(t.ui.messages[0], /Tests and verify setup changed \(check before accepting\):\n- test\/old\.test\.ts$/);
+  assert.match(t.notes.join("\n"), /Risk high: tests or verify setup changed \(test\/old\.test\.ts\)/);
+  const clean = await setup({ pass: true, task: true, answers: [true] });
+  await clean.run();
+  await clean.settle();
+  assert.doesNotMatch(clean.ui.messages[0], /Tests and verify/);
 });
 
 test("a Nix build that fails is an infrastructure failure too: the user hears Nix's message, no retry, no escalation, nothing for the model", async () => {
