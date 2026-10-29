@@ -61,3 +61,12 @@ test("a copied auth.json is replaced by a link", async () => {
   linkCredentials(main, pi, "openai");
   assert.ok(lstatSync(join(pi, "auth.json")).isSymbolicLink());
 });
+
+test("a correct link is kept as is", async () => {
+  const { main, pi } = await dirs();
+  writeFileSync(join(main, "auth.json"), "{}");
+  linkCredentials(main, pi, "openai");
+  const before = lstatSync(join(pi, "auth.json")).ino;
+  linkCredentials(main, pi, "openai");
+  assert.equal(lstatSync(join(pi, "auth.json")).ino, before);
+});
