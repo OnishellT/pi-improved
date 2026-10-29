@@ -206,8 +206,9 @@ export class OwnedBrowser {
       let attached;
       try { attached = await this.request('Target.attachToTarget', {targetId:this.target, flatten:true}); }
       catch (error) {
-        if (!this.active?.launch) throw error;
-        // The isolated browser was started again: our window went with the old one.
+        // Only a missing window means the isolated browser was started again and our window went with the old one.
+        // A timeout or a dropped connection proves nothing: making a second window then could leave two.
+        if (!this.active?.launch || !/no target/i.test(error.message)) throw error;
         this.target = (await this.request('Target.createTarget', {url:'about:blank', newWindow:true, background:true})).targetId;
         attached = await this.request('Target.attachToTarget', {targetId:this.target, flatten:true});
       }
@@ -255,8 +256,16 @@ export class OwnedBrowser {
 
   /** On exit: closes the isolated browser's window (relay keeps its window by design), then the connection. */
   async exit() {
-    try { if (this.active?.launch && this.target) await this.request('Target.closeTarget', {targetId:this.target}); } catch {}
-    this.socket?.close();
+    try {
+      if (!this.active?.launch || !this.target) return;
+      // Only the connection dropped: reach the browser again to close the window, but never start one just for that.
+      if (!this.socket) {
+        const address = endpoint(await readFile(this.active.portFile, 'utf8'));
+        if (!await listening(address)) return;
+        await this.attach(address);
+      }
+      await this.request('Target.closeTarget', {targetId:this.target});
+    } catch {} finally { this.socket?.close(); }
   }
 }
 
