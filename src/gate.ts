@@ -98,11 +98,11 @@ export function registerGate(pi: ExtensionAPI) {
     const old = predatesBaseline(result, task.baseline?.failing, agentlintStepOf(manifest)) ? " (it already failed before the change)" : "";
     return `Progress check: \`${step}\` fails${old}. This is not the final gate, and a failure can be expected mid-change (a test for code you have not written yet). Fix it only if it is not.\n${result.results[0].output.slice(-PROGRESS_TAIL)}`;
   };
-  const review = async (cwd: string, task: NonNullable<Awaited<ReturnType<typeof readTask>>>, model: string, signal: AbortSignal) => {
+  const review = async (cwd: string, task: NonNullable<Awaited<ReturnType<typeof readTask>>>, model: string, signal: AbortSignal, steps: string[]) => {
     const t0 = Date.now();
     // Advisory: a throw here must not stop the task from settling.
     const result = await skillsBlock(cwd, "review")
-      .then((skills) => reviewDiff(pi.exec.bind(pi), cwd, task, model, signal, skills))
+      .then((skills) => reviewDiff(pi.exec.bind(pi), cwd, task, model, signal, skills, steps))
       .catch((e: any) => ({ status: "skipped" as const, report: String(e?.message ?? e), cost: undefined, cancelled: false }));
     const discarded = signal.aborted || result.cancelled === true;
     pi.events.emit(REVIEW_EVENT, { root: cwd, status: result.status, model, seconds: (Date.now() - t0) / 1000, cost: result.cost, discarded } satisfies ReviewPayload);
@@ -185,7 +185,7 @@ export function registerGate(pi: ExtensionAPI) {
       warnedNoReviewModel = true;
       ctx.ui.notify("The review policy asks for a review, but it needs models.review in .pi/workflow.json.", "warning");
     }
-    const reviewing = wanted && task && reviewModel ? review(ctx.cwd, task, reviewModel, abort.signal) : undefined;
+    const reviewing = wanted && task && reviewModel ? review(ctx.cwd, task, reviewModel, abort.signal, verifySteps(manifest)) : undefined;
     if (reviewing) ctx.ui.setStatus("review", `reviewing the diff with ${reviewModel}…`);
     const clearStatus = () => ctx.ui.setStatus("review", undefined);
     const { ok, report, policy, infra, signature, predated: onlyOld, lines, failing, seconds } = await verify(manifest, ctx.cwd, task?.baseline?.failing);
