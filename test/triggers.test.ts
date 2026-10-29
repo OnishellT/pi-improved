@@ -76,6 +76,15 @@ test("out-of-scope: allow file, allow folder, block", async () => {
   assert.match(r.reason, /plan/);
 });
 
+test("a file in the project root is offered no whole-folder option; a nested one is", async () => {
+  const s = await setup({}, []);
+  const offered: string[][] = [];
+  (s.ui as any).select = async (_title: string, options: string[]) => (offered.push(options), "Allow this file");
+  assert.equal(await s.run("write", { path: "CHANGELOG.md", content: "" }), undefined);
+  assert.equal(await s.run("write", { path: "src/b.ts", content: "" }), undefined);
+  assert.deepEqual(offered, [["Allow this file", "Block"], ["Allow this file", "Allow the whole folder", "Block"]]);
+});
+
 test("npm add: ADR on approve, block otherwise", async () => {
   const s = await setup({}, ["Approve and record ADR", "Block"]);
   assert.equal(await s.run("bash", { command: "npm add zod" }), undefined);

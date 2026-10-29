@@ -113,7 +113,8 @@ export function registerTriggers(pi: ExtensionAPI) {
     if (isPiState(file) || file.startsWith(ADR_DIR)) return;
 
     if (!inScope(task, file)) {
-      const pick = await ctx.ui.select(`The agent wants to touch a file outside the plan: ${file}`, ["Allow this file", "Allow the whole folder", "Block"]);
+      // A file in the project root has no folder to allow: "./" would match nothing, and the whole project is not what the person is asked about.
+      const pick = await ctx.ui.select(`The agent wants to touch a file outside the plan: ${file}`, ["Allow this file", ...(file.includes("/") ? ["Allow the whole folder"] : []), "Block"]);
       if (pick === "Allow this file" || pick === "Allow the whole folder") {
         const entry = pick === "Allow this file" ? file : `${path.posix.dirname(file)}/`;
         await updateTask(ctx.cwd, (t) => void t.allowedExtra.push(entry));
