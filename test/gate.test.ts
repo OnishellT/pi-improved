@@ -909,6 +909,16 @@ test("a TUI turn that ends on a question waits for the answer once; the next tur
   await say("Rounded up. Anything else?");
   await t.settle();
   assert.equal(t.verifies(), 1);
+  // An answer turn that changes nothing still runs the deferred gate.
+  const n = await setup({ pass: true, task: true, answers: [false] });
+  n.ctx.mode = "tui";
+  await n.run();
+  await n.emit("message_end", { message: { role: "assistant", content: "Should it round up?" } }, n.ctx);
+  await n.settle();
+  await n.emit("before_agent_start", { messageType: "user" }, n.ctx);
+  await n.emit("message_end", { message: { role: "assistant", content: "Kept it as is." } }, n.ctx);
+  await n.settle();
+  assert.equal(n.verifies(), 1);
   // RPC (no TUI): never deferred.
   const r = await setup({ pass: true, task: true, answers: [false] });
   r.ctx.mode = "rpc";
