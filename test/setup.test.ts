@@ -11,15 +11,43 @@ import { setupPrompt } from "../src/setup-prompt.ts";
 import { fakeCtx, fakePi, fakeUI, tempDir, tempProject, withEnv } from "./helpers.ts";
 
 const SKILL = "---\nname: domain-billing\ndescription: Billing rules\n---\n# Billing\n";
-const documented = { "AGENTS.md": "# App\n", "GLOSSARY.md": "# G\n", ".pi/skills/domain-billing/SKILL.md": SKILL, "package.json": "{}" };
+const FEATURE = "# Search\n\n## Sub-features\n- a\n\n## How to get to it (user POV)\n- b\n\n## Driving it with browser\n- c\n\n## Gotchas\n- d\n";
+const verifyApp = {
+  ".pi/skills/verify-app/SKILL.md": "---\nname: verify-app\ndescription: Drive the app\n---\n# Verify\n",
+  ".pi/skills/verify-app/features/README.md": "# Features\n",
+  ".pi/skills/verify-app/features/search.md": FEATURE,
+  ".pi/skills/verify-app/features/coverage.json": JSON.stringify({ sync: "a".repeat(40), paths: ["AGENTS.md"] }),
+};
+const exec = fakePi().pi.exec;
+const documented = { "AGENTS.md": "# App\n", "GLOSSARY.md": "# G\n", ".pi/skills/domain-billing/SKILL.md": SKILL, "package.json": "{}", ...verifyApp };
 
 const ctxFor = (root: string, answers: unknown[]) => fakeCtx(root, answers, { mode: "tui", reload: async () => {} });
 
 test("checkOutputs reports every missing piece", async () => {
   const root = await tempProject({ "AGENTS.md": "x\n".repeat(200), ".pi/skills/bad/SKILL.md": "# no frontmatter" });
-  const problems = await checkOutputs(root, []);
-  assert.equal(problems.length, 5);
-  assert.deepEqual(await checkOutputs(await tempProject(documented), ["true"]), []);
+  const problems = await checkOutputs(root, [], exec);
+  assert.equal(problems.length, 8);
+  assert.deepEqual(await checkOutputs(await tempProject(documented), ["true"], exec), []);
+});
+
+test("checkOutputs checks the verification skill: files, the four H2s per feature and the coverage record", async () => {
+  const bad = { ...documented, ".pi/skills/verify-app/features/search.md": "# Search\n\n## Sub-features\n## Gotchas\n", ".pi/skills/verify-app/features/coverage.json": "{}" };
+  const problems = (await checkOutputs(await tempProject(bad), ["true"], exec)).join("\n");
+  assert.match(problems, /search\.md needs these H2 headings: How to get to it \(user POV\); Driving it with <harness>\./);
+  assert.match(problems, /coverage\.json must be/);
+  assert.doesNotMatch(problems, /README|SKILL\.md/);
+  const noGit = fakePi((_cmd, args) => ({ code: args[0] === "cat-file" ? 128 : 0 })).pi.exec;
+  assert.match((await checkOutputs(await tempProject(documented), ["true"], noGit)).join("\n"), /sync a{40} is not a commit of this repo/);
+  const stale = { ...documented, ".pi/skills/verify-app/features/coverage.json": JSON.stringify({ sync: "a".repeat(40), paths: ["src/"] }) };
+  assert.match((await checkOutputs(await tempProject(stale), ["true"], exec)).join("\n"), /these paths do not exist: src\//);
+  const { [".pi/skills/verify-app/features/coverage.json"]: _, ...without } = documented;
+  assert.match((await checkOutputs(await tempProject(without), ["true"], exec)).join("\n"), /coverage\.json must be/);
+});
+
+test("checkOutputs skips the verification skill when setup does not create it", async () => {
+  const root = await tempProject({ ...documented, ".pi/skills/verify-app/features/search.md": "# bad\n" });
+  await updateManifest(root, (m) => void (m.skills = { setup: ["research"] }));
+  assert.deepEqual(await checkOutputs(root, ["true"], exec), []);
 });
 
 test("/setup runs discovery, asks only about connectors, and hands one prompt to the model", async () => {
@@ -76,13 +104,62 @@ test("setup_finish requires the agentlint config and appends its gate to verify"
   registerSetup(pi);
   const finish = (ctx: any) => tools.get("setup_finish").execute("1", { verify: ["pnpm test"], summary: "s" }, undefined, undefined, ctx);
 
-  await assert.rejects(finish(ctxFor(root, []).ctx), /agentlint is not configured/);
+  await assert.rejects(finish(ctxFor(root, [false]).ctx), /agentlint is not configured/);
   await fs.mkdir(path.join(root, ".agentlint"));
   await fs.writeFile(path.join(root, ".agentlint/config.ts"), "");
   await finish(ctxFor(root, [true]).ctx);
 
   assert.ok(ran.includes("pnpm agentlint rules test"));
   assert.deepEqual((await readManifest(root)).verify, ["pnpm test", "pnpm agentlint check --all"]);
+});
+
+test("useAgentlint skips the agentlint question: never leaves it out, always adds it", async () => {
+  for (const [use, expected] of [["never", undefined], ["always", "pnpm agentlint"]]) {
+    // "never" also turns off agentlint that an earlier setup chose.
+    const workflow = use === "never" ? { useAgentlint: use, agentlint: "pnpm agentlint", agentlintStep: "pnpm agentlint check --all", verify: ["pnpm test", "pnpm agentlint check --all", "pnpm types && pnpm agentlint check --all"] } : { useAgentlint: use };
+    const root = await tempProject({ "package.json": "{}", "pnpm-lock.yaml": "", ".pi/workflow.json": JSON.stringify(workflow) });
+    const { pi, commands } = fakePi();
+    registerSetup(pi);
+    const { ctx, ui } = ctxFor(root, ["Español", "No more"]);
+    const notes: string[] = [];
+    (ui as any).notify = (m: string) => void notes.push(m);
+    await commands.get("setup").handler("", ctx);
+    assert.equal(ui.asked.length, 2);
+    const manifest = await readManifest(root);
+    assert.equal(manifest.agentlint, expected);
+    // Only the step setup recorded goes with it; a user's own command, compound or not, is never edited.
+    if (use === "never") {
+      assert.deepEqual(manifest.verify, ["pnpm test", "pnpm types && pnpm agentlint check --all"]);
+      assert.equal(manifest.agentlintStep, undefined);
+      assert.equal(notes.filter((n: string) => /still runs agentlint/.test(n)).length, 1);
+    }
+  }
+});
+
+test("useAgentlint never also removes the step an older setup added, recognised by its exact text", async () => {
+  const workflow = { useAgentlint: "never", agentlint: "pnpm agentlint", verify: ["pnpm test", "pnpm agentlint check --all", "pnpm lint && pnpm agentlint check --all"] };
+  const root = await tempProject({ "package.json": "{}", "pnpm-lock.yaml": "", ".pi/workflow.json": JSON.stringify(workflow) });
+  const { pi, commands } = fakePi();
+  registerSetup(pi);
+  const { ctx } = ctxFor(root, ["Español", "No more"]);
+  await commands.get("setup").handler("", ctx);
+  assert.deepEqual((await readManifest(root)).verify, ["pnpm test", "pnpm lint && pnpm agentlint check --all"]);
+});
+
+test("setup_finish offers to drop agentlint when the person turned it down after choosing it", async () => {
+  const root = await tempProject(documented);
+  await updateManifest(root, (m) => {
+    m.setup = "running";
+    m.agentlint = "pnpm agentlint";
+  });
+  const { pi, tools } = fakePi();
+  registerSetup(pi);
+  const { ctx, ui } = ctxFor(root, [true, true]);
+  await tools.get("setup_finish").execute("1", { verify: ["pnpm test"], summary: "s" }, undefined, undefined, ctx);
+  assert.equal(ui.asked[0], "Drop agentlint?");
+  const manifest = await readManifest(root);
+  assert.equal(manifest.agentlint, undefined);
+  assert.deepEqual(manifest.verify, ["pnpm test"]);
 });
 
 test("setup_finish: agentlint findings in existing code go to the user, one reason each, not back to the model", async () => {
@@ -240,6 +317,7 @@ test("an agentlint config with zero rules does not block setup", async () => {
     "GLOSSARY.md": "# G\n",
     ".pi/skills/domain-billing/SKILL.md": "---\nname: domain-billing\ndescription: Billing\n---\n",
     ".agentlint/config.ts": "",
+    ...verifyApp,
   });
   await updateManifest(root, (m) => {
     m.setup = "running";
@@ -259,6 +337,7 @@ test("setup_finish does not add agentlint twice when a package script already ru
     "GLOSSARY.md": "# G\n",
     ".pi/skills/domain-billing/SKILL.md": "---\nname: domain-billing\ndescription: Billing\n---\n",
     ".agentlint/config.ts": "",
+    ...verifyApp,
     "package.json": JSON.stringify({ scripts: { verify: "npm test && npm exec agentlint -- check --all" } }),
   });
   await updateManifest(root, (m) => {

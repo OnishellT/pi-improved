@@ -4,6 +4,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 import { CATALOG, connectorById, type ConnectorSignal } from "./connectors.ts";
 import { agentlintCheck, agentlintCmd, discover, hasAgentlintConfig, isProject, readPackageJson, type Discovery, type Run } from "./discover.ts";
+import type { Exec } from "./git.ts";
 import { isNixMissing } from "./nix.ts";
 import { agentDir } from "./subagent-ext.ts";
 import { restoreModel, usePhaseModel } from "./models.ts";
@@ -12,6 +13,7 @@ import { phaseSkills, skillsBlock } from "./skills.ts";
 import { AGENTS_MAX_LINES, SETUP_NUDGE, setupPrompt } from "./setup-prompt.ts";
 import { LOCAL_STATE } from "./task-state.ts";
 import { resolvePolicyFailure } from "./policy.ts";
+import { checkVerifyApp } from "./verify-app.ts";
 import { formatVerify, isPolicyFailure, runVerify } from "./verify.ts";
 
 const MAX_NUDGES = 2;
@@ -22,7 +24,7 @@ const DECLINE = "Don't ask again";
 export const REPEAT_WARNING = "Repeating it reruns the interview and the docs on the strong setup model, which costs far more than a normal task. Do it only if the project changed a lot. Update it?";
 
 /** Returns what is missing from the setup output; empty means complete. */
-export async function checkOutputs(root: string, verify: string[]): Promise<string[]> {
+export async function checkOutputs(root: string, verify: string[], exec: Exec): Promise<string[]> {
   const problems: string[] = [];
   const agents = await fs.readFile(path.join(root, "AGENTS.md"), "utf8").catch(() => undefined);
   if (agents === undefined) problems.push("AGENTS.md is missing.");
@@ -37,7 +39,9 @@ export async function checkOutputs(root: string, verify: string[]): Promise<stri
     if (/^---\n[\s\S]*?\bname:\s*\S[\s\S]*?\bdescription:\s*\S[\s\S]*?\n---/.test(text)) valid++;
     else problems.push(`.pi/skills/${dir}/SKILL.md needs frontmatter with name and description.`);
   }
-  if ((await phaseSkills(root, "setup")).includes("domain-modeling") && !(await fs.access(path.join(root, "GLOSSARY.md")).then(() => true, () => false))) problems.push("GLOSSARY.md is missing.");
+  const wanted = await phaseSkills(root, "setup");
+  if (wanted.includes("domain-modeling") && !(await fs.access(path.join(root, "GLOSSARY.md")).then(() => true, () => false))) problems.push("GLOSSARY.md is missing.");
+  if (wanted.includes("pstack-create-verification-skill")) problems.push(...(await checkVerifyApp(root, exec)));
   if (!valid) problems.push("No domain skill found in .pi/skills/<name>/SKILL.md.");
   if (!verify.length) problems.push("No verify steps. Every project needs at least one check that runs.");
   return problems;
@@ -84,9 +88,10 @@ async function runsAgentlint(root: string, verify: string[]) {
 }
 
 /** Returns the agentlint command when the project will enforce agentlint rules. */
-async function chooseAgentlint(ctx: ExtensionContext, found: Discovery) {
+async function chooseAgentlint(ctx: ExtensionContext, found: Discovery, always: boolean) {
   if (found.agentlint) return agentlintCmd(found.packageManager);
   if (!found.stacks.includes("node")) return undefined;
+  if (always) return agentlintCmd(found.packageManager);
   const pick = await ctx.ui.select(
     "Turn the most important AGENTS.md rules into agentlint rules?\nThey block the end of every task until met or someone accepts the exception with a reason. You choose which.",
     ["Yes (recommended)", "No"],
@@ -131,7 +136,8 @@ export function registerSetup(pi: ExtensionAPI) {
       const language = manifest.language ?? (await ctx.ui.select("Which language for questions and docs?", ["Español", "English"]));
       if (!language) return ctx.ui.setStatus("setup", undefined);
       const connectors = await chooseConnectors(ctx, found.connectors, manifest.connectors);
-      const agentlint = manifest.agentlint ?? (await chooseAgentlint(ctx, found));
+      const use = manifest.useAgentlint;
+      const agentlint = use === "never" ? undefined : (manifest.agentlint ?? (await chooseAgentlint(ctx, found, use === "always")));
 
       manifest = await updateManifest(root, (m) => {
         m.setup = "running";
@@ -139,11 +145,24 @@ export function registerSetup(pi: ExtensionAPI) {
         m.startedAt ??= new Date().toISOString();
         m.connectors = connectors;
         m.agentlint = agentlint;
-        if (!m.verify.length) m.verify = found.verify;
+        if (!m.verify.length) {
+          m.verify = found.verify;
+          const own = agentlintCheck(agentlintCmd(found.packageManager));
+          if (found.verify.includes(own)) m.agentlintStep = own;
+        }
+        // Intended: opting out drops only the one step setup added, as a whole. pi-improved does not rewrite the user's own
+        // scripts or commands, even when they run agentlint; the notice below tells the user and leaves the choice to them.
+        // A setup from before the step was recorded added exactly `<agentlint> check --all`.
+        if (use === "never") {
+          const added = m.agentlintStep ?? (manifest.agentlint ? agentlintCheck(manifest.agentlint) : undefined);
+          m.verify = m.verify.filter((step) => step !== added);
+          delete m.agentlintStep;
+        }
         // The merged view decides: a mode from the global file must keep applying.
         if (manifest.mode === undefined) m.mode = "direct";
       });
       manifest = await readManifest(root);
+      if (use === "never" && (await runsAgentlint(root, manifest.verify))) ctx.ui.notify("useAgentlint is \"never\", but a verify step of yours still runs agentlint. Setup leaves your commands alone: change that step yourself if you want it gone.", "warning");
       registerConnectors(pi, connectors);
       nudges = 0;
       verifyFailures = 0;
@@ -181,8 +200,17 @@ export function registerSetup(pi: ExtensionAPI) {
       if (!(await setupRunning(root))) throw new Error("No setup is running. The user starts one with /setup.");
 
       const manifest = await readManifest(root);
-      const { agentlint } = manifest;
-      const problems = await checkOutputs(root, verify);
+      let { agentlint } = manifest;
+      let addedStep: string | undefined;
+      // The person can say yes to agentlint at the start and no in the interview: without a way out, setup could never finish.
+      if (agentlint && !(await hasAgentlintConfig(root)) && ctx.hasUI) {
+        const drop = await ctx.ui.confirm("Drop agentlint?", "Setup was to add agentlint rules, but the project has no agentlint config. Drop agentlint for this project? Set `useAgentlint` to \"never\" to stop /setup from asking.");
+        if (drop) {
+          await updateManifest(root, (m) => void delete m.agentlint);
+          agentlint = undefined;
+        }
+      }
+      const problems = await checkOutputs(root, verify, pi.exec.bind(pi));
       if (agentlint) {
         if (!(await hasAgentlintConfig(root))) problems.push(`agentlint is not configured. Run \`${agentlint} init\` and add the rules the user selected.`);
         else {
@@ -191,7 +219,10 @@ export function registerSetup(pi: ExtensionAPI) {
           const noRules = tests.results.some((r) => /No matching rules/.test(r.output));
           if (!tests.ok && !noRules) problems.push(`agentlint rule fixtures fail:\n${formatVerify(tests)}`);
         }
-        if (!(await runsAgentlint(root, verify))) verify = [...verify, agentlintCheck(agentlint)];
+        if (!(await runsAgentlint(root, verify))) {
+          addedStep = agentlintCheck(agentlint);
+          verify = [...verify, addedStep];
+        }
       }
       if (problems.length) throw new Error(`Setup incomplete:\n- ${problems.join("\n- ")}`);
 
@@ -236,6 +267,7 @@ export function registerSetup(pi: ExtensionAPI) {
       await updateManifest(root, (m) => {
         m.setup = "done";
         m.verify = verify;
+        if (addedStep) m.agentlintStep = addedStep;
         // As at the start: a mode from the global file must keep applying.
         if (manifest.mode === undefined) m.mode = "direct";
         m.completedAt = new Date().toISOString();
