@@ -173,7 +173,8 @@ export function registerTriggers(pi: ExtensionAPI) {
     const { abs, file, names } = target(event, ctx.cwd);
     if (names.every((n) => isPiState(n) || n.startsWith(ADR_DIR))) return;
 
-    if (!inScope(task, file)) {
+    // The real target must be in scope; the link's own name counts only when the plan names that exact file.
+    if (!inScope(task, file) && ![...(task.plan?.files ?? []), ...task.allowedExtra].includes(names.at(-1)!)) {
       // A file in the project root has no folder to allow: "./" would match nothing, and the whole project is not what the person is asked about.
       const pick = await ctx.ui.select(`The agent wants to touch a file outside the plan: ${file}`, ["Allow this file", ...(file.includes("/") ? ["Allow the whole folder"] : []), "Block"]);
       if (pick === "Allow this file" || pick === "Allow the whole folder") {
@@ -186,7 +187,8 @@ export function registerTriggers(pi: ExtensionAPI) {
     if (manifests.length) {
       const manifest = manifests.join(", ");
       const added = await addedByEdit(event, abs, manifests);
-      if (added === undefined || added.length) return approveDependency(task, ctx, added ? `New dependency in ${manifest}` : `This edit touches dependencies in ${manifest}`, added, `Edit of \`${manifest}\``);
+      const blocked = added === undefined || added.length ? await approveDependency(task, ctx, added ? `New dependency in ${manifest}` : `This edit touches dependencies in ${manifest}`, added, `Edit of \`${manifest}\``) : undefined;
+      if (blocked) return blocked;
     }
 
     const migrationKey = `${task.id}:${file}`;

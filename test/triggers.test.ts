@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { test } from "node:test";
 import { addedPackagesFromCommand, applyEdits, dependencyNames, isMigration, registerTriggers, toRelative } from "../src/triggers.ts";
-import { readTask, writeTask, type Task } from "../src/task-state.ts";
+import { readTask, updateTask, writeTask, type Task } from "../src/task-state.ts";
 import { fakePi, fakeUI, tempProject } from "./helpers.ts";
 
 test("addedPackagesFromCommand", () => {
@@ -202,4 +202,25 @@ test("the approval names a local operand in full", async () => {
   const s = await setup({}, ["Block"]);
   assert.equal(((await s.run("bash", { command: "npm install ./lib=prod" })) as any).block, true);
   assert.match(s.ui.asked[0], /Install new package: \.\/lib=prod$/);
+});
+
+test("a symlink in a planned folder does not bring its outside target into scope", async () => {
+  const s = await setup({ "config/production.json": "{}" }, ["Block"], task({ plan: { ...task().plan!, files: ["src/"] } }));
+  await fs.mkdir(path.join(s.root, "src"));
+  await fs.symlink("../config", path.join(s.root, "src/config"));
+  const r: any = await s.run("write", { path: "src/config/production.json", content: "{}" });
+  assert.equal(r.block, true);
+  assert.match(s.ui.asked[0], /outside the plan: config\/production\.json/);
+});
+
+test("a planned symlink stays in scope; an approved dependency edit still meets the migration gate", async () => {
+  const s = await setup({ "src/real.ts": "", "db/migrate/1.json": "{}" }, ["Approve and record ADR", "Block"]);
+  await fs.symlink("real.ts", path.join(s.root, "src/a.ts"));
+  assert.equal(await s.run("write", { path: "src/a.ts", content: "x" }), undefined);
+  assert.equal(s.ui.asked.length, 0, "src/a.ts is in the plan");
+  await fs.symlink("db/migrate/1.json", path.join(s.root, "package.json"));
+  await updateTask(s.root, (t) => void t.allowedExtra.push("package.json", "db/"));
+  const r: any = await s.run("write", { path: "package.json", content: '{"dependencies":{"b":"2"}}' });
+  assert.equal(r.block, true);
+  assert.match(s.ui.asked.at(-1)!, /Schema change or migration: db\/migrate\/1\.json/);
 });
