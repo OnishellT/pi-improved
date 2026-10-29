@@ -128,7 +128,8 @@ Scripts in `scripts/`:
 one GitHub review: inline comments, a summary and a confidence score from 1 (must not merge) to 5 (safe to merge).
 The reviewer reads the PR head in a throwaway worktree, read-only, with an empty home and no secrets in its environment.
 Its context is `README.md`, `docs/*.md`, any `CLAUDE.md`, `AGENTS.md` and `CONTRIBUTING.md`, the PR text, the linked
-issue, earlier review threads and the diff. Follow-up rounds judge only what changed since the last reviewed commit;
+issue, earlier review threads and the diff. Follow-up rounds judge only what changed since the last reviewed commit
+(a rebase onto a newer base or a rewritten history makes the round a full review, and the summary says so);
 a head that already has a review is skipped, and a fourth round needs `--force` unless the last review had confidence 4 or more. Markdown-only PRs are skipped (unless an earlier review is waiting on the code changed since)
 by design (there is no code to review).
 `--dry-run` prints the review instead of posting it, and it ignores both gates.

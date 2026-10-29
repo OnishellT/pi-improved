@@ -165,9 +165,11 @@ export interface BodyInput {
   outside: readonly Finding[];
   threadNotes: readonly string[];
   notFixed?: number;
+  // Why the round is not the review it would normally be (a full review on a follow-up).
+  note?: string;
 }
 
-export function renderBody({ review, sha, outside, threadNotes, notFixed = 0 }: BodyInput): string {
+export function renderBody({ review, sha, outside, threadNotes, notFixed = 0, note }: BodyInput): string {
   const counts = (severity: Severity) =>
     review.findings.filter((finding) => finding.severity === severity).length;
   const parts = [
@@ -180,6 +182,7 @@ export function renderBody({ review, sha, outside, threadNotes, notFixed = 0 }: 
         (severity) => `| ${severity} | ${counts(severity)} |`,
       ),
     ].join("\n"),
+    ...(note === undefined ? [] : [`_${note}_`]),
     review.summary.trim(),
   ];
   if (outside.length > 0) {
