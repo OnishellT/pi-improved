@@ -70,7 +70,7 @@ async function nixChecks(nix: NixProbe, loggedIn: () => Promise<boolean>): Promi
 }
 
 /** The `.bundled/` folder is made by the package's postinstall, which a package manager may skip. */
-export const extensionDetail = (ext: string | undefined) => ext ?? "missing: without it the review never finishes. Run `npm install` in the package folder";
+export const extensionDetail = (ext: string | undefined) => ext ?? "missing: without it the review never finishes. Run `npm install` in the package folder (`npm run postinstall` when npm skips install scripts)";
 
 /** Environment checks. Never throws. `nix.resolve` is left out at session start: the first build downloads hundreds of MB, so nothing that needs Nix runs then. */
 export async function runDoctor(pi: ExtensionAPI, ctx: ExtensionContext, version = process.versions.node, nix: NixProbe = realNix): Promise<Check[]> {

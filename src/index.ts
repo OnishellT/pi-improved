@@ -39,7 +39,9 @@ const TMUX_WAIT = 30_000;
 export default async function (rawPi: ExtensionAPI) {
   const pi = withNix(rawPi);
   let subagentError = "";
-  const subagent = await loadBundledSubagent(pi).catch((e) => void (subagentError = `The bundled pi-subagent did not load (${e?.message ?? e}): no /subagent, and the review and plan check cannot run. Run \`npm install\` in the pi-improved folder.`));
+  const subagent = await loadBundledSubagent(pi).catch((e) => void (subagentError = `did not load (${e?.message ?? e})`));
+  if (subagent === "missing") subagentError = "is not installed";
+  if (subagentError) subagentError = `The bundled pi-subagent ${subagentError}: no /subagent, and the review and plan check cannot run. Run \`npm install\` in the pi-improved folder.`;
   // The first Nix build of tmux can take minutes: start it now, and make only a bash call wait for it. Children never start panes.
   const child = !!process.env.PI_SUBAGENT_RUN_DIR;
   const exposed = !child && (subagent === "bundled" || subagent === "global") ? exposeSubagent(undefined, undefined, undefined, subagent === "bundled") : undefined;
@@ -51,7 +53,6 @@ export default async function (rawPi: ExtensionAPI) {
   const moved = migrateGlobal();
   pi.on("session_start", (_event, ctx) => {
     const notices = [...moved.splice(0), ...migrateProject(ctx.cwd), ...(subagentError ? [subagentError] : [])];
-    subagentError = "";
     // readManifest treats an unreadable global file as empty; say so once per session, and why.
     const broken = globalProblem();
     if (broken) notices.push(`${broken}. It is ignored until fixed: only the project's .pi/workflow.json applies. /doctor shows the same.`);
