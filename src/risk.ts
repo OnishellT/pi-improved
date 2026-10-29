@@ -123,7 +123,8 @@ export async function assessRisk(exec: Exec, root: string, task: Task | undefine
   }
   for (const file of await untrackedFiles(exec, root)) {
     const text = await fs.readFile(path.join(root, file), "utf8").catch(() => "");
-    lines.set(file, text ? text.split("\n").length : 1);
+    // Like git, a final newline ends the last line; it does not start another.
+    lines.set(file, text ? text.split("\n").length - (text.endsWith("\n") ? 1 : 0) : 1);
   }
   const files = [...lines.keys()];
   const total = [...lines.values()].reduce((a, b) => a + b, 0);

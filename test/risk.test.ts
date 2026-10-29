@@ -32,6 +32,12 @@ test("untracked files count towards the diff", async () => {
   assert.match((await risk(exec([], ["a", "b", "c", "d", "e", "f", "g"]))).reasons[0], /7 files/);
 });
 
+test("a final newline does not count as one more line of an untracked file", async () => {
+  const lines = async (n: number) => assessRisk(exec([], ["a.ts"]), await tempProject({ "a.ts": "x\n".repeat(n) }), task, base);
+  assert.equal((await lines(200)).review, false);
+  assert.match((await lines(201)).reasons[0], /201 lines/);
+});
+
 test("dependency manifests, lockfiles and migrations", async () => {
   for (const f of ["package.json", "pnpm-lock.yaml", "yarn.lock", "bun.lockb", "requirements-dev.txt", "pyproject.toml", "go.mod", "Cargo.toml", "Gemfile"]) {
     assert.match((await risk(exec([[f, 1]]))).reasons.join(), /dependencies/, f);
