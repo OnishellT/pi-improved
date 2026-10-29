@@ -50,8 +50,8 @@ export const NIX_BUILD_FAILED = "Nix could not build";
 
 export class NixError extends Error {}
 
-/** A command result that `nixExec` produced because Nix is missing or could not build its package (not because the command itself failed). */
-export const isNixMissing = (r: { code: number; stderr: string }) => r.code === 127 && [NIX_MISSING, NIX_BUILD_FAILED].some((m) => r.stderr?.startsWith(m));
+/** A command result that `nixExec` produced because Nix is missing or could not build its package (not because the command itself failed). The stderr says which. */
+export const isNixFailure = (r: { code: number; stderr: string }) => r.code === 127 && [NIX_MISSING, NIX_BUILD_FAILED].some((m) => r.stderr?.startsWith(m));
 
 const cache = new Map<string, Promise<string>>();
 let credentials: Promise<CredentialStatus> | undefined;

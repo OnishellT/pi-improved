@@ -12,7 +12,7 @@ import { resolvePolicyFailure } from "./policy.ts";
 import { reviewDiff } from "./review.ts";
 import { skillsBlock } from "./skills.ts";
 import { oneLine, readTask, updateTask } from "./task-state.ts";
-import { type Signature, carryOnWhenPredated, failedLines, failureSignature, formatVerify, isNixMissingFailure, isPolicyFailure, predatesBaseline, runVerify, sameFailure, validCap } from "./verify.ts";
+import { type Signature, carryOnWhenPredated, failedLines, failureSignature, formatVerify, infraFailure, isPolicyFailure, predatesBaseline, runVerify, sameFailure, validCap } from "./verify.ts";
 
 const UNREADABLE = "unreadable";
 const MAX_REVIEWS = 1;
@@ -62,7 +62,7 @@ export function registerGate(pi: ExtensionAPI) {
   const verify = async (steps: string[], cwd: string, maxReport: unknown, before: Signature[] | undefined) => {
     const t0 = Date.now();
     const result = await runVerify(steps, pi.exec.bind(pi), cwd, undefined, validCap(maxReport), undefined, carryOnWhenPredated(before));
-    return { ok: result.ok, report: formatVerify(result), nix: isNixMissingFailure(result), policy: !result.ok && isPolicyFailure(result), signature: failureSignature(result), predated: predatesBaseline(result, before), lines: failedLines(result), seconds: (Date.now() - t0) / 1000 };
+    return { ok: result.ok, report: formatVerify(result), infra: infraFailure(result), policy: !result.ok && isPolicyFailure(result), signature: failureSignature(result), predated: predatesBaseline(result, before), lines: failedLines(result), seconds: (Date.now() - t0) / 1000 };
   };
   const emitVerify = (payload: Omit<VerifyPayload, "kind"> & { kind?: VerifyPayload["kind"] }) => void pi.events?.emit(VERIFY_EVENT, { kind: "gate", ...payload } satisfies VerifyPayload);
   /** Every `limits.verifyEvery` writes while implementing: the first verify command's result, to append to that tool result. Off when it was slow at baseline. */
@@ -83,7 +83,7 @@ export function registerGate(pi: ExtensionAPI) {
     const step = manifest.verify[0];
     const t0 = Date.now();
     const result = await runVerify([step], pi.exec.bind(pi), cwd, PROGRESS_TIMEOUT, validCap(manifest.maxReport));
-    if (isNixMissingFailure(result)) return;
+    if (infraFailure(result)) return;
     emitVerify({ root: cwd, kind: "progress", ok: result.ok, seconds: (Date.now() - t0) / 1000 });
     if (result.ok) return `Progress check: \`${step}\` passes.`;
     const old = predatesBaseline(result, task.baseline?.failing) ? " (it already failed before the change)" : "";
@@ -175,23 +175,23 @@ export function registerGate(pi: ExtensionAPI) {
     const reviewing = wanted && task && reviewModel ? review(ctx.cwd, task, reviewModel, abort.signal) : undefined;
     if (reviewing) ctx.ui.setStatus("review", `reviewing the diff with ${reviewModel}…`);
     const clearStatus = () => ctx.ui.setStatus("review", undefined);
-    const { ok, report, policy, nix, signature, predated: onlyOld, lines, seconds } = await verify(manifest.verify, ctx.cwd, manifest.maxReport, task?.baseline?.failing);
+    const { ok, report, policy, infra, signature, predated: onlyOld, lines, seconds } = await verify(manifest.verify, ctx.cwd, manifest.maxReport, task?.baseline?.failing);
     const emit = (extra: Pick<VerifyPayload, "predates" | "premise"> = {}) => emitVerify({ root: ctx.cwd, ok, seconds, ...extra });
-    if (nix) {
+    if (infra) {
       // Not a verify failure: the code cannot be at fault, so the model hears nothing and no retry is spent.
       emit();
       if (reviewing) {
         abort.abort();
         clearStatus();
       }
-      const message = `Verify did not run. ${nix}`;
+      const message = `Verify did not run. ${infra}`;
       ctx.ui.notify(message, "error");
       if (ctx.hasUI) {
         // The work stays a task in progress either way; only the user decides to go on without checking it.
         const choice = await ctx.ui.select(`${message}\n\nThe change cannot be checked until this is fixed.`, ["Leave the work unverified", "Stop here: I will fix it and finish again"]);
         if (choice === "Leave the work unverified") verified = remembered;
       } else {
-        ctx.ui.notify(`Unverified: ${nix} Nobody can answer here, so the task is not marked done.`, "warning");
+        ctx.ui.notify(`Unverified: ${infra} Nobody can answer here, so the task is not marked done.`, "warning");
         verified = remembered;
       }
       return deescalate(ctx).then(() => undefined);

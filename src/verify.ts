@@ -1,13 +1,12 @@
 import type { Exec } from "./git.ts";
-import { isNixMissing } from "./nix.ts";
+import { isNixFailure } from "./nix.ts";
 
 export interface StepResult {
   step: string;
   ok: boolean;
   output: string;
-  /** The step did not run: Nix, which runs every command, is not installed. */
-  /** Nix's own message when it is missing or could not build, so the user sees which. */
-  nixMissing?: string;
+  /** The step did not run: Nix, which runs every command, is missing or could not build its package. The output says which. */
+  infra?: boolean;
   /** The timeout or a signal stopped it, so its output is partial. */
   killed?: boolean;
 }
@@ -25,14 +24,14 @@ export async function runVerify(steps: string[], exec: Exec, cwd: string, timeou
     // Login shell on purpose: it loads PATH from nvm/asdf and the like, which a plain `bash -c` would miss.
     const { stdout, stderr, code, killed } = await exec("bash", ["-lc", step], { cwd, timeout, ...(signal && { signal }) });
     const ok = code === 0 && !killed;
-    results.push({ step, ok, output: tail(`${stdout}\n${stderr}`.trim(), maxReport), ...(killed && { killed: true }), ...(isNixMissing({ code, stderr }) && { nixMissing: stderr }) });
+    results.push({ step, ok, output: tail(`${stdout}\n${stderr}`.trim(), maxReport), ...(killed && { killed: true }), ...(isNixFailure({ code, stderr }) && { infra: true }) });
     if (!ok && !carryOn?.(results[results.length - 1])) break;
   }
   return { ok: results.length === steps.length && results.every((r) => r.ok), results };
 }
 
-/** Verify could not run because Nix is missing: the user must install it, and no change to the code helps. */
-export const isNixMissingFailure = ({ results }: Awaited<ReturnType<typeof runVerify>>) => results.find((r) => r.nixMissing)?.nixMissing;
+/** The Nix message when verify could not run because Nix is missing or failed to build: the user must act, and no change to the code helps. */
+export const infraFailure = ({ results }: Awaited<ReturnType<typeof runVerify>>) => results.find((r) => r.infra)?.output;
 
 /** A failing agentlint gate needs a fix or a recorded decision, not a smarter model. */
 export const isPolicyStep = (r: StepResult) => !r.ok && /\bagentlint\b|gate closed|unresolved findings/i.test(`${r.step}\n${r.output}`);
@@ -124,7 +123,7 @@ export interface Baseline {
   failing?: Signature[];
 }
 
-/** Every verify command run once before implementing, none stopping the others. Undefined when it cannot say (no steps, Nix missing, aborted). */
+/** Every verify command run once before implementing, none stopping the others. Undefined when it cannot say (no steps, Nix missing or failing, aborted). */
 export async function runBaseline(steps: string[], exec: Exec, cwd: string, maxReport?: unknown, signal?: AbortSignal): Promise<Baseline | undefined> {
   if (!steps.length) return undefined;
   const results: StepResult[] = [];
@@ -132,7 +131,7 @@ export async function runBaseline(steps: string[], exec: Exec, cwd: string, maxR
   for (const step of steps) {
     const t0 = Date.now();
     const run = await runVerify([step], exec, cwd, VERIFY_TIMEOUT, validCap(maxReport), signal);
-    if (isNixMissingFailure(run) || signal?.aborted) return undefined;
+    if (infraFailure(run) || signal?.aborted) return undefined;
     if (!results.length) seconds = (Date.now() - t0) / 1000;
     results.push(...run.results);
   }
