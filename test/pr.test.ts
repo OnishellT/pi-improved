@@ -140,6 +140,33 @@ test("the body calls a failing verify old only when this run's failures all pred
   assert.doesNotMatch(await shownBody("FAIL old.test.ts\nFAIL brand-new.test.ts"), /predate/);
 });
 
+test("an old first failure does not stop /pr from running the later steps", async () => {
+  const baseline = { ok: false, seconds: 1, failing: [stepSignature({ step: "check", ok: false, output: "FAIL old.test.ts" })!] };
+  const root = await tempProject({ ".pi/workflow.json": JSON.stringify({ version: 1, setup: "done", verify: ["check", "types"], connectors: [], review: { never: true } }), ".pi/task.json": JSON.stringify({ ...task, status: "implementing", baseline }) });
+  const inner = setup({ gh: false }).exec;
+  const ran: string[] = [];
+  const exec: any = async (cmd: string, args: string[]) => (cmd === "bash" ? (ran.push(args[1]), { code: 1, stdout: args[1] === "check" ? "FAIL old.test.ts" : "Error TS1 in a.ts", stderr: "", killed: false }) : inner(cmd, args));
+  const ui: any = fakeUI([true]);
+  let shown = "";
+  ui.notify = (m: string) => void (shown += m);
+  await runPr(exec, root, ui);
+  assert.deepEqual(ran, ["check", "types"]);
+  assert.doesNotMatch(shown, /predate/);
+});
+
+test("/pr keeps as much output as the gate, so a long old failure still matches the baseline", async () => {
+  const output = Array.from({ length: 300 }, (_, i) => `FAIL old ${i}.test.ts`).join("\n");
+  const baseline = { ok: false, seconds: 1, failing: [stepSignature({ step: "check", ok: false, output })!] };
+  const root = await tempProject({ ".pi/workflow.json": JSON.stringify({ version: 1, setup: "done", verify: ["check"], connectors: [], review: { never: true }, maxReport: 20000 }), ".pi/task.json": JSON.stringify({ ...task, status: "implementing", baseline }) });
+  const inner = setup({ gh: false }).exec;
+  const exec: any = async (cmd: string, args: string[]) => (cmd === "bash" ? { code: 1, stdout: output, stderr: "", killed: false } : inner(cmd, args));
+  const ui: any = fakeUI([true]);
+  let shown = "";
+  ui.notify = (m: string) => void (shown += m);
+  await runPr(exec, root, ui);
+  assert.match(shown, /predate this change/);
+});
+
 test("on the base branch: needs a confirmed task branch first", async () => {
   const refused = setup({ branch: "main" });
   assert.equal((await runPr(refused.exec, await project(), fakeUI([false]) as any)).status, "not-ready");

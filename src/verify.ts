@@ -49,17 +49,16 @@ type VerifyRun = Awaited<ReturnType<typeof runVerify>>;
 
 const FAILURE_LINE = /fail|error|✗|panick|assert/i;
 
-/** The failing step and its failure lines with numbers and whitespace normalized, sorted and without repeats. */
+/** The failing step and every line of its output with volatile values (times, durations, addresses) and whitespace normalized, sorted. Repeats stay: a line seen twice counts twice. */
 export interface Signature {
   step: string;
   lines: string[];
 }
 
-/** The lines of a step's output that look like errors, as printed. A cut-off first line (the report keeps only a tail) is dropped. */
-export function failureLines(output: string): string[] {
+function outputLines(output: string): string[] {
   const lines = output.split("\n");
   if (output.startsWith("…")) lines.shift();
-  return lines.map((l) => l.trim()).filter((l) => FAILURE_LINE.test(l));
+  return lines.map((l) => l.trim()).filter(Boolean);
 }
 
 /** What changes on every run of the same failure: timestamps, memory addresses (0x and 8 or more digits), durations. Line numbers and counts stay, so a shifted or different failure reads as new. */
@@ -68,24 +67,34 @@ const VOLATILE: [RegExp, string][] = [
   [/\b\d\d:\d\d:\d\d(?:[.,]\d+)?/g, "<time>"],
   [/\b0x[0-9a-fA-F]{8,}\b/g, "<hex>"],
   [/\b\d+(?:\.\d+)?(?:ms|s|m)\b/g, "<duration>"],
+  [/\b(duration(?:_ms)?\W{0,3})\d+(?:\.\d+)?/gi, "$1<duration>"],
 ];
 const normalize = (line: string) => VOLATILE.reduce((l, [re, to]) => l.replace(re, to), line).replace(/\s+/g, " ");
 
-/** Undefined when the step passed, was killed (its output is partial, so it never matches a baseline) or printed no error line. */
+/** The lines of a step's output that look like errors, as printed. A cut-off first line (the report keeps only a tail) is dropped. */
+export const failureLines = (output: string) => outputLines(output).filter((l) => FAILURE_LINE.test(l));
+
+/** Undefined when the step passed, printed nothing, or its output is partial (killed, or cut to the report size): a partial output never matches a baseline. */
 export function stepSignature(r: StepResult): Signature | undefined {
-  if (r.ok || r.killed) return undefined;
-  const lines = [...new Set(failureLines(r.output).map(normalize))].sort();
+  if (r.ok || r.killed || r.output.startsWith("…")) return undefined;
+  const lines = outputLines(r.output).map(normalize).sort();
   return lines.length ? { step: r.step, lines } : undefined;
 }
 
 /** The signature of the step that stopped the run: the last failing one. */
 export const failureSignature = ({ results }: VerifyRun) => stepSignature(results.findLast((r) => !r.ok) ?? { step: "", ok: true, output: "" });
 
-/** The same step failed with exactly the same lines. */
-export const sameFailure = (a?: Signature, b?: Signature) => !!a && !!b && a.step === b.step && a.lines.length === b.lines.length && a.lines.every((l) => b.lines.includes(l));
+const counts = (lines: string[]) => lines.reduce((m, l) => m.set(l, (m.get(l) ?? 0) + 1), new Map<string, number>());
 
-/** Every failure line of `now` was already failing in `before`: nothing new broke. */
-export const predates = (now?: Signature, before?: Signature) => !!now && !!before && now.step === before.step && now.lines.every((l) => before.lines.includes(l));
+/** The same step failed with exactly the same lines, as many times each. */
+export const sameFailure = (a?: Signature, b?: Signature) => !!a && !!b && a.lines.length === b.lines.length && predates(a, b);
+
+/** Every line of `now` was already in `before`, at least as often: nothing new printed. Any new line, or one printed more often, makes it new. */
+export function predates(now?: Signature, before?: Signature) {
+  if (!now || !before || now.step !== before.step) return false;
+  const had = counts(before.lines);
+  return [...counts(now.lines)].every(([line, n]) => n <= (had.get(line) ?? 0));
+}
 
 /** One failing step whose lines were all failing at the baseline already. */
 const stepPredates = (r: StepResult, before: Signature[] | undefined) => predates(stepSignature(r), Array.isArray(before) ? before.find((f) => f.step === r.step) : undefined);

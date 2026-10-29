@@ -7,7 +7,7 @@ import { readManifest } from "./manifest.ts";
 import { isNixMissing, NixError } from "./nix.ts";
 import { assessRisk } from "./risk.ts";
 import { isLocalState, LOCAL_STATE, oneLine, readTask, type Task } from "./task-state.ts";
-import { failedLines, formatVerify, predatesBaseline, runVerify } from "./verify.ts";
+import { carryOnWhenPredated, failedLines, formatVerify, predatesBaseline, runVerify, validCap } from "./verify.ts";
 
 const TEMPLATES = [".github/pull_request_template.md", ".github/PULL_REQUEST_TEMPLATE.md", "docs/pull_request_template.md", "pull_request_template.md"];
 const EVIDENCE_SKILL = ".pi/skills/verify-app/SKILL.md";
@@ -187,7 +187,7 @@ export async function runPr(exec: Exec, root: string, ui: Pick<ExtensionContext[
 
   let verify: BodyInput["verify"] = "none";
   if (manifest?.verify.length) {
-    const result = await runVerify(manifest.verify, exec, root);
+    const result = await runVerify(manifest.verify, exec, root, undefined, validCap(manifest.maxReport), undefined, carryOnWhenPredated(task?.baseline?.failing));
     verify = { ok: result.ok, text: formatVerify(result) };
     // Only this run decides: a failure that appeared after the gate's check is not "old".
     if (task && !result.ok) task = { ...task, predates: predatesBaseline(result, task.baseline?.failing) ? failedLines(result) : undefined };
