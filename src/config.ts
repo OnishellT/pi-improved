@@ -121,6 +121,8 @@ export interface Limits {
   retroEvery: number;
   /** While implementing, run the first verify command after every N write/edit calls and append its tail to the tool result; 0 turns it off. */
   verifyEvery: number;
+  /** Changed lines in one change (lockfiles, generated and vendored paths not counted) above which the diff is high risk, so the review checks that it has one purpose. */
+  changeCap: number;
   /** Largest plan that skips the approval dialog. */
   fastPath: { files: number; interface: number; decisions: number };
 }
@@ -133,11 +135,12 @@ export const DEFAULT_LIMITS: Limits = {
   planChecks: 1,
   retroEvery: 5,
   verifyEvery: 5,
+  changeCap: 500,
   fastPath: { files: 8, interface: 6, decisions: 2 },
 };
 
 /** Smallest value that makes sense for each limit; every limit is a whole number. */
-const MIN_LIMITS: Record<string, number> = { interviewQuestions: 1, agentlintRules: 1, verifyRetries: 0, failuresBeforeEscalation: 1, planChecks: 0, retroEvery: 0, verifyEvery: 0 };
+const MIN_LIMITS: Record<string, number> = { interviewQuestions: 1, agentlintRules: 1, verifyRetries: 0, failuresBeforeEscalation: 1, planChecks: 0, retroEvery: 0, verifyEvery: 0, changeCap: 1 };
 const MIN_FAST_PATH = 0;
 
 /** What is valid in one file's `limits`, and what is wrong with the rest. A bad value is left out, so a lower layer's value (or the default) applies. */

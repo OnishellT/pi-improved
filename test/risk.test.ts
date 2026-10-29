@@ -69,7 +69,8 @@ test("always forces and never disables", async () => {
 test("levels: none, low, high with the default thresholds", async () => {
   assert.equal((await risk(exec([["src/a.ts", 10]]))).level, "none");
   assert.equal((await risk(exec([["src/a.ts", 201]]))).level, "low");
-  assert.equal((await risk(exec([["src/a.ts", 600]]))).level, "low");
+  assert.equal((await risk(exec([["src/a.ts", 500]]))).level, "low");
+  assert.equal((await risk(exec([["src/a.ts", 501]]))).level, "high", "limits.changeCap");
   assert.equal((await risk(exec([["src/a.ts", 601]]))).level, "high");
   const sixteen = Array.from({ length: 16 }, (_, i) => [`src/f${i}.ts`, 1] as [string, number]);
   assert.equal((await risk(exec(sixteen.slice(0, 15)))).level, "low");
@@ -217,4 +218,80 @@ test("review.always and review.never still list the tests or verify files that c
   const edited = changing([["test/fee.test.ts", 3, 2]]);
   assert.deepEqual((await risk(edited, task, { ...base, review: { always: true } })).touched, ["test/fee.test.ts"]);
   assert.deepEqual((await risk(edited, task, { ...base, review: { never: true } })).touched, ["test/fee.test.ts"]);
+});
+
+// Quality rules: a real repo, because they read the diff's lines.
+async function repo(files: Record<string, string>) {
+  const { execFileSync } = await import("node:child_process");
+  const root = await tempProject(files);
+  // Committed before `task.startedAt`, so it is the task's base.
+  const env = { ...process.env, GIT_AUTHOR_DATE: "2026-09-01T00:00:00Z", GIT_COMMITTER_DATE: "2026-09-01T00:00:00Z" };
+  const git = (...a: string[]) => execFileSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", ...a], { cwd: root, stdio: "pipe", env });
+  git("init", "-q");
+  git("add", ".");
+  git("commit", "-qm", "init");
+  const real: any = async (cmd: string, args: string[], o: any) => {
+    try {
+      return { stdout: execFileSync(cmd, args, { cwd: o.cwd, encoding: "utf8", maxBuffer: 1 << 26 }), stderr: "", code: 0, killed: false };
+    } catch (e: any) {
+      return { stdout: "", stderr: String(e), code: e.status ?? 1, killed: false };
+    }
+  };
+  return { root, real, write: (f: string, c: string) => import("node:fs/promises").then((fs) => fs.mkdir(`${root}/${f}`.replace(/\/[^/]*$/, ""), { recursive: true }).then(() => fs.writeFile(`${root}/${f}`, c))) };
+}
+const fixTask: any = { ...task, title: "Fix the crash when the cart is empty" };
+
+test("a bug fix that changes source but no test is high risk and listed", async () => {
+  const r = await repo({ "src/cart.py": "def total(c):\n    return c[0]\n", "tests/test_cart.py": "assert True\n" });
+  await r.write("src/cart.py", "def total(c):\n    return c[0] if c else 0\n");
+  const out = await assessRisk(r.real, r.root, fixTask, base);
+  assert.equal(out.level, "high");
+  assert.match(out.reasons.join(), /bug fix changes source but no test/);
+  assert.deepEqual(out.flagged, ["Bug fix changes source but no test"]);
+  await r.write("tests/test_cart.py", "assert True\nassert total([]) == 0\n");
+  const withTest = await assessRisk(r.real, r.root, fixTask, base);
+  assert.doesNotMatch(withTest.reasons.join(), /no test/);
+  assert.equal(withTest.flagged, undefined);
+  await r.write("tests/test_cart.py", "");
+  assert.match((await assessRisk(r.real, r.root, fixTask, base)).reasons.join(), /no test/, "a test that only lost lines does not count");
+  const feature = await assessRisk(r.real, r.root, { ...task, title: "Add a discount line" }, base);
+  assert.doesNotMatch(feature.reasons.join(), /no test/);
+});
+
+test("the dialog lists the quality notes whatever the review policy, the change cap included", async () => {
+  const r = await repo({ "src/cart.py": "def total(c):\n    return c[0]\n" });
+  await r.write("src/cart.py", "def total(c):\n    return c[0] if c else 0\n");
+  for (const review of [{ always: true }, { never: true }]) assert.deepEqual((await assessRisk(r.real, r.root, fixTask, { ...base, review })).flagged, ["Bug fix changes source but no test"]);
+  const capped = await assessRisk(r.real, r.root, task, { ...base, limits: { changeCap: 1 } });
+  assert.match(capped.flagged?.join() ?? "", /changed lines in one change \(cap 1\)/);
+});
+
+test("tests that lose assertions or gain skip markers are high risk and listed, even when planned", async () => {
+  const r = await repo({ "src/a.ts": "export const a = 1;\n", "src/a.test.ts": "test('a', () => {\n  expect(a).toBe(1);\n  expect(a).toBeGreaterThan(0);\n});\n" });
+  const planned = { ...task, plan: { ...plan, files: ["src/a.ts", "src/a.test.ts"] } };
+  await r.write("src/a.test.ts", "test('a', () => {\n  expect(a).toBe(1);\n});\n");
+  const out = await assessRisk(r.real, r.root, planned, base);
+  assert.equal(out.level, "high");
+  assert.deepEqual(out.flagged, ["Existing tests weakened", "src/a.test.ts: 1 assertion removed"]);
+  assert.equal(out.touched, undefined);
+  await r.write("src/a.test.ts", "test.skip('a', () => {\n  expect(a).toBe(1);\n  expect(a).toBeGreaterThan(0);\n});\n");
+  assert.match((await assessRisk(r.real, r.root, planned, base)).flagged?.[1] ?? "", /marker/);
+  await r.write("src/a.test.ts", "test('a', () => {\n  expect(a).toBe(2);\n  expect(a).toBeGreaterThan(0);\n});\n");
+  assert.equal((await assessRisk(r.real, r.root, planned, base)).level, "none", "a changed expected value is not a weakened test");
+});
+
+test("one change over limits.changeCap is high risk; lockfiles and vendored paths do not count", async () => {
+  const r = await repo({ "src/a.py": "x = 1\n" });
+  const lines = (n: number) => `${Array.from({ length: n }, (_, i) => `v${i} = ${i}`).join("\n")}\n`;
+  const big = { ...base, review: { minLevel: "low" as const, maxLines: 5000, highLines: 5000 } };
+  await r.write("src/a.py", lines(500));
+  const over = await assessRisk(r.real, r.root, task, big);
+  assert.equal(over.level, "high");
+  assert.match(over.reasons.join(), /501 changed lines in one change \(cap 500\)/);
+  await r.write("src/a.py", lines(499));
+  assert.equal((await assessRisk(r.real, r.root, task, big)).level, "none");
+  await r.write("vendor/lib/x.py", lines(900));
+  await r.write("poetry.lock", lines(900));
+  assert.equal((await assessRisk(r.real, r.root, task, big)).level, "none", "vendored and lock files are not counted");
+  assert.match((await assessRisk(r.real, r.root, task, { ...big, limits: { changeCap: 100 } } as any)).reasons.join(), /500 changed lines in one change \(cap 100\)/);
 });
