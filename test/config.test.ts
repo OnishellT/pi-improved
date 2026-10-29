@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { test } from "node:test";
-import { checkLimits, DEFAULT_LIMITS, globalPath, globalProblem, limitsOf, merge, readGlobal, resolveLimits, updateGlobal, writeFileAtomic } from "../src/config.ts";
+import { checkLimits, DEFAULT_LIMITS, globalPath, globalProblem, limitsOf, exists, merge, readGlobal, resolveLimits, updateGlobal, writeFileAtomic } from "../src/config.ts";
 import { registerComputer } from "../src/computer/index.ts";
 import { runDoctor } from "../src/doctor.ts";
 import { registerGuards } from "../src/guards.ts";
@@ -526,4 +526,14 @@ test("selfCompact: the project's values win over the global ones per model, and 
     const flagged = await info({ "compact-warning": "130k", "compact-notice": "70k" });
     assert.match(flagged, /Notice 70,000, warning 130,000, force 150,000 tokens/, "flags beat the files");
   });
+});
+
+test("exists is false for a missing path or parent and throws on other errors", async () => {
+  const dir = await fs.mkdtemp(path.join((await import("node:os")).tmpdir(), "pi-exists-"));
+  await fs.writeFile(path.join(dir, "file"), "");
+  assert.equal(await exists(path.join(dir, "file")), true);
+  assert.equal(await exists(path.join(dir, "missing")), false);
+  assert.equal(await exists(path.join(dir, "file", "child")), false);
+  await fs.symlink("loop", path.join(dir, "loop"));
+  await assert.rejects(exists(path.join(dir, "loop")), { code: "ELOOP" });
 });

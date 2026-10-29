@@ -29,7 +29,7 @@ test("an edit of the acceptances file points the agent at propose, not accept", 
   registerGuards(pi);
   const r = await emit("tool_call", { toolName: "edit", input: { path: ".agentlint/acceptances.jsonl" } }, { cwd: "/" });
   assert.equal(r?.block, true);
-  assert.match(r.reason, /agentlint propose <selector> --summary/);
+  assert.match(r.reason, /agentlint propose <selector> --summary.*agentlint next --format json/);
   assert.doesNotMatch(r.reason, /agentlint accept/);
 });
 
