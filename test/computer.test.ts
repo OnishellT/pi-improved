@@ -243,7 +243,7 @@ test("/computer turns the private desktop on and off when its tools exist", { sk
     const reloaded = fakePi();
     await registerComputer(reloaded.pi);
     await reloaded.commands.get("computer").handler("", { ui: fakeUI(["No changes", "Off"]) });
-    assert.notEqual(process.env.PI_DESKTOP, desktopWrapper());
+    assert.equal(process.env.PI_DESKTOP, "mine", "the person's value survives a reload");
   });
 });
 

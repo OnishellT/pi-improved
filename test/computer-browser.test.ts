@@ -42,13 +42,14 @@ async function until(check: () => boolean | Promise<boolean>, what: string) {
 }
 
 /** A CDP endpoint that answers like a browser: records every call, hands out one owned target. */
-async function fakeChrome(calls: any[]) {
+async function fakeChrome(calls: any[], hold?: Promise<void>) {
   const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
   await once(server, "listening");
   server.on("connection", (socket) =>
-    socket.on("message", (data) => {
+    socket.on("message", async (data) => {
       const call = JSON.parse(String(data));
       calls.push(call);
+      if (call.method === "Target.createTarget") await hold; // a slow window: the server may exit meanwhile
       let result: any = {};
       if (call.method === "Target.createTarget") result = { targetId: "owned" };
       else if (call.method === "Target.attachToTarget") result = { sessionId: "owned-session" };
@@ -354,6 +355,29 @@ test("the isolated browser starts again after it dies, and its window closes whe
     await until(() => calls.some((c) => c.method === "Target.closeTarget" && c.params.targetId === "owned"), "the window to close on exit");
   } finally {
     await main?.close();
+    await stop(chrome);
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("an isolated window still being created when the server exits is closed too", async () => {
+  const dir = await scratch();
+  const profile = path.join(dir, "profile");
+  const file = path.join(profile, "DevToolsActivePort");
+  const calls: any[] = [];
+  let release!: () => void;
+  const chrome = await fakeChrome(calls, new Promise((resolve) => (release = resolve)));
+  await fs.mkdir(profile);
+  await fs.writeFile(file, `${(chrome.address() as any).port}\n/devtools/browser\n`);
+  try {
+    const main = await client([{ id: "isolated", name: "Headless Chromium", portFile: file, launch: { profile } }]);
+    const opening = main.callTool({ name: "open", arguments: {} }).catch(() => {});
+    await until(() => calls.some((c) => c.method === "Target.createTarget"), "the window to be requested");
+    await main.close();
+    release();
+    await opening;
+    await until(() => calls.some((c) => c.method === "Target.closeTarget" && c.params.targetId === "owned"), "the window to close on exit");
+  } finally {
     await stop(chrome);
     await fs.rm(dir, { recursive: true, force: true });
   }
