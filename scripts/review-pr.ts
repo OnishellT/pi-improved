@@ -17,7 +17,7 @@ import {
 } from "./review/diff.ts";
 import { planDelta } from "./review/delta.ts";
 import { fetchThreads, graphqlArgs, remoteFor } from "./review/github.ts";
-import { linkCredentials } from "./review/profile.ts";
+import { checkSeparateProfiles, linkCredentials } from "./review/profile.ts";
 import { parsePiStream } from "./review/pi-stream.ts";
 import {
   buildReviewPayload,
@@ -298,6 +298,7 @@ function buildContext(
 // Creates or refreshes the reviewer's pi profile from the repo's settings and links the
 // owner's credentials into it. Fails clearly when the provider is not signed in.
 async function ensurePiProfile() {
+  checkSeparateProfiles(piMainDir, piDir);
   mkdirSync(piDir, { recursive: true, mode: 0o700 });
   const settings = readFileSync(piSettingsFile, "utf8");
   const settingsPath = join(piDir, "settings.json");

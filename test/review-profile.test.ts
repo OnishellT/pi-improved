@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { lstatSync, mkdirSync, readlinkSync, symlinkSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { test } from "node:test";
-import { linkCredentials } from "../scripts/review/profile.ts";
+import { checkSeparateProfiles, linkCredentials } from "../scripts/review/profile.ts";
 import { tempDir } from "./helpers.ts";
 
 async function dirs() {
@@ -69,4 +69,13 @@ test("a correct link is kept as is", async () => {
   const before = lstatSync(join(pi, "auth.json")).ino;
   linkCredentials(main, pi, "openai");
   assert.equal(lstatSync(join(pi, "auth.json")).ino, before);
+});
+
+test("overlapping main and reviewer profiles are rejected", async () => {
+  const { main, pi } = await dirs();
+  assert.throws(() => checkSeparateProfiles(main, main), /overlaps the main pi profile/);
+  assert.throws(() => checkSeparateProfiles(main, join(main, "reviewer")), /overlaps/);
+  symlinkSync(main, join(pi, "alias"));
+  assert.throws(() => checkSeparateProfiles(main, join(pi, "alias")), /overlaps/);
+  checkSeparateProfiles(main, pi);
 });

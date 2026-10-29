@@ -1,10 +1,12 @@
 // GitHub and git plumbing of the reviewer that can be tested without the network.
 import { collectPages, type Page } from "./pages.ts";
 
-// `host/owner/name` of an https, ssh or scp-style git URL.
+// `host/owner/name` of an https or ssh URL (a port only after a scheme) or an scp-style one.
 const hostAndPath = (url: string) =>
-  /^(?:[\w+]+:\/\/)?(?:[^@/]+@)?([^/:]+)(?::\d+)?[:/](.+?)(?:\.git)?\/?$/
-    .exec(url)
+  (
+    /^[\w+]+:\/\/(?:[^@/]+@)?([^/:]+)(?::\d+)?\/(.+?)(?:\.git)?\/?$/.exec(url) ??
+    /^(?:[^@/]+@)?([^/:]+):(.+?)(?:\.git)?\/?$/.exec(url)
+  )
     ?.slice(1, 3)
     .join("/")
     .toLowerCase();
