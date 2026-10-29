@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { agentlintCheck } from "./discover.ts";
+import { agentlintCheck, agentlintCmd } from "./discover.ts";
 import { globalPath, globalPreferences, merge, readGlobal, withValidLimits, writeFileAtomicAsync, type Limits } from "./config.ts";
 import type { ProfileFile } from "./self-compact/config.ts";
 
@@ -99,6 +99,10 @@ export const MANIFEST_PATH = ".pi/workflow.json";
 const empty = (): Manifest => ({ version: 1, setup: "pending", verify: [], connectors: [] });
 
 /** The project file alone, with the state defaults. This is what gets written back; preferences from the global file are not in it. */
+// Older setups stored these; both fetch an unrelated registry package named agentlint when the project has none installed.
+const LEGACY_AGENTLINT = /^(?:npm exec agentlint --|npx agentlint)(?=\s|$)/;
+const pinAgentlint = (cmd: unknown) => (typeof cmd === "string" ? cmd.replace(LEGACY_AGENTLINT, agentlintCmd("npm")) : cmd);
+
 export async function readProjectManifest(root: string): Promise<Manifest> {
   try {
     const raw = JSON.parse(await fs.readFile(path.join(root, MANIFEST_PATH), "utf8"));
@@ -106,6 +110,8 @@ export async function readProjectManifest(root: string): Promise<Manifest> {
     const m = { ...empty(), ...raw };
     if (!Array.isArray(m.verify)) m.verify = [];
     if (!Array.isArray(m.connectors)) m.connectors = [];
+    for (const key of ["agentlint", "agentlintStep"] as const) if (m[key] !== undefined) m[key] = pinAgentlint(m[key]);
+    m.verify = m.verify.map(pinAgentlint);
     return m;
   } catch (error: any) {
     if (error.code === "ENOENT") return empty();
