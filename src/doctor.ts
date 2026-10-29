@@ -11,7 +11,7 @@ import { configFiles, readManifest, readProjectManifest, type Manifest } from ".
 import { listSkills } from "./skills.ts";
 import { chromeHeadless, credentialStatus, hasNix, installMessage, NIXPKGS, nixPackage, type CredentialStatus } from "./nix.ts";
 
-const MIN_NODE = [22, 18];
+const MIN_NODE = [22, 19];
 
 export interface Check {
   name: string;

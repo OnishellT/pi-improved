@@ -4,7 +4,7 @@ Automatic project setup for Pi, so cheap models work with good context. The chea
 
 ## Install
 
-Requirements: Linux or macOS, Node >= 22.18 and **[Nix](https://nixos.org/download/)**. `pi install` itself runs git and npm, so both must be on your PATH (the flake's pi below has them). Nix is mandatory: tmux (the review and plan-check subagents run in tmux sessions), git, gh, bash and the headless Chromium for `show` and the isolated browser come from one pinned nixpkgs (the rev in `flake.lock`), downloaded on first use and cached by Nix, so nothing else has to be installed or kept in step. On Linux and WSL (needs systemd): `curl --proto '=https' --tlsv1.2 -L https://nixos.org/nix/install | sh -s -- --daemon`. On macOS: `curl --proto '=https' --tlsv1.2 -L https://nixos.org/nix/install | sh`. Intel Macs have no headless Chromium in nixpkgs, so `show` on HTML and the isolated browser are unavailable there. Without Nix, those features say so with the command for your OS, and `/doctor` reports it. Your own ssh stays the system's, `tern` and the desktop tools are not packaged, and the browser `/computer` can drive in relay mode is the one you installed. The rest ships with the package, including the [pi-subagent](https://github.com/OnishellT/pi-subagent) CLI (a fork that passes `PI_CODING_AGENT_DIR` to its children) and [agentlint](https://github.com/aurelienbobenrieth/agentlint). A pi-subagent installed in pi itself wins over the bundled one and keeps its own widget and `/subagent`.
+Requirements: Linux or macOS, Node >= 22.19 and **[Nix](https://nixos.org/download/)**. `pi install` itself runs git and npm, so both must be on your PATH (the flake's pi below has them). Nix is mandatory: tmux (the review and plan-check subagents run in tmux sessions), git, gh, bash and the headless Chromium for `show` and the isolated browser come from one pinned nixpkgs (the rev in `flake.lock`), downloaded on first use and cached by Nix, so nothing else has to be installed or kept in step. On Linux and WSL (needs systemd): `curl --proto '=https' --tlsv1.2 -L https://nixos.org/nix/install | sh -s -- --daemon`. On macOS: `curl --proto '=https' --tlsv1.2 -L https://nixos.org/nix/install | sh`. Intel Macs have no headless Chromium in nixpkgs, so `show` on HTML and the isolated browser are unavailable there. Without Nix, those features say so with the command for your OS, and `/doctor` reports it. Your own ssh stays the system's, `tern` and the desktop tools are not packaged, and the browser `/computer` can drive in relay mode is the one you installed. The rest ships with the package, including the [pi-subagent](https://github.com/OnishellT/pi-subagent) CLI (a fork that passes `PI_CODING_AGENT_DIR` to its children) and [agentlint](https://github.com/aurelienbobenrieth/agentlint). A pi-subagent installed in pi itself wins over the bundled one and keeps its own widget and `/subagent`.
 
 ```sh
 pi install git:github.com/OnishellT/pi-improved
@@ -109,7 +109,7 @@ never as an error. Compare two periods with `--since/--until`.
 
 ## Development
 
-Node >= 22.18 runs the `.ts` sources and tests directly, no build step.
+Node >= 22.19 runs the `.ts` sources and tests directly, no build step.
 
 ```sh
 npm test            # node --test test/*.test.ts
