@@ -20,7 +20,7 @@ Build one, in roughly this order:
 5. Throwaway harness: a minimal subset of the system calling the buggy path once.
 6. Property or fuzz loop for "sometimes wrong output".
 7. Bisection or differential loop between two known states (commit, version, config); automate it for `git bisect run`.
-8. Last resort: a human clicks, driven by `scripts/hitl-loop.template.sh`.
+8. Last resort: a human clicks, driven by a minimal loop script you write yourself: it prints each step to do, waits for the person, and records what they report.
 
 Then tighten it: faster (narrow scope, cache setup), sharper (assert the exact symptom, not "didn't crash"), more deterministic (pin time, seed RNG, freeze network).
 
