@@ -70,6 +70,7 @@ Every key the code reads. Setup and `/models` write most of them; the rest you e
 | `models` | `{ setup, implement, review, escalate }` | session model | `provider/model` per phase, set with `/models`. `escalate` falls back to `review`, then `setup`. A model review needs `models.review`. |
 | `skills` | `{ <phase>: string[] }` | built-in lists | Skills injected per phase. Phases: `setup`, `plan`, `implement`, `diagnose`, `review`, `learn`. Set with `/skills`. |
 | `skillsOnDemand` | `{ <phase>: string[] }` | built-in lists | Skills listed as a one-line index the agent reads only if needed. |
+| `useAgentlint` | `ask` \| `always` \| `never` | `ask` | Whether `/setup` adds agentlint rules (Node projects): `ask` asks, `always` adds them without asking, `never` neither asks nor enforces them. |
 | `basePrompt` | boolean | `true` | `false` removes the `unslop` skill and working-style lines from the main prompt. |
 | `maxReport` | number | `4000` | Characters of failing-step output kept in a verify report. Minimum 200. |
 | `contextWarn` | number | `150000` | Context tokens at which a one-time notice suggests `/compact`. `0` turns it off. |
@@ -86,6 +87,7 @@ Every key the code reads. Setup and `/models` write most of them; the rest you e
 | `limits.failuresBeforeEscalation` | integer >= 1 | `2` | Failed verifies after which the `escalate` model takes the attempt. |
 | `limits.planChecks` | integer >= 0 | `1` | Paid plan checks per task. `0` turns them off. |
 | `limits.retroEvery` | integer >= 0 | `5` | A retro every this many finished tasks. `0` turns it off. |
+| `limits.verifyEvery` | integer >= 0 | `5` | While implementing, every this many writes the first `verify` command runs (60 s cap) and its result is appended to the tool result. It is off when that command took 30 s or more before the change. `0` turns it off. |
 | `limits.fastPath.files`, `.interface`, `.decisions` | integer >= 0 | `8`, `6`, `2` | Largest plan (files, interface entries, decisions) that skips the approval dialog. |
 | `computer` | `{ browser?, desktop? }` | off | Set by `/computer` ([docs/COMPUTER.md](docs/COMPUTER.md)). Global file only: a repo cannot choose what the agent drives. |
 | `subagentPanes` | `tern` | tmux only | `tern` opens subagent panes in Tern too. Global file only. |
