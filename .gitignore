@@ -1,4 +1,7 @@
 node_modules/
 .bundled/
 __pycache__/
-package-lock.json
+.pi/
+.env
+*.log
+.DS_Store
