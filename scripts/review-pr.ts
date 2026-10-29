@@ -24,6 +24,7 @@ import {
   splitDiffByFile,
   wholeFileChanges,
 } from "./review/diff.ts";
+import { planDelta } from "./review/delta.ts";
 import { collectPages, type Page } from "./review/pages.ts";
 import { parsePiStream } from "./review/pi-stream.ts";
 import {
@@ -331,6 +332,7 @@ function buildContext(
   commits: string,
   delta?: string,
   lastReviewed?: string,
+  fullReason?: string,
 ) {
   const sections: string[] = [];
   for (const path of contextDocs(policy.list("docs"))) {
@@ -365,6 +367,8 @@ function buildContext(
     sections.push(
       `## Review mode: FOLLOW-UP\n\nThis is a follow-up round. The last reviewed commit is ${lastReviewed}. Review the delta below; the full diff that follows is background only. Report new findings only on lines changed in the delta (a critical problem anywhere is the one exception), and judge every unresolved earlier thread.\n\n${fenced("Delta since the last reviewed commit", delta)}`,
     );
+  } else if (fullReason !== undefined) {
+    sections.push(`## Review mode: FULL REVIEW\n\n${fullReason} Review the whole diff, and judge every unresolved earlier thread.\n`);
   } else {
     sections.push("## Review mode: FIRST REVIEW\n\nReview the whole diff.\n");
   }
@@ -616,26 +620,27 @@ async function main() {
     const commits = await sh(["git", "log", "--format=%h %s", `origin/${data.base}..${data.sha}`], {
       cwd: worktree,
     });
-    // Follow-up rounds judge what changed since the last reviewed commit (when it is still around).
-    let delta: string | undefined;
-    if (lastReviewed !== undefined && !data.sha.startsWith(lastReviewed)) {
-      const known = await run(["git", "cat-file", "-e", `${lastReviewed}^{commit}`], {
-        cwd: worktree,
-      });
-      if (known.code === 0) {
-        const deltaDiff = await sh(gitDiffCommand(`${lastReviewed}..${data.sha}`), {
-          cwd: worktree,
-        });
-        delta = deltaDiff;
-      }
-    }
+    // Follow-up rounds judge what changed since the last reviewed commit, unless a rebase or
+    // force-push since then would mix the base branch's changes into that range.
+    const plan = await planDelta(
+      (args) => run(["git", ...args], { cwd: worktree }),
+      lastReviewed,
+      data.sha,
+      `origin/${data.base}`,
+    );
+    const delta =
+      plan.mode === "delta" ? await sh(gitDiffCommand(plan.range), { cwd: worktree }) : undefined;
+    const fullReason = plan.mode === "full" ? plan.reason : undefined;
     const deltaChanged = delta === undefined ? undefined : splitDiffByFile(delta).map((file) => file.path);
     if (skipsMarkdownOnly(changed, lastReviewed !== undefined, deltaChanged)) {
       console.log(`PR #${pr} changes only Markdown files: no review needed.`);
       return;
     }
     const contextFile = join(scratch, "context.md");
-    writeFileSync(contextFile, buildContext(policy, data, diff, paths, commits, delta, lastReviewed));
+    writeFileSync(
+      contextFile,
+      buildContext(policy, data, diff, paths, commits, delta, lastReviewed, fullReason),
+    );
     console.error(
       `reviewing #${pr} at ${data.sha.slice(0, 7)} with ${provider}/${model}:${thinking} (${paths.length} files)...`,
     );
@@ -670,7 +675,14 @@ async function main() {
       const thread = openThreads.get(verdict.threadId);
       return `- \`${thread?.path}:${thread?.line ?? "outdated"}\` ${verdict.verdict === "fixed" ? "fixed" : "not fixed"}: ${verdict.note}`;
     });
-    const body = renderBody({ review, sha: data.sha, outside, threadNotes, notFixed });
+    const body = renderBody({
+      review,
+      sha: data.sha,
+      outside,
+      threadNotes,
+      notFixed,
+      note: fullReason,
+    });
     const secrets = localSecrets(mainClone);
     // Raw text, not JSON: escaping would hide secrets that hold quotes, backslashes or newlines.
     const outgoing = [body, ...inline.map(inlineCommentBody)].join("\n");
