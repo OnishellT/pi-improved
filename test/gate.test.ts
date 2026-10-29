@@ -870,14 +870,21 @@ test("leaving an escalated attempt does not undo a model picked since (/task can
 });
 
 test("editing an untracked file (even only its line ends, next to a dangling link) is a new diff to review; a review that did not run is tried again on the same diff", async () => {
-  const t = await setup({ pass: true, task: true, review: "VERDICT: APPROVED", answers: [false, false] });
+  const t = await setup({ pass: true, task: true, review: "VERDICT: APPROVED", answers: [false, false, false] });
   await t.setUntracked("a\n");
   await t.run();
   await t.settle();
   await t.run();
   await t.setUntracked("a\r\n");
   await t.settle();
-  assert.equal(t.notes.filter((n) => n === "Diff review: approved.").length, 2);
+  // A chmod alone, with the old mtime put back, is a change too.
+  const file = path.join(t.root, "new.ts");
+  await fs.utimes(file, 1e9, 1e9);
+  await t.run();
+  await fs.chmod(file, 0o755);
+  await fs.utimes(file, 1e9, 1e9);
+  await t.settle();
+  assert.equal(t.notes.filter((n) => n === "Diff review: approved.").length, 3);
   const s = await setup({ pass: true, task: true, review: "no verdict here", answers: [false, false] });
   await s.run();
   await s.emit("tool_result", { toolName: "write" }, s.ctx);
