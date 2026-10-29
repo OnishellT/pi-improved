@@ -79,8 +79,8 @@ const tmux: Tern = async (args) => {
 const systemTmux: Tern = (args) => new Promise((resolve) => execFile("tmux", args, { timeout: 5_000 }, (err, stdout) => resolve(err ? undefined : stdout)));
 const tmuxSessions = async () => new Set((((await tmux(["list-sessions", "-F", "#{session_name}"])) ?? (await systemTmux(["list-sessions", "-F", "#{session_name}"]))) ?? "").split("\n"));
 
-/** This session's children whose tmux session is alive, oldest first. */
-export function sessionRuns(sessionId: string, live: Set<string>, dir = path.join(agentDir(), "subagents")): Run[] {
+/** This session's children whose tmux session is alive (all of them without `live`), oldest first. */
+export function sessionRuns(sessionId: string, live?: Set<string>, dir = path.join(agentDir(), "subagents")): Run[] {
   let names: string[];
   try {
     names = fs.readdirSync(dir);
@@ -96,7 +96,7 @@ export function sessionRuns(sessionId: string, live: Set<string>, dir = path.joi
     }
   });
   return runs
-    .filter((m) => (m.parentSessionId === sessionId || ownRuns.has(m.handle)) && live.has(m.tmuxSession))
+    .filter((m) => (m.parentSessionId === sessionId || ownRuns.has(m.handle)) && (!live || live.has(m.tmuxSession)))
     .sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)))
     .map((m) => ({
       handle: m.handle,
@@ -286,6 +286,13 @@ export function registerSubagentView(pi: ExtensionAPI, view: boolean, target: Pa
   let frame = 0;
   // A `/subagent` pick that comes back after shutdown opens no pane: nothing would close it.
   let stopped = false;
+  // The widget asks every second for the whole session: without a child of ours on disk there is no tmux to ask.
+  const liveRuns = async (sessionId: string) => {
+    const runs = sessionRuns(sessionId);
+    if (!runs.length) return runs;
+    const alive = await live();
+    return runs.filter((r) => alive.has(r.tmux));
+  };
 
   pi.on("session_start", (_event, ctx) => {
     stopped = false;
@@ -293,7 +300,7 @@ export function registerSubagentView(pi: ExtensionAPI, view: boolean, target: Pa
     clearInterval(timer);
     const paint: Paint = (color, text) => ctx.ui.theme.fg(color, text);
     const tick = async () => {
-      const runs = sessionRuns(ctx.sessionManager.getSessionId(), await live());
+      const runs = await liveRuns(ctx.sessionManager.getSessionId());
       // One row per child: pi pads widget lines by one column on each side and wraps longer ones.
       const width = (process.stdout.columns || 80) - 2;
       if (view) {
@@ -322,7 +329,7 @@ export function registerSubagentView(pi: ExtensionAPI, view: boolean, target: Pa
     description: "Show a subagent spawned by this session (in tmux or Tern, focus or open its pane)",
     handler: async (args, ctx) => {
       if (!target) return bundledCommand?.handler(args, ctx);
-      const runs = sessionRuns(ctx.sessionManager.getSessionId(), await live());
+      const runs = await liveRuns(ctx.sessionManager.getSessionId());
       if (runs.length === 0) return ctx.ui.notify("No active subagents spawned by this session", "info");
       const now = Date.now();
       const labels = runs.map((r) => runLine({ ...r, name: `${r.name} (${r.handle})` }, activity(r.sessionFile), now, 0));

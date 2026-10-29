@@ -122,7 +122,9 @@ export function registerShow(pi: ExtensionAPI, exec: Run = run, browser: () => P
       const bin = await browser();
       if (!bin) throw new Error("No browser available for HTML and SVG: show a PNG instead.");
       const dir = path.join(agentDir(), "renders");
-      fs.mkdirSync(dir, { recursive: true });
+      // Mockups may hold project data: private, like the browser profile.
+      fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+      fs.chmodSync(dir, 0o700);
       pruneRenders(dir, 7 * 24 * 3600e3);
       const name = `${Date.now()}-${id.replace(/[^\w-]/g, "")}`;
       const page = path.join(dir, `${name}.html`);
