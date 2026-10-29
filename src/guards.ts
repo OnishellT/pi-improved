@@ -62,8 +62,8 @@ export function registerGuards(pi: ExtensionAPI) {
         const manifest = await readManifest(ctx.cwd).catch(() => undefined);
         // The configured command is shell text already; only the fallback path is quoted.
         const agentlint = manifest?.agentlint ?? shellQuote(resolveBin("agentlint"));
-        // propose only records the proposal: the verify gate's agentlint step is what asks the user.
-        const asked = manifest?.verify.some(agentlintStepOf(manifest)) ? "the verify gate asks the user to approve it" : "then ask the user to review and approve that proposal, since no agentlint verify step will ask them";
+        // propose only records the proposal: the verify gate's agentlint step (run once setup is done) is what asks the user.
+        const asked = manifest?.setup === "done" && manifest.verify.some(agentlintStepOf(manifest)) ? "the verify gate asks the user to approve it" : "then ask the user to review and approve that proposal, since no agentlint verify step will ask them";
         return { block: true, reason: `${file} holds the exceptions the user approved. Do not edit it; run \`${agentlint} propose <selector> --summary '<why>'\` (selector from \`${agentlint} next --format json\`); ${asked}.` };
       }
       return;
