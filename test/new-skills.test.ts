@@ -57,6 +57,12 @@ test("every script a bundled skill points at exists, in the skill's folder or in
   }
 });
 
+test("the review skill says the diff comes in the brief, since its reviewer cannot run git", async () => {
+  const { body } = await loadSkill("code-review");
+  assert.match(body, /supplied in the brief/);
+  assert.doesNotMatch(body, /Confirm the ref resolves|issue references in commits/);
+});
+
 test("unslop keeps the em-dash rule", async () => {
   const { body } = await loadSkill("unslop");
   assert.match(body, /em dash/i);
