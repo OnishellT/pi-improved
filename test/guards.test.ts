@@ -29,7 +29,9 @@ test("an edit of the acceptances file points the agent at propose, not accept", 
   registerGuards(pi);
   const r = await emit("tool_call", { toolName: "edit", input: { path: ".agentlint/acceptances.jsonl" } }, { cwd: "/" });
   assert.equal(r?.block, true);
-  assert.match(r.reason, /agentlint propose <selector> --summary.*agentlint next --format json/);
+  const { resolveBin } = await import("../src/bin.ts");
+  assert.ok(r.reason.includes(`\`${resolveBin("agentlint")} propose <selector> --summary`), "falls back to the bundled agentlint");
+  assert.match(r.reason, /agentlint next --format json/);
   assert.doesNotMatch(r.reason, /agentlint accept/);
   const root = await tempProject({ ".pi/workflow.json": JSON.stringify({ version: 1, setup: "done", agentlint: "pnpm agentlint" }) });
   const configured = await emit("tool_call", { toolName: "write", input: { path: ".agentlint/acceptances.jsonl" } }, { cwd: root });
