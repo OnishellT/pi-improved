@@ -1,5 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { isLaws } from "./bend.ts";
 import { limitsOf } from "./config.ts";
 import { diffBase, EMPTY_TREE, git, untrackedFiles, type Exec } from "./git.ts";
 import { BREAK, collectDiffs, isDocs, isFixTask, isGenerated, qualityVerdict, weakenedNotes } from "./quality.ts";
@@ -66,7 +67,7 @@ const isOwnState = (file: string) => isLocalState(file) || file === MANIFEST_PAT
 function nameStatus(out: string | undefined, added = false) {
   const parts = (out ?? "").split("\0");
   const files: string[] = [];
-  for (let i = 0; i + 1 < parts.length; i += 2) if ((parts[i] === "M" || parts[i] === "D" || added) && !isOwnState(parts[i + 1])) files.push(parts[i + 1]);
+  for (let i = 0; i + 1 < parts.length; i += 2) if ((parts[i] === "M" || parts[i] === "D" || parts[i] === "T" || added) && !isOwnState(parts[i + 1])) files.push(parts[i + 1]);
   return files;
 }
 
@@ -112,7 +113,8 @@ export async function assessRisk(exec: Exec, root: string, task: Task | undefine
   const watched = new Set(verifyFiles(manifest.verify));
   // Without a base, nothing tells which files existed before the task: every test and verify file counts.
   const noBase = ref === EMPTY_TREE;
-  const touched = nameStatus(await git(exec, root, ["diff", ref, "--name-status", "--no-renames", "-z"]), noBase).filter((f) => (isTestFile(f) || watched.has(f)) && !planned(f));
+  const existing = nameStatus(await git(exec, root, ["diff", ref, "--name-status", "--no-renames", "-z"]), noBase);
+  const touched = existing.filter((f) => (isTestFile(f) || watched.has(f)) && !planned(f));
   const lines = new Map<string, number>();
   // `-z` keeps odd names intact; `--no-renames` lists a rename as delete + add, so a moved lockfile or migration still shows.
   const numstat = await git(exec, root, ["diff", ref, "--numstat", "--no-renames", "-z"]);
@@ -138,6 +140,8 @@ export async function assessRisk(exec: Exec, root: string, task: Task | undefine
     weakened: weakened.length > 0,
     lines: [...lines].reduce((n, [file, count]) => (isGenerated(file) ? n : n + count), 0),
     cap: limitsOf(manifest).changeCap,
+    // The laws are the human's spec: a change to an existing LAWS.bend is the user's call, not the agent's (a new one is added, not `M`/`D`).
+    extra: existing.filter(isLaws).slice(0, 3).map((f) => `laws changed (${f}): the user must review them`),
   });
   const flagged = [...quality.map((r) => r[0].toUpperCase() + r.slice(1)), ...weakened];
   const listed = { ...(touched.length && { touched }), ...(flagged.length && { flagged }) };
