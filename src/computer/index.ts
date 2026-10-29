@@ -41,19 +41,18 @@ export function computerServers(pi: ExtensionAPI, dir?: string, profile?: string
       live.add(name);
     } else if (live.delete(name)) pi.unregisterMcpServer(name);
   };
-  // $PI_DESKTOP belongs to the person until we export it; we hand back what was there.
-  let exported = false;
-  let previous: string | undefined;
+  // $PI_DESKTOP belongs to the person until we export it; we hand back what was there. The record is the process's,
+  // not this copy's: /reload runs the extension again, and the new copy must still know the person's value.
+  const saved: { exported?: boolean; previous?: string } = ((globalThis as any)[Symbol.for("pi-improved.PI_DESKTOP")] ??= {});
   const exportDesktop = (wrapper: string | undefined) => {
     if (wrapper !== undefined) {
-      // After /reload a new closure finds our own export: that is not the person's value.
-      if (!exported) previous = process.env.PI_DESKTOP === desktopWrapper() ? undefined : process.env.PI_DESKTOP;
-      exported = true;
+      if (!saved.exported) saved.previous = process.env.PI_DESKTOP;
+      saved.exported = true;
       process.env.PI_DESKTOP = wrapper;
-    } else if (exported) {
-      exported = false;
-      if (previous === undefined) delete process.env.PI_DESKTOP;
-      else process.env.PI_DESKTOP = previous;
+    } else if (saved.exported) {
+      saved.exported = false;
+      if (saved.previous === undefined) delete process.env.PI_DESKTOP;
+      else process.env.PI_DESKTOP = saved.previous;
     }
   };
   /** Returns what could not be applied, in words the user can act on. */

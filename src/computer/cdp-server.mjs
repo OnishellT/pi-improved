@@ -291,7 +291,7 @@ export function buildServer(browser) {
     tool('click','Click one visible, unobscured CSS-selected control in our page using CDP input; never the physical cursor.',{selector:z.string().min(1).max(1000)},({selector})=>browser.click(selector));
     tool('close','Close only the target created by this server; never the browser or personal tabs.',{},()=>browser.close());
   }
-  server.server.onclose = () => { browser.exit(); };
+  server.server.onclose = () => { queue.then(() => browser.exit()); }; // after an open in flight, which may create the window
   return server;
 }
 
