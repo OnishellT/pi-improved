@@ -23,7 +23,7 @@ Isolated (and relay mode) is the MCP server `browser`, the desktop is `desktop`.
 
 ## Isolated browser
 
-The bundled server launches the headless Chromium (chrome-headless-shell) from Nix on first use, with a persistent profile at `<agent dir>/browser-profile`, so logins you make in it stay for later runs but are never your own browser's. No approval is needed. It needs Nix (`/doctor` checks it); the browser keeps running when the pi session ends, so other sessions reuse it (a session never kills a browser another one is using). Choosing Off in `/computer` (or a mode without the isolated browser) stops it; Chromium itself records its pid in `<profile>/SingletonLock` (it also refuses a second browser on the profile), and that is what /computer reads. Its tools and rules are the same as for the relay browser below.
+The bundled server launches the headless Chromium (chrome-headless-shell) from Nix on first use, with a persistent profile at `<agent dir>/browser-profile`, so logins you make in it stay for later runs but are never your own browser's. No approval is needed. It needs Nix (`/doctor` checks it); the browser keeps running when the pi session ends, so other sessions reuse it (a session never kills a browser another one is using). Choosing Off in `/computer` (or a mode without the isolated browser) stops it; Chromium itself records its pid in `<profile>/SingletonLock` (it also refuses a second browser on the profile), and that is what /computer reads. Its tools and rules are the same as for the relay browser below, so subagents cannot open pages. Unlike the relay window, the window a session opens closes when its server exits, and a browser that died is started again on the next `open`.
 
 ## Relay browser
 
@@ -41,7 +41,7 @@ Verified end to end with Helium. The other presets share its code path and folde
 
 ## Desktop
 
-A private nested 1280x800 Hyprland session with its own cursor, keyboard and session bus. Input is confined to windows it launched. Subagents are read-only. Pi must itself run inside a Hyprland session, which the nested one attaches to. Needs Linux, Hyprland, dbus (`dbus-run-session`), python3 and [`hypruse`](https://pypi.org/project/hypruse/) (`uv tool install hypruse`).
+A private nested 1280x800 Hyprland session with its own cursor, keyboard and session bus. Input is confined to windows it launched. Subagents are read-only. Pi must itself run inside a Hyprland session, which the nested one attaches to. Needs Linux, Hyprland, dbus (`dbus-run-session`), python3 and [`hypruse`](https://pypi.org/project/hypruse/) (`uv tool install hypruse`, with [uv](https://docs.astral.sh/uv/); `pipx install hypruse` also works). `/doctor` lists what is missing while the desktop is on.
 
 The nested session starts on first use, is detached, and keeps running after Pi exits (other Pi sessions reuse it). Its log is `/run/user/<uid>/pi-desktop/startup.log`; to stop it, kill the `Hyprland --config …/hyprland.lua` process whose config is this package's.
 

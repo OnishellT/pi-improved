@@ -62,6 +62,7 @@ test("cdpServer hands the bundled server its targets as the only argument", () =
   assert.match(config.args[0], /computer\/cdp-server\.mjs$/);
   assert.deepEqual(targetsOf(config), [{ id: "brave", name: "Brave", portFile: "/p" }]);
   assert.match(config.description, /Brave/);
+  assert.ok(config.timeout >= 90 + 3 * 20, "pi must not give up on a first open (approval, createTarget, attach, navigate) the server is still running");
 });
 
 test("config: missing file is empty, a non-object is a readable error, writes round-trip", async () => {
@@ -124,7 +125,7 @@ test("a custom MCP server is registered under the browser name as given", async 
   });
 });
 
-test("a bad config registers nothing and tells the person once, with a UI", async () => {
+test("a bad config registers nothing and tells the person once: in the UI, or on stderr without one", async () => {
   const p = await person({ browser: "netscape" });
   await withEnv(p.env, async () => {
     const h = fakePi();
@@ -132,12 +133,23 @@ test("a bad config registers nothing and tells the person once, with a UI", asyn
     assert.deepEqual(h.mcp, []);
     const notes: string[] = [];
     const ui = { notify: (m: string) => notes.push(m) };
-    await h.emit("session_start", {}, { hasUI: false, ui });
-    assert.deepEqual(notes, []);
     await h.emit("session_start", {}, { hasUI: true, ui });
     await h.emit("session_start", {}, { hasUI: true, ui });
     assert.equal(notes.length, 1);
     assert.match(notes[0], /Unknown browser "netscape".*\/computer/);
+
+    const headless = fakePi();
+    await registerComputer(headless.pi);
+    const errors: string[] = [];
+    const error = console.error;
+    console.error = (m: string) => void errors.push(m);
+    try {
+      await headless.emit("session_start", {}, { hasUI: false, ui });
+    } finally {
+      console.error = error;
+    }
+    assert.equal(notes.length, 1);
+    assert.match(errors.join("\n"), /^\[computer\] Unknown browser "netscape".*\/computer/);
   });
 });
 
@@ -226,6 +238,12 @@ test("/computer turns the private desktop on and off when its tools exist", { sk
     await h.commands.get("computer").handler("", { ui: fakeUI(["No changes", "Off"]) });
     assert.equal(server(h, "desktop"), undefined);
     assert.equal(process.env.PI_DESKTOP, "mine", "withdrawing the desktop gives the person's value back");
+    // /reload runs the extension again in the same process: the new copy must not take our export for the person's.
+    await h.commands.get("computer").handler("", { ui: fakeUI(["No changes", "On"]) });
+    const reloaded = fakePi();
+    await registerComputer(reloaded.pi);
+    await reloaded.commands.get("computer").handler("", { ui: fakeUI(["No changes", "Off"]) });
+    assert.notEqual(process.env.PI_DESKTOP, desktopWrapper());
   });
 });
 

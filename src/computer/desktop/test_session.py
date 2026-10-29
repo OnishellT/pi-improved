@@ -1,5 +1,7 @@
 import os
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -50,6 +52,16 @@ class SessionTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'No parent'):
                 session.desktop_environment()
             start.assert_not_called()
+
+    def test_wrapper_fails_with_a_message(self):
+        # A runtime dir that does not exist fails before any hyprctl call: nothing real is touched.
+        with tempfile.TemporaryDirectory() as tmp:
+            env = dict(PATH=tmp, HOME=tmp, XDG_RUNTIME_DIR=str(Path(tmp) / 'missing'))
+            run = subprocess.run([sys.executable, str(Path(__file__).with_name('pi-desktop'))],
+                                 env=env, capture_output=True, text=True, timeout=10)
+        self.assertEqual(run.returncode, 1)
+        self.assertTrue(run.stderr.startswith('pi-desktop: '), run.stderr)
+        self.assertNotIn('Traceback', run.stderr)
 
     # Integration: attaches to (or starts) the real private desktop, which must run this copy's hyprland.lua.
     @unittest.skipUnless(os.environ.get('PI_DESKTOP_LIVE'), 'set PI_DESKTOP_LIVE=1 with a Hyprland parent session')

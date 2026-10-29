@@ -6,10 +6,14 @@ import sys
 
 sys.dont_write_bytecode = True  # the bundle may be read-only or shared; never leave __pycache__ in it
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import subprocess
 from session import desktop_environment
 
 # Both IPC and input must use the private session; never inherit the personal seat.
-environment = desktop_environment()
+try:
+    environment = desktop_environment()
+except (RuntimeError, OSError, subprocess.SubprocessError) as error:
+    sys.exit(f'pi-desktop: {error}')  # a reason the person can act on, not a traceback
 os.environ.clear()
 os.environ.update(environment)
 os.environ['HYPRUSE_CONFINE'] = 'launched'

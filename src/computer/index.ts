@@ -46,7 +46,8 @@ export function computerServers(pi: ExtensionAPI, dir?: string, profile?: string
   let previous: string | undefined;
   const exportDesktop = (wrapper: string | undefined) => {
     if (wrapper !== undefined) {
-      if (!exported) previous = process.env.PI_DESKTOP;
+      // After /reload a new closure finds our own export: that is not the person's value.
+      if (!exported) previous = process.env.PI_DESKTOP === desktopWrapper() ? undefined : process.env.PI_DESKTOP;
       exported = true;
       process.env.PI_DESKTOP = wrapper;
     } else if (exported) {
@@ -101,7 +102,12 @@ export async function registerComputer(pi: ExtensionAPI) {
   }
 
   pi.on("session_start", async (_event, ctx) => {
-    if (!ctx.hasUI) return;
+    // `pi -p` and the like: stderr, or the model just lacks the tools and nobody knows why.
+    if (!ctx.hasUI) {
+      if (problems.length) console.error(`[computer] ${problems.join(" ")} Run /computer.`);
+      problems = [];
+      return;
+    }
     if (moved.length) ctx.ui.notify(moved.join("\n"), "info");
     moved.length = 0;
     if (!problems.length) return;

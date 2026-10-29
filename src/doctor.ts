@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { BEND_INSTALL, findBend } from "./bend.ts";
 import { resolveBin } from "./bin.ts";
+import { desktopMissing } from "./computer/desktop.ts";
 import { which } from "./computer/which.ts";
 import { bundledExtension, hasGlobalSubagent } from "./subagent-ext.ts";
 import { checkLimits, PREFERENCE_KEYS, readGlobal } from "./config.ts";
@@ -126,6 +127,11 @@ export async function runDoctor(pi: ExtensionAPI, ctx: ExtensionContext, version
   if (await findBend(ctx.cwd)) {
     const version = await pi.exec("bash", ["-lc", "BEND_NO_TELEMETRY=1 bend version"], { cwd: ctx.cwd, timeout: 15_000 }).then((r) => (r.code === 0 ? r.stdout.trim() : ""), () => "");
     checks.push({ name: "bend", ok: Boolean(version), detail: version || `not found, and LAWS.bend needs it: ${BEND_INSTALL}` });
+  }
+  // The desktop matters only once it is on (in the global file, which a synced config may carry to a machine without it).
+  if (globalConfig.computer?.desktop === "on") {
+    const missing = desktopMissing();
+    checks.push({ name: "Desktop", ok: !missing.length, detail: missing.length ? `on, but needs: ${missing.join(", ")}` : "on" });
   }
   const mode = manifest?.mode;
   if (mode !== undefined) {
