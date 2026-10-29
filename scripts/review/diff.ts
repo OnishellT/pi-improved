@@ -20,6 +20,15 @@ export function splitDiffByFile(diff: string): FileDiff[] {
 // Lines of the new file that exist in a hunk (added or context). GitHub accepts inline
 // comments with side RIGHT only on these lines.
 export function commentableLines(diff: string): Map<string, Set<number>> {
+  return newFileLines(diff, true);
+}
+
+// Lines of the new file that the diff added, without unchanged hunk context.
+export function addedLines(diff: string): Map<string, Set<number>> {
+  return newFileLines(diff, false);
+}
+
+function newFileLines(diff: string, withContext: boolean): Map<string, Set<number>> {
   const result = new Map<string, Set<number>>();
   for (const file of splitDiffByFile(diff)) {
     if (/^\+\+\+ \/dev\/null/m.test(file.text)) continue;
@@ -37,7 +46,7 @@ export function commentableLines(diff: string): Map<string, Set<number>> {
       } else if (row.startsWith("-")) {
         continue;
       } else if (row.startsWith("+") || row.startsWith(" ")) {
-        lines.add(newLine);
+        if (withContext || row.startsWith("+")) lines.add(newLine);
         newLine += 1;
       }
     }

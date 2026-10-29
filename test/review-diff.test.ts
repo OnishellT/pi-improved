@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { commentableLines, splitDiffByFile } from "../scripts/review/diff.ts";
+import { addedLines, commentableLines, splitDiffByFile } from "../scripts/review/diff.ts";
 
 const diff = `diff --git a/src/a.ts b/src/a.ts
 index 111..222 100644
@@ -49,4 +49,11 @@ test("lines between hunks are not commentable", () => {
 
 test("splits a diff into one chunk per file by post-image path", () => {
   assert.deepEqual(splitDiffByFile(diff).map((file) => file.path), ["src/a.ts", "old.ts", "new.ts"]);
+});
+
+test("addedLines leaves out unchanged hunk context", () => {
+  const lines = addedLines(diff);
+  assert.deepEqual([...(lines.get("src/a.ts") ?? [])], [2, 3, 22]);
+  assert.deepEqual([...(lines.get("new.ts") ?? [])], [1, 2]);
+  assert.equal(lines.has("old.ts"), false);
 });
