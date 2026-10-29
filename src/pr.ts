@@ -4,8 +4,9 @@ import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Exec } from "./git.ts";
 import { readManifest } from "./manifest.ts";
+import { isNixMissing, NixError } from "./nix.ts";
 import { assessRisk } from "./risk.ts";
-import { isPiState, readTask, type Task } from "./task-state.ts";
+import { isLocalState, LOCAL_STATE, readTask, type Task } from "./task-state.ts";
 import { formatVerify, runVerify } from "./verify.ts";
 
 const TEMPLATES = [".github/pull_request_template.md", ".github/PULL_REQUEST_TEMPLATE.md", "docs/pull_request_template.md", "pull_request_template.md"];
@@ -19,7 +20,7 @@ export interface PrFacts {
   commits: string[];
   /** `git diff --name-status` rows against the base. */
   changes: string[];
-  /** Uncommitted paths (porcelain), outside `.pi/`. */
+  /** Uncommitted paths (porcelain), except the machine-local `.pi/` state; versioned `.pi/` files are in. */
   dirty: string[];
   gh: boolean;
   origin?: string;
@@ -94,10 +95,13 @@ export function buildBody({ task, facts, verify, risk }: BodyInput): string {
 
 const lines = (text: string) => text.split("\n").map((l) => l.trim()).filter(Boolean);
 
+/** Throws a NixError with the install message when Nix is missing. */
 export async function gatherFacts(exec: Exec, root: string, wanted?: string): Promise<PrFacts | undefined> {
   // Not git.ts `git`: also runs gh, and "undefined" here is a signal the facts code checks (e.g. no repo).
   const run = async (cmd: string, args: string[]) => {
     const r = await exec(cmd, args, { cwd: root, timeout: 30_000 }).catch(() => undefined);
+    // Without Nix every git call fails alike: say so, instead of letting the caller read it as "not a repository".
+    if (r && cmd === "git" && isNixMissing(r)) throw new NixError(r.stderr);
     return r && r.code === 0 ? r.stdout : undefined;
   };
   if ((await run("git", ["rev-parse", "--git-dir"])) === undefined) return undefined;
@@ -113,7 +117,10 @@ export async function gatherFacts(exec: Exec, root: string, wanted?: string): Pr
   const branch = (await run("git", ["branch", "--show-current"]))?.trim() || "(detached HEAD)";
   const commits = base ? lines((await run("git", ["log", "--format=%h %s", `${base}..HEAD`])) ?? "") : [];
   const changes = base ? lines((await run("git", ["diff", "--name-status", `${base}...HEAD`])) ?? "") : [];
-  const dirty = ((await run("git", ["status", "--porcelain"])) ?? "").split("\n").filter(Boolean).filter((l) => !isPiState(l.slice(3)));
+  const status = await run("git", ["status", "--porcelain", "--untracked-files=all"]);
+  // An unreadable status is not a clean tree: the PR would leave uncommitted work out without saying so.
+  if (status === undefined) throw new NixError("git status failed, so the uncommitted work is unknown. Fix git, then run /pr again.");
+  const dirty = status.split("\n").filter(Boolean).filter((l) => !isLocalState(l.slice(3)));
   let template: string | undefined;
   for (const rel of TEMPLATES) {
     template = await fs.readFile(path.join(root, rel), "utf8").catch(() => undefined);
@@ -140,7 +147,13 @@ export type PrOutcome = { status: "not-ready" | "shown" | "declined" | "failed" 
  * a missing `gh auth login` shows up late, as "gh pr create failed".
  */
 export async function runPr(exec: Exec, root: string, ui: Pick<ExtensionContext["ui"], "confirm" | "notify">, wantedBase?: string): Promise<PrOutcome> {
-  const facts = await gatherFacts(exec, root, wantedBase?.trim() || undefined);
+  let facts: PrFacts | undefined;
+  try {
+    facts = await gatherFacts(exec, root, wantedBase?.trim() || undefined);
+  } catch (error) {
+    if (error instanceof NixError) return { status: "not-ready", detail: error.message };
+    throw error;
+  }
   if (!facts) return { status: "not-ready", detail: "This folder is not a git repository." };
   if (!facts.base) return { status: "not-ready", detail: "No base branch found. Run /pr <base-branch>." };
   const baseName = facts.base.replace(/^origin\//, "");
@@ -150,11 +163,24 @@ export async function runPr(exec: Exec, root: string, ui: Pick<ExtensionContext[
   let branch = facts.branch;
   if (branch === baseName || branch === "(detached HEAD)") {
     const proposed = branchName(task);
-    if (!(await ui.confirm("Create a task branch?", `You are on ${branch}. Create ${proposed} from here? Uncommitted work stays out of the PR.`)))
+    if (!(await ui.confirm("Create a task branch?", `You are on ${branch}. Create ${proposed} from here? Uncommitted work comes along.`)))
       return { status: "not-ready", detail: `A task branch is needed before a PR (suggested: ${proposed}).` };
     const made = await exec("git", ["switch", "-c", proposed], { cwd: root, timeout: 30_000 });
     if (made.code !== 0) return { status: "failed", detail: `git switch -c ${proposed} failed: ${made.stderr.trim()}` };
     branch = proposed;
+  }
+
+  // /task leaves its work uncommitted; without this the PR would miss it.
+  if (facts.dirty.length) {
+    if (await ui.confirm("Commit the uncommitted work?", `Commit these to ${branch} so they go in the PR?\n${facts.dirty.join("\n")}`)) {
+      // Add then unstage, not exclude pathspecs: git fails on an excluded path that .gitignore already ignores.
+      // Both from the repository root (`:/`), like the porcelain list offered above, even when pi runs in a subfolder.
+      let added = await exec("git", ["add", "-A", "--", ":/"], { cwd: root, timeout: 30_000 });
+      if (added.code === 0) added = await exec("git", ["reset", "-q", "--", ...LOCAL_STATE.map((p) => `:/${p}`)], { cwd: root, timeout: 30_000 });
+      const made = added.code === 0 ? await exec("git", ["commit", "-m", prTitle(task, [])], { cwd: root, timeout: 120_000 }) : added;
+      if (made.code !== 0) return { status: "failed", detail: `Commit failed: ${(made.stderr || made.stdout).trim()}` };
+      facts = (await gatherFacts(exec, root, facts.base)) ?? facts;
+    }
   }
 
   let verify: BodyInput["verify"] = "none";

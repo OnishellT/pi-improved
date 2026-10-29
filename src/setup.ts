@@ -4,15 +4,15 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { Type } from "typebox";
 import { CATALOG, connectorById, type ConnectorSignal } from "./connectors.ts";
 import { agentlintCheck, agentlintCmd, discover, hasAgentlintConfig, isProject, readPackageJson, type Discovery, type Run } from "./discover.ts";
+import { isNixMissing } from "./nix.ts";
 import { agentDir } from "./subagent-ext.ts";
 import { restoreModel, usePhaseModel } from "./models.ts";
 import { readManifest, updateManifest, type EnabledConnector } from "./manifest.ts";
 import { phaseSkills, skillsBlock } from "./skills.ts";
 import { AGENTS_MAX_LINES, SETUP_NUDGE, setupPrompt } from "./setup-prompt.ts";
-import { CONTRACT_PATH } from "./contract.ts";
-import { METRICS_DIR } from "./telemetry.ts";
-import { TASK_PATH } from "./task-state.ts";
-import { formatVerify, runVerify } from "./verify.ts";
+import { LOCAL_STATE } from "./task-state.ts";
+import { resolvePolicyFailure } from "./policy.ts";
+import { formatVerify, isPolicyFailure, runVerify } from "./verify.ts";
 
 const MAX_NUDGES = 2;
 const START_TIMEOUT = 30_000;
@@ -65,8 +65,8 @@ async function chooseConnectors(ctx: ExtensionContext, signals: ConnectorSignal[
   return [...enabled.values()];
 }
 
-/** Local state kept out of git. `.pi/evidence/` has no code owner: the verify-app skill (setup-prompt.ts) writes there. */
-export const IGNORED_STATE = [TASK_PATH, CONTRACT_PATH, METRICS_DIR, ".pi/evidence/"];
+/** Local state kept out of git: the one list /pr also leaves out of its commit (task-state.ts). `.pi/evidence/` has no code owner: the verify-app skill (setup-prompt.ts) writes there. */
+export const IGNORED_STATE = LOCAL_STATE;
 
 async function ensureIgnored(root: string, entries: string[]) {
   const gitignore = path.join(root, ".gitignore");
@@ -119,6 +119,9 @@ export function registerSetup(pi: ExtensionAPI) {
     handler: async (_args, ctx) => {
       if (!ctx.hasUI) return ctx.ui.notify("/setup needs the interactive UI.", "error");
       const root = ctx.cwd;
+      // Discovery and verify run git and bash through Nix: without it the scan comes back empty and says nothing.
+      const probe = await pi.exec("git", ["--version"], { timeout: 15_000 }).catch(() => undefined);
+      if (probe && isNixMissing(probe)) return ctx.ui.notify(`/setup cannot scan or verify the project. ${probe.stderr}`, "error");
       let manifest = await readManifest(root);
       if (manifest.setup === "done" && !(await ctx.ui.confirm("This project already has setup", REPEAT_WARNING))) return;
 
@@ -137,8 +140,10 @@ export function registerSetup(pi: ExtensionAPI) {
         m.connectors = connectors;
         m.agentlint = agentlint;
         if (!m.verify.length) m.verify = found.verify;
-        m.mode ??= "direct";
+        // The merged view decides: a mode from the global file must keep applying.
+        if (manifest.mode === undefined) m.mode = "direct";
       });
+      manifest = await readManifest(root);
       registerConnectors(pi, connectors);
       nudges = 0;
       verifyFailures = 0;
@@ -175,7 +180,8 @@ export function registerSetup(pi: ExtensionAPI) {
       const root = ctx.cwd;
       if (!(await setupRunning(root))) throw new Error("No setup is running. The user starts one with /setup.");
 
-      const { agentlint } = await readManifest(root);
+      const manifest = await readManifest(root);
+      const { agentlint } = manifest;
       const problems = await checkOutputs(root, verify);
       if (agentlint) {
         if (!(await hasAgentlintConfig(root))) problems.push(`agentlint is not configured. Run \`${agentlint} init\` and add the rules the user selected.`);
@@ -189,7 +195,21 @@ export function registerSetup(pi: ExtensionAPI) {
       }
       if (problems.length) throw new Error(`Setup incomplete:\n- ${problems.join("\n- ")}`);
 
-      const result = await runVerify(verify, pi.exec.bind(pi), root);
+      let result = await runVerify(verify, pi.exec.bind(pi), root);
+      // Findings in code that predates the rules are the user's call, not another model round: they accept each one or send it back.
+      while (!result.ok && agentlint && ctx.hasUI && isPolicyFailure(result)) {
+        const report = formatVerify(result);
+        const outcome = await resolvePolicyFailure(pi, ctx, manifest, report);
+        if (outcome === "approved") {
+          result = await runVerify(verify, pi.exec.bind(pi), root);
+          continue;
+        }
+        if (outcome === "stop") {
+          await updateManifest(root, (m) => void (m.setup = "pending"));
+          return { content: [{ type: "text", text: "The user paused setup on the agentlint findings. Stop here." }], details: undefined, terminate: true };
+        }
+        throw new Error(`${report}\n\n${outcome === "failed" ? "Recording the acceptance failed. " : ""}The user wants these findings fixed, not accepted. If the rule is about changes, make it a \`change\` rule; if it flags code it should not, narrow its detector or \`binding.include\`; or remove the rule if the user agrees. Then call setup_finish again.`);
+      }
       let verifyNote = "";
       if (!result.ok) {
         verifyFailures++;
@@ -216,7 +236,8 @@ export function registerSetup(pi: ExtensionAPI) {
       await updateManifest(root, (m) => {
         m.setup = "done";
         m.verify = verify;
-        m.mode ??= "direct";
+        // As at the start: a mode from the global file must keep applying.
+        if (manifest.mode === undefined) m.mode = "direct";
         m.completedAt = new Date().toISOString();
       });
       return { content: [{ type: "text", text: "Setup complete and approved. Stop here." }], details: { verify }, terminate: true };
