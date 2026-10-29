@@ -61,6 +61,9 @@ async function nixChecks(nix: NixProbe, loggedIn: () => Promise<boolean>): Promi
   return checks;
 }
 
+/** The `.bundled/` folder is made by the package's postinstall, which a package manager may skip. */
+export const extensionDetail = (ext: string | undefined) => ext ?? "missing: without it the review never finishes. Run `node scripts/postinstall.mjs` in the package folder to fetch it";
+
 /** Environment checks. Never throws. `nix.resolve` is left out at session start: the first build downloads hundreds of MB, so nothing that needs Nix runs then. */
 export async function runDoctor(pi: ExtensionAPI, ctx: ExtensionContext, version = process.versions.node, nix: NixProbe = realNix): Promise<Check[]> {
   const probe = async (cmd: string, args: string[]) => {
@@ -77,7 +80,7 @@ export async function runDoctor(pi: ExtensionAPI, ctx: ExtensionContext, version
   checks.push({ name: "Node", ok: nodeOk(version), detail: nodeOk(version) ? version : `${version}: needs >= ${MIN_NODE.join(".")}` });
   checks.push({ name: "subagent", ok: subagentOk, detail: subagentOk ? subagent : "not found or not running (reinstall with `pi install git:github.com/OnishellT/pi-improved`)" });
   const ext = hasGlobalSubagent() ? "global" : fs.existsSync(bundledExtension()) ? "bundled" : undefined;
-  checks.push({ name: "subagent extension", ok: Boolean(ext), detail: ext ?? "missing: without it the review never finishes (reinstall the package)" });
+  checks.push({ name: "subagent extension", ok: Boolean(ext), detail: extensionDetail(ext) });
   checks.push(...(await nixChecks(nix, () => probe("gh", ["auth", "status"]))));
 
   let manifest;
