@@ -53,9 +53,10 @@ export function registerGate(pi: ExtensionAPI) {
   let warnedNoReviewModel = false;
 
   const snapshot = async (cwd: string) => {
-    const parts = [await git(pi.exec.bind(pi), cwd, ["status", "--porcelain"]), await git(pi.exec.bind(pi), cwd, ["diff", "HEAD"])];
+    const parts = [await git(pi.exec.bind(pi), cwd, ["status", "--porcelain"]), await git(pi.exec.bind(pi), cwd, ["diff", "HEAD"]), await git(pi.exec.bind(pi), cwd, ["rev-parse", "HEAD"])];
     // A snapshot git could not take (no Nix, no repository) is never equal to another: the work counts as changed, and verify says what is wrong.
     if (parts.some((p) => p === undefined)) return UNREADABLE;
+    // HEAD is part of it: a change committed through bash leaves the tree clean, and that is still a change.
     return createHash("sha1").update(parts.join("\n--\n")).digest("hex");
   };
   const verify = async (steps: string[], cwd: string, maxReport: unknown, before: Signature[] | undefined) => {
