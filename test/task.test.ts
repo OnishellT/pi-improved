@@ -178,7 +178,7 @@ test("prompt lists similar past tasks and the tracker", async () => {
   assert.ok(text.startsWith("## Skill: x"));
 });
 
-test("a plain-text question while implementing is routed to ask_user; a statement is not", async () => {
+test("a plain-text question while implementing is routed to ask_user, except in the TUI; a statement is not", async () => {
   const { root, ctxFor, emit } = await setup();
   await writeTask(root, { id: "t1", title: "x", status: "implementing", allowedExtra: [], startedAt: "now" } as any);
   const { ctx } = ctxFor([]);
@@ -189,6 +189,10 @@ test("a plain-text question while implementing is routed to ask_user; a statemen
   const r = await emit("agent_before_settle", { outcome: "completed" }, ctx);
   assert.equal(r.continue, true);
   assert.match(r.entries[0].content, /ask_user/);
+  // In the TUI the person reads the question and answers it: no nudge. RPC (hasUI true too) still gets one.
+  await say("Should I scaffold one?");
+  assert.equal(await emit("agent_before_settle", { outcome: "completed" }, { ...ctx, mode: "tui" }), undefined);
+  assert.equal((await emit("agent_before_settle", { outcome: "completed" }, { ...ctx, mode: "rpc", hasUI: true })).continue, true);
 });
 
 test("invented interface names ask the user and write an ADR", async () => {
