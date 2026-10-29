@@ -44,6 +44,19 @@ test("no bundled skill leaves Skill tool or /pstack- references after clean", as
   }
 });
 
+test("every script a bundled skill points at exists, in the skill's folder or in the package", async () => {
+  const root = path.dirname(path.dirname(skillsDir()));
+  for (const name of await listSkills()) {
+    const skill = await loadSkill(name);
+    for (const body of [skill.body, ...skill.files.map((f) => f.content)]) {
+      for (const [, base, script] of body.matchAll(/(\{\{package\}\}\/|[\w-]+\/)?(scripts\/[\w.-]+\.\w+)/g)) {
+        const there = base === "{{package}}/" ? path.join(root, script) : path.join(skillsDir(), name, script);
+        assert.ok(await fs.access(there).then(() => true, () => false), `${name} points at ${script}, which is not at ${there}`);
+      }
+    }
+  }
+});
+
 test("unslop keeps the em-dash rule", async () => {
   const { body } = await loadSkill("unslop");
   assert.match(body, /em dash/i);
