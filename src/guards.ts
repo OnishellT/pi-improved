@@ -2,14 +2,17 @@ import * as fs from "node:fs";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
 import * as path from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { globalPath } from "./config.ts";
 
 /** agentlint commands that open a browser UI and wait for a person: the `review` subcommand right after the binary (optionally after `--`), or the UI flags anywhere. */
 const INTERACTIVE_AGENTLINT = /\bagentlint(?:\s+--)?\s+review\b|\bagentlint\b[^;&|\n]*\s--(?:review|wizard)\b/;
 
-/** Recording an exception to a rule is a decision for the user, even when the rule allows agent authority. */
-const AGENTLINT_ACCEPT = /\bagentlint(?:\s+--)?\s+(?:accept|approve)\b/;
+/**
+ * Recording an exception to a rule is a decision for the user, even when the rule allows agent authority.
+ * agentlint keeps exceptions in this file; the guard watches the file, not the command, so no spelling of the command gets past it.
+ */
+const ACCEPTANCES = path.join(".agentlint", "acceptances.jsonl");
 
 /** Workflow state the code owns: the model must not rewrite it. Only write/edit are guarded; a bash redirect into it is a deliberate limit. */
 const OWNED = /(^|\/)\.pi\/(workflow|task)\.json$/;
@@ -47,6 +50,7 @@ export function registerGuards(pi: ExtensionAPI) {
       const file = String((event.input as { path?: unknown }).path ?? "");
       if (OWNED.test(path.posix.normalize(file)) || (file && OWNED.test(toolPath(file, ctx.cwd).split(path.sep).join("/")))) return { block: true, reason: `${file} is workflow state managed by the extension. Do not edit it; ask the user (/models, /setup) if it needs to change.` };
       if (file && isGlobalConfig(file, ctx.cwd)) return { block: true, reason: `${file} is the user's own configuration (limits, review policy, self-compact). Do not edit it; ask the user to change it.` };
+      if (file && toolPath(file, ctx.cwd) === canonical(path.resolve(ctx.cwd, ACCEPTANCES))) return { block: true, reason: `${file} holds the exceptions the user approved. Do not edit it; run \`agentlint accept <id> --reason '<text>'\` and the user is asked.` };
       return;
     }
     if (event.toolName !== "bash") return;
@@ -54,9 +58,60 @@ export function registerGuards(pi: ExtensionAPI) {
     if (INTERACTIVE_AGENTLINT.test(command)) {
       return { block: true, reason: "This agentlint command opens an interactive UI for a person and would hang. Use `rules scan` or `next --format json` instead." };
     }
-    if (AGENTLINT_ACCEPT.test(command)) {
-      const approved = ctx.hasUI && (await ctx.ui.select(`The agent wants to accept an agentlint exception:\n${command}`, ["Approve the exception", "Block: make it fix the code"])) === "Approve the exception";
-      if (!approved) return { block: true, reason: "The user did not accept this exception. Fix the code so the finding no longer applies, or explain why it is wrong and ask the user." };
-    }
+    await watchAcceptances(ctx.cwd);
+  });
+
+  pi.on("tool_result", async (event, ctx) => {
+    if (event.toolName !== "bash") return;
+    const restored = await checkAcceptances(ctx);
+    if (restored) return { content: [...event.content, { type: "text" as const, text: restored }] };
   });
 }
+
+/** By project: the acceptance records the user has approved, as the file held them. A record taken out is no longer approved: back again, it is asked again. */
+const known = new Map<string, string[]>();
+
+const records = async (cwd: string) => ((await read(path.resolve(cwd, ACCEPTANCES))) ?? "").split("\n").filter((l) => l.trim());
+
+/** Start watching the file: the records it holds before the agent first acts are the user's. */
+export async function watchAcceptances(cwd: string) {
+  if (!known.has(cwd)) known.set(cwd, await records(cwd));
+}
+
+/** After the user approved a record outside a bash call: trust the new records `approved` picks and nothing else, so nothing rides along. */
+export async function trustAcceptances(cwd: string, approved: (record: any) => boolean) {
+  const trusted = known.get(cwd) ?? [];
+  const pick = (line: string) => {
+    try {
+      return approved(JSON.parse(line));
+    } catch {
+      return false;
+    }
+  };
+  known.set(cwd, (await records(cwd)).filter((l) => trusted.includes(l) || pick(l)));
+}
+
+/**
+ * Records the user has not approved are shown in one confirm; declined, or with nobody to ask, the file goes back to the approved records.
+ * Runs after every bash call and before the gate verifies, so a record written later (a background process) is caught before it can open the gate.
+ * Returns the note for the model when it put the file back.
+ */
+export async function checkAcceptances(ctx: Pick<ExtensionContext, "cwd" | "hasUI" | "ui">): Promise<string | undefined> {
+  const trusted = known.get(ctx.cwd);
+  if (!trusted) return;
+  const now = await records(ctx.cwd);
+  // A changed record (a new reason, an exception that came back) is a line the user has not approved: they see it too.
+  const added = now.filter((l) => !trusted.includes(l));
+  if (!added.length || (ctx.hasUI && (await ctx.ui.confirm("The agent recorded agentlint exceptions. Keep them?", added.join("\n"))))) {
+    known.set(ctx.cwd, now);
+    return;
+  }
+  const file = path.resolve(ctx.cwd, ACCEPTANCES);
+  if (trusted.length) await fs.promises.writeFile(file, `${trusted.join("\n")}\n`);
+  else await fs.promises.rm(file, { force: true });
+  const why = ctx.hasUI ? "The user did not accept the agentlint exceptions the agent recorded" : "agentlint exceptions need the user's approval and nobody can be asked here";
+  return `${why}, so ${ACCEPTANCES} was restored. Fix the code so the finding no longer applies, or explain why it is wrong and ask the user.`;
+}
+
+/** The file's content, or undefined when it does not exist. */
+const read = (file: string) => fs.promises.readFile(file, "utf8").catch(() => undefined);

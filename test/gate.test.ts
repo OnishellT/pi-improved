@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { test } from "node:test";
 import { registerGate } from "../src/gate.ts";
+import { registerGuards } from "../src/guards.ts";
 import { APPROVE } from "../src/policy.ts";
 import { TASK_DONE_EVENT } from "../src/events.ts";
 import { ESCALATE_EVENT, REVIEW_EVENT, VERIFY_EVENT } from "../src/events.ts";
@@ -46,6 +47,22 @@ async function setup(opts: { setup?: string; task?: boolean; pass?: boolean; ans
   const settle = () => h.emit("agent_before_settle", { outcome: "completed" }, ctx);
   return { ...h, root, ctx, ui, notes, emitted, run, settle, verifies: () => verifies, subagent };
 }
+
+test("an exception the user never saw is undone before the gate verifies", async () => {
+  const h = await setup({ pass: true, answers: [false] });
+  registerGuards(h.pi);
+  const call = { toolName: "bash", toolCallId: "1", input: { command: "agentlint accept 1 --reason 'x' &" } };
+  await h.emit("tool_call", call, h.ctx);
+  await h.emit("tool_result", { ...call, content: [], isError: false }, h.ctx);
+  // Written by a background process after the command returned: no later bash call sees it.
+  const file = path.join(h.root, ".agentlint", "acceptances.jsonl");
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  await fs.writeFile(file, '{"id":"late"}\n');
+  await h.run();
+  await h.settle();
+  assert.deepEqual(h.ui.asked, ["The agent recorded agentlint exceptions. Keep them?"]);
+  assert.equal(await fs.readFile(file, "utf8").catch(() => undefined), undefined);
+});
 
 test("does nothing when nothing changed", async () => {
   const t = await setup();
