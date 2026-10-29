@@ -4,7 +4,7 @@ import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { Exec } from "./git.ts";
 import { readManifest } from "./manifest.ts";
-import { isNixMissing, NixError } from "./nix.ts";
+import { isNixFailure, NixError } from "./nix.ts";
 import { assessRisk } from "./risk.ts";
 import { isLocalState, LOCAL_STATE, oneLine, readTask, type Task } from "./task-state.ts";
 import { carryOnWhenPredated, failedLines, formatVerify, predatesBaseline, runVerify, validCap } from "./verify.ts";
@@ -97,13 +97,13 @@ export function buildBody({ task, facts, verify, risk }: BodyInput): string {
 
 const lines = (text: string) => text.split("\n").map((l) => l.trim()).filter(Boolean);
 
-/** Throws a NixError with the install message when Nix is missing. */
+/** Throws a NixError with Nix's message when Nix is missing or failing. */
 export async function gatherFacts(exec: Exec, root: string, wanted?: string): Promise<PrFacts | undefined> {
   // Not git.ts `git`: also runs gh, and "undefined" here is a signal the facts code checks (e.g. no repo).
   const run = async (cmd: string, args: string[]) => {
     const r = await exec(cmd, args, { cwd: root, timeout: 30_000 }).catch(() => undefined);
     // Without Nix every git call fails alike: say so, instead of letting the caller read it as "not a repository".
-    if (r && cmd === "git" && isNixMissing(r)) throw new NixError(r.stderr);
+    if (r && cmd === "git" && isNixFailure(r)) throw new NixError(r.stderr);
     return r && r.code === 0 ? r.stdout : undefined;
   };
   if ((await run("git", ["rev-parse", "--git-dir"])) === undefined) return undefined;

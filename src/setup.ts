@@ -5,7 +5,7 @@ import { Type } from "typebox";
 import { CATALOG, connectorById, type ConnectorSignal } from "./connectors.ts";
 import { agentlintCheck, agentlintCmd, discover, hasAgentlintConfig, isProject, readPackageJson, type Discovery, type Run } from "./discover.ts";
 import type { Exec } from "./git.ts";
-import { isNixMissing } from "./nix.ts";
+import { isNixFailure } from "./nix.ts";
 import { agentDir } from "./subagent-ext.ts";
 import { restoreModel, usePhaseModel } from "./models.ts";
 import { readManifest, updateManifest, type EnabledConnector } from "./manifest.ts";
@@ -126,7 +126,7 @@ export function registerSetup(pi: ExtensionAPI) {
       const root = ctx.cwd;
       // Discovery and verify run git and bash through Nix: without it the scan comes back empty and says nothing.
       const probe = await pi.exec("git", ["--version"], { timeout: 15_000 }).catch(() => undefined);
-      if (probe && isNixMissing(probe)) return ctx.ui.notify(`/setup cannot scan or verify the project. ${probe.stderr}`, "error");
+      if (probe && isNixFailure(probe)) return ctx.ui.notify(`/setup cannot scan or verify the project. ${probe.stderr}`, "error");
       let manifest = await readManifest(root);
       if (manifest.setup === "done" && !(await ctx.ui.confirm("This project already has setup", REPEAT_WARNING))) return;
 

@@ -136,6 +136,17 @@ test("without a UI, a failed Nix build also leaves the task unverified with Nix'
   assert.equal((await readTask(t.root))?.status, "implementing");
 });
 
+test("a Nix build that fails is an infrastructure failure too: the user hears Nix's message, no retry, no escalation, nothing for the model", async () => {
+  const msg = "Nix could not build bash: Could not resolve host. Check your network and disk space, then run /doctor.";
+  const t = await setup({ nix: msg, answers: ["Stop here: I will fix it and finish again"] });
+  await updateManifest(t.root, (m) => void (m.models = { ...m.models, escalate: "p/strong" }));
+  await t.run();
+  assert.equal(await t.settle(), undefined);
+  assert.equal(t.ui.asked.length, 1);
+  assert.equal(t.notes[0], `Verify did not run. ${msg}`);
+  assert.equal(t.emitted.filter((e) => e.name === ESCALATE_EVENT).length, 0);
+});
+
 test("pass confirms the task, marks it done and emits the event; same state is not re-verified", async () => {
   const t = await setup({ pass: true, task: true, answers: [true] });
   await t.run();

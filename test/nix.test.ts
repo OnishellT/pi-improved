@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { beforeEach, test } from "node:test";
 import { resolveBin } from "../src/bin.ts";
-import { credentialStatus, CHROMIUM, chromeEnv, chromeHeadless, clearNixCache, hasNix, installMessage, isNixMissing, exposeSubagent, nixExec, nixPackage, nixpkgsRev, NIXPKGS, type Spawn } from "../src/nix.ts";
+import { credentialStatus, CHROMIUM, chromeEnv, chromeHeadless, clearNixCache, hasNix, installMessage, isNixFailure, exposeSubagent, nixExec, nixPackage, nixpkgsRev, NIXPKGS, type Spawn } from "../src/nix.ts";
 import { agentDir } from "../src/subagent-ext.ts";
 import { tempDir } from "./helpers.ts";
 
@@ -113,7 +113,7 @@ test("nixExec stops waiting for a slow build at the call's timeout or abort, and
   const run = nixExec(exec, () => build);
   const late = await run("git", ["status"], { cwd: "/", timeout: 20 });
   assert.equal(late.code, 127);
-  assert.ok(isNixMissing(late), "reported like a failed build, so the gate and /pr say so");
+  assert.ok(isNixFailure(late), "reported like a failed build, so the gate and /pr say so");
   assert.match(late.stderr, /Nix could not build git in time: the build goes on/);
   const abort = new AbortController();
   const aborted = run("git", ["status"], { cwd: "/", timeout: 60_000, signal: abort.signal });
