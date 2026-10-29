@@ -38,7 +38,8 @@ test("no bundled skill leaves Skill tool or /pstack- references after clean", as
   for (const name of bundled) {
     const skill = await loadSkill(name);
     for (const body of [skill.body, ...skill.files.map((f) => f.content)]) {
-      assert.doesNotMatch(clean(body, bundled), /Skill tool|\/pstack-/i, name);
+      // `{{package}}` expands to the checkout path, which may itself contain "/pstack-": check the text around it.
+      assert.doesNotMatch(clean(body, bundled).replaceAll(path.dirname(path.dirname(skillsDir())), "<package>"), /Skill tool|\/pstack-/i, name);
     }
   }
 });
