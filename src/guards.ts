@@ -6,6 +6,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { resolveBin } from "./bin.ts";
 import { globalPath } from "./config.ts";
 import { readManifest } from "./manifest.ts";
+import { agentlintStepOf } from "./verify.ts";
 
 /** agentlint commands that open a browser UI and wait for a person: the `review` subcommand right after the binary (optionally after `--`), or the UI flags anywhere. */
 const INTERACTIVE_AGENTLINT = /\bagentlint(?:\s+--)?\s+review\b|\bagentlint\b[^;&|\n]*\s--(?:review|wizard)\b/;
@@ -37,6 +38,8 @@ export function givenPath(file: string, cwd: string) {
 }
 
 /** The path with symlinks resolved, also when the file does not exist yet (a dangling link is followed; else its nearest existing parent is resolved). */
+export const shellQuote = (word: string) => (/^[\w@%+=:,./-]+$/.test(word) ? word : `'${word.replaceAll("'", `'\\''`)}'`);
+
 export function canonical(file: string): string {
   try {
     return fs.realpathSync(file);
@@ -56,8 +59,12 @@ export function registerGuards(pi: ExtensionAPI) {
       if (OWNED.test(path.posix.normalize(file)) || (file && OWNED.test(toolPath(file, ctx.cwd).split(path.sep).join("/")))) return { block: true, reason: `${file} is workflow state managed by the extension. Do not edit it; ask the user (/models, /setup) if it needs to change.` };
       if (file && isGlobalConfig(file, ctx.cwd)) return { block: true, reason: `${file} is the user's own configuration (limits, review policy, self-compact). Do not edit it; ask the user to change it.` };
       if (file && toolPath(file, ctx.cwd) === canonical(path.resolve(ctx.cwd, ACCEPTANCES))) {
-        const agentlint = (await readManifest(ctx.cwd).catch(() => undefined))?.agentlint ?? resolveBin("agentlint");
-        return { block: true, reason: `${file} holds the exceptions the user approved. Do not edit it; run \`${agentlint} propose <selector> --summary '<why>'\` (selector from \`${agentlint} next --format json\`) and the user is asked to approve it.` };
+        const manifest = await readManifest(ctx.cwd).catch(() => undefined);
+        // The configured command is shell text already; only the fallback path is quoted.
+        const agentlint = manifest?.agentlint ?? shellQuote(resolveBin("agentlint"));
+        // propose only records the proposal: the verify gate's agentlint step is what asks the user.
+        const asked = manifest?.verify.some(agentlintStepOf(manifest)) ? "the verify gate asks the user to approve it" : "then ask the user to review and approve that proposal, since no agentlint verify step will ask them";
+        return { block: true, reason: `${file} holds the exceptions the user approved. Do not edit it; run \`${agentlint} propose <selector> --summary '<why>'\` (selector from \`${agentlint} next --format json\`); ${asked}.` };
       }
       return;
     }
