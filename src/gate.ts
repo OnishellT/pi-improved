@@ -13,6 +13,7 @@ import { checkAcceptances } from "./guards.ts";
 import { resolvePolicyFailure } from "./policy.ts";
 import { reviewDiff } from "./review.ts";
 import { skillsBlock } from "./skills.ts";
+import { assistantText, endsOnQuestion } from "./task-prompt.ts";
 import { oneLine, readTask, updateTask, type Task } from "./task-state.ts";
 import { type Signature, carryOnWhenPredated, failedLines, failureSignature, agentlintStepOf, verifySteps, formatVerify, infraFailure, isPolicyFailure, predatesBaseline, runVerify, sameFailure, validCap } from "./verify.ts";
 
@@ -73,6 +74,10 @@ export function registerGate(pi: ExtensionAPI) {
   let slowNoted: string | undefined;
   let skip: ReviewPayload | undefined;
   let warnedNoReviewModel = false;
+  let lastText = "";
+  // A TUI turn that ends on a question waits for the answer once; the next turn always runs the gate.
+  let deferred = false;
+  pi.on("message_end", async (event) => void (lastText = assistantText(event.message) ?? lastText));
 
   const snapshot = async (cwd: string) => {
     const exec = pi.exec.bind(pi);
@@ -172,6 +177,8 @@ export function registerGate(pi: ExtensionAPI) {
     const remembered = now === UNREADABLE ? undefined : state;
 
     const task = await readTask(ctx.cwd).catch(() => undefined);
+    if (ctx.mode === "tui" && task?.status === "implementing" && !deferred && endsOnQuestion(lastText)) return void (deferred = true);
+    deferred = false;
     // The pinned names are a contract: check them before spending verify time or a paid review on code that misses them.
     if (task?.status === "implementing" && task.plan) {
       const problems = await checkContract(ctx.cwd, task.plan);

@@ -895,3 +895,25 @@ test("editing an untracked file (even only its line ends, next to a dangling lin
   await s.settle();
   assert.equal(s.notes.filter((n) => n.startsWith("Review skipped")).length, 2);
 });
+
+test("a TUI turn that ends on a question waits for the answer once; the next turn runs the gate even on a question", async () => {
+  const t = await setup({ pass: true, task: true, answers: [false] });
+  t.ctx.mode = "tui";
+  const say = (text: string) => t.emit("message_end", { message: { role: "assistant", content: [{ type: "text", text }] } }, t.ctx);
+  await t.run();
+  await say("Changed the fee.\nShould it round up?");
+  assert.equal(await t.settle(), undefined);
+  assert.equal(t.verifies(), 0);
+  await t.run();
+  t.setDiff("changed again");
+  await say("Rounded up. Anything else?");
+  await t.settle();
+  assert.equal(t.verifies(), 1);
+  // RPC (no TUI): never deferred.
+  const r = await setup({ pass: true, task: true, answers: [false] });
+  r.ctx.mode = "rpc";
+  await r.run();
+  await r.emit("message_end", { message: { role: "assistant", content: "Should it round up?" } }, r.ctx);
+  await r.settle();
+  assert.equal(r.verifies(), 1);
+});
