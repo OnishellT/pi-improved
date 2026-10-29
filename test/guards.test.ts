@@ -36,6 +36,14 @@ test("an edit of the acceptances file points the agent at propose, not accept", 
   const root = await tempProject({ ".pi/workflow.json": JSON.stringify({ version: 1, setup: "done", agentlint: "pnpm agentlint" }) });
   const configured = await emit("tool_call", { toolName: "write", input: { path: ".agentlint/acceptances.jsonl" } }, { cwd: root });
   assert.match(configured.reason, /`pnpm agentlint propose <selector>.*`pnpm agentlint next --format json`/);
+  assert.match(configured.reason, /the verify gate asks the user/);
+  assert.match(r.reason, /ask the user to review and approve that proposal/, "propose alone prompts nobody");
+});
+
+test("the fallback agentlint path is shell-quoted only when it needs it", async () => {
+  const { shellQuote } = await import("../src/guards.ts");
+  assert.equal(shellQuote("/opt/pi/node_modules/.bin/agentlint"), "/opt/pi/node_modules/.bin/agentlint");
+  assert.equal(shellQuote("/home/a b/it's/agentlint"), `'/home/a b/it'\\''s/agentlint'`);
 });
 
 test("a symlink to the global config or a workflow state file is blocked like the file itself", async () => {
