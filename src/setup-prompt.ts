@@ -33,6 +33,16 @@ function bendStep(bend: NonNullable<Discovery["bend"]>) {
     : `\`${bend.laws}\` has no \`PROOF.bend\` yet. Do not write one now: tell the user in your summary that a \`/task\` can prove the laws in \`PROOF.bend\`, and that running \`/setup\` again then adds the proof check to verify.`;
 }
 
+/** Offered only to a project without LAWS.bend, and only for pure logic: the laws are the user's spec, so each one is shown and approved before it is written. */
+function lawsStep(manifest: Manifest) {
+  const ask = manifest.useBend === "always" ? "" : "First ask the user with `ask_user` whether they want to record such rules as proven laws (Bend, https://bend-lang.com); if not, skip the rest of this step. ";
+  return `Look for invariants that must never break and are pure logic (limits, pricing, permissions, state transitions), using what the interview and the code showed. If there are none, skip this step silently. ${ask}Check \`command -v bend\`: if it is missing, show the user ${BEND_INSTALL} and never run it; write the laws anyway.
+   - Draft each law in plain words and show it with \`ask_user\` (approve / change / drop). Write only the approved ones.
+   - If \`bend\` is installed, read the "Recursion and Termination", "Quantities" and "Laws and Proofs" sections of \`bend guide\` before writing Bend.
+   - Write the smallest Bend model of the logic in \`Model.bend\` and the approved laws in \`LAWS.bend\`, which imports it. A law is an equality: \`law name:\`, then \`for x: Nat\` lines, then \`{Model.f(x) == y : T}\`; a yes/no fact is \`{... == True{} : Bool}\`. If \`bend\` is installed, \`BEND_NO_TELEMETRY=1 bend --check-only LAWS.bend\` must fail only with "TODO found" (the laws are open claims): fix any other error. Never put a law in without approval; laws are the user's spec.
+   - If \`bend\` is installed, write \`PROOF.bend\` and try to prove them; when \`BEND_NO_TELEMETRY=1 bend --check-only PROOF.bend\` passes, add it to the verify steps. If you cannot prove them quickly, leave PROOF.bend out. Either way, say in the summary that the laws cover only the model until a \`/task\` adds a test in the project's language that compares the real code with the model (and proves any open law).`;
+}
+
 /** The one model-facing instruction for setup. Short on purpose: cheap models follow short lists. */
 export function setupPrompt(found: Discovery, manifest: Manifest, resuming: boolean, skills = "") {
   const connectors = manifest.connectors.map((c) => {
@@ -56,7 +66,7 @@ export function setupPrompt(found: Discovery, manifest: Manifest, resuming: bool
    - \`.pi/skills/domain-<name>/SKILL.md\`, one per business area. Use frontmatter with \`name\` and \`description\`, then the vocabulary, invariants, key files and pitfalls.
    - \`docs/adr/NNNN-<title>.md\` for each architecture decision that the code shows or the user confirmed.`,
     `Create the project's verification skill following pstack-create-verification-skill at \`.pi/skills/verify-app/SKILL.md\`, with a runnable script when the app can be driven headlessly. Its evidence and scratch files live under \`.pi/evidence/\` inside the repo (never under the home directory or outside the repo); the command must not create directories elsewhere. The feature map is versioned in the skill's own \`features/\` folder: \`README.md\`, one file per feature, and \`coverage.json\`; setup_finish checks it.${found.uiDrivers?.length ? ` For behavior a headless run cannot reach (desktop windows, Electron), the script may use these GUI drivers: ${uiDriverHint(found.uiDrivers)}` : ""} Add its command to the verify list passed to \`setup_finish\` only if it runs green.`,
-    ...(found.bend ? [bendStep(found.bend)] : []),
+    ...(found.bend ? [bendStep(found.bend)] : manifest.useBend === "never" ? [] : [lawsStep(manifest)]),
     ...(manifest.agentlint ? [agentlintStep(manifest.agentlint, found, limits.agentlintRules)] : []),
     "Make sure verification exists. Use the proposed verify steps, fix them if they are wrong, or add a missing script or target. Order them fastest first: the stack's compiler, type checker or linter (whatever this project already has) before the tests, so the agent gets static feedback before behavior feedback. Do not change application code and do not install other dependencies without asking.",
     "Call `setup_finish` with the final verify steps and a short summary. If it reports problems, fix them and call it again.",

@@ -37,7 +37,7 @@ test("a project without LAWS.bend sees nothing of Bend", async () => {
   const found = await discover(root, loginBend);
   assert.equal(found.bend, undefined);
   assert.ok(!found.verify.some((s) => /bend/.test(s)));
-  assert.doesNotMatch(setupPrompt(found, { version: 1, setup: "running", verify: found.verify, connectors: [], language: "English" }, false), /LAWS\.bend|bend-lang/);
+  assert.doesNotMatch(setupPrompt(found, { version: 1, setup: "running", verify: found.verify, connectors: [], language: "English", useBend: "never" }, false), /LAWS\.bend|bend-lang/);
   for (const phase of ["plan", "implement"] as const) assert.doesNotMatch(await skillsBlock(root, phase), /bend-laws|LAWS\.bend/);
 });
 
@@ -141,3 +141,23 @@ test("/doctor reports bend only when LAWS.bend exists", async () => {
   assert.doesNotMatch(await doctor({}, 1), /[✓✗] bend/);
 });
 
+
+const prompt = (found: any, useBend?: string) => setupPrompt(found, { version: 1, setup: "running", verify: [], connectors: [], language: "English", ...(useBend ? { useBend: useBend as any } : {}) }, false);
+
+test("setup offers to record laws when the project has none: asks by default, skips the question under always, nothing under never", () => {
+  const ask = prompt({});
+  assert.match(ask, /pure logic[\s\S]*first ask the user[\s\S]*Never put a law in without approval/i);
+  assert.match(ask, /command -v bend[\s\S]*install\.sh[\s\S]*never run it/);
+  assert.doesNotMatch(prompt({}, "always"), /First ask the user with `ask_user` whether they want to record/);
+  assert.match(prompt({}, "always"), /Draft each law in plain words/);
+  assert.doesNotMatch(prompt({}, "never"), /LAWS\.bend|bend-lang/);
+});
+
+test("a project that already has laws gets the detection step, not the offer, whatever useBend says", () => {
+  const found = { bend: { laws: "LAWS.bend", proof: "PROOF.bend", installed: true } };
+  for (const mode of [undefined, "always", "never"]) {
+    const text = prompt(found, mode);
+    assert.match(text, /Never edit `LAWS\.bend`/);
+    assert.doesNotMatch(text, /Draft each law/);
+  }
+});

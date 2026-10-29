@@ -71,6 +71,7 @@ Every key the code reads. Setup and `/models` write most of them; the rest you e
 | `skills` | `{ <phase>: string[] }` | built-in lists | Skills injected per phase. Phases: `setup`, `plan`, `implement`, `diagnose`, `review`, `learn`. Set with `/skills`. |
 | `skillsOnDemand` | `{ <phase>: string[] }` | built-in lists | Skills listed as a one-line index the agent reads only if needed. |
 | `useAgentlint` | `ask` \| `always` \| `never` | `ask` | Whether `/setup` adds agentlint rules (Node projects): `ask` asks, `always` adds them without asking, `never` neither asks nor enforces them. |
+| `useBend` | `ask` \| `always` \| `never` | `ask` | Whether `/setup` offers to record pure-logic invariants as Bend laws (`LAWS.bend`): `ask` asks, `always` drafts them without asking first, `never` leaves Bend out. A project that already has `LAWS.bend` is unaffected. |
 | `basePrompt` | boolean | `true` | `false` removes the `unslop` skill and working-style lines from the main prompt. |
 | `maxReport` | number | `4000` | Characters of failing-step output kept in a verify report. Minimum 200. |
 | `contextWarn` | number | `150000` | Context tokens at which a one-time notice suggests `/compact`. `0` turns it off. |

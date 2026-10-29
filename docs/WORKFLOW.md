@@ -88,10 +88,11 @@ The agent cannot close the task while `verify` is red. It gets 2 automatic retri
 
 For a rule that must never break (pricing, permissions, a state machine), a project can keep `LAWS.bend`, written by a human, at its root. [Bend](https://bend-lang.com) is a language where the agent can prove such laws in `PROOF.bend`; it proves Bend code only. For any other language the agent writes a small Bend model of the rule, proves the laws on it, and adds a test to the project's own suite that compares the real code with the model (through `bend Model.bend <args>` or a compiled binary).
 
+- `/setup` can also create laws: when the interview finds pure-logic invariants and the project has no `LAWS.bend`, it offers to record them (`useBend` in `.pi/workflow.json`: `ask` by default, `always` skips the question, `never` leaves Bend out). Each law is shown in plain words and written only if approved, with a minimal Bend model.
 - Setup proposes `BEND_NO_TELEMETRY=1 bend --check-only PROOF.bend` as a verify step when `bend` is on PATH and `PROOF.bend` exists, and adds it to an existing `verify` when `/setup` runs again. If `bend` is missing it says how to install it (`curl -fsSL https://bend-lang.com/install.sh | sh`, no sudo, into `~/.bend`) and never installs it.
 - In a `/task`, editing an existing `LAWS.bend` is one of the quality gates (below): high risk, and listed in the completion dialog whatever the review policy; edits to a `LAWS.bend` that was uncommitted when the task started are not flagged. `PROOF.bend` is a verify file like any other: an edit the plan does not name is flagged too.
 - An on-request `bend-laws` skill is listed in plan and implement, and the implement prompt and the main session's prompt gain one rule, whatever implement skills the project picked: critical logic is verified against the laws, and `LAWS.bend` is never edited without the user's approval; `/doctor` shows the `bend` version.
-- Without a `LAWS.bend` none of this exists: no prompt text, no skill, no check. Bend sends a daily version ping unless `BEND_NO_TELEMETRY=1`, which the verify step sets.
+- Without a `LAWS.bend` none of this exists outside `/setup`: no prompt text, no skill, no check; `useBend: never` removes the setup offer too. Bend sends a daily version ping unless `BEND_NO_TELEMETRY=1`, which the verify step sets.
 
 ## 5. agentlint
 
