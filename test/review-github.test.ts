@@ -17,6 +17,9 @@ test("remoteFor picks the remote of the PR's repository, not origin", () => {
   // Only fetch URLs count: a push URL to the repository does not make a fork's remote fit.
   const fork = "fork\thttps://github.com/me/y (fetch)\nfork\thttps://github.com/x/y (push)";
   assert.throws(() => remoteFor("https://github.com/x/y", fork), /no git remote/);
+  // A numeric owner in an scp-style URL is a path, not a port.
+  assert.equal(remoteFor("https://github.com/123/repo", "n\tgit@github.com:123/repo.git (fetch)"), "n");
+  assert.equal(remoteFor("https://github.com/o/r", "p\tssh://git@github.com:22/o/r.git (fetch)"), "p");
 });
 
 test("graphqlArgs sends strings raw with -f and numbers with -F", () => {
