@@ -115,6 +115,7 @@ interface Thread {
 
 interface PrData {
   repo: string;
+  repoUrl: string;
   title: string;
   body: string;
   sha: string;
@@ -127,9 +128,9 @@ interface PrData {
 }
 
 async function fetchPr(pr: number): Promise<PrData> {
-  const repo = (
-    await sh(["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"])
-  ).trim();
+  const { nameWithOwner: repo, url } = JSON.parse(
+    await sh(["gh", "repo", "view", "--json", "nameWithOwner,url"]),
+  ) as { nameWithOwner: string; url: string };
   const [owner = "", name = ""] = repo.split("/");
   const view = JSON.parse(
     await sh([
@@ -176,6 +177,7 @@ async function fetchPr(pr: number): Promise<PrData> {
   return {
     attempt,
     repo,
+    repoUrl: url,
     title: view.title,
     body: view.body,
     sha: view.headRefOid,
@@ -483,7 +485,7 @@ async function main() {
     await sh(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"])
   ).trim();
   const mainClone = dirname(gitCommon);
-  const remote = remoteFor(data.repo, await sh(["git", "remote", "-v"]));
+  const remote = remoteFor(data.repoUrl, await sh(["git", "remote", "-v"]));
   const baseRef = `${remote}/${data.base}`;
   await sh([
     "git",

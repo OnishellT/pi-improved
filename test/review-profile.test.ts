@@ -53,3 +53,11 @@ test("a relative main dir is linked by its absolute path", async () => {
   linkCredentials(relative(process.cwd(), main), pi, "openai");
   assert.equal(readlinkSync(join(pi, "auth.json")), join(main, "auth.json"));
 });
+
+test("a copied auth.json is replaced by a link", async () => {
+  const { main, pi } = await dirs();
+  writeFileSync(join(main, "auth.json"), "{}");
+  writeFileSync(join(pi, "auth.json"), "{\"stale\":1}");
+  linkCredentials(main, pi, "openai");
+  assert.ok(lstatSync(join(pi, "auth.json")).isSymbolicLink());
+});

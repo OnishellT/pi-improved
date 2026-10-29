@@ -7,12 +7,16 @@ test("remoteFor picks the remote of the PR's repository, not origin", () => {
     "origin\tgit@github.com:me/pi-improved.git (fetch)",
     "origin\tgit@github.com:me/pi-improved.git (push)",
     "upstream\thttps://github.com/OnishellT/pi-improved (fetch)",
+    "mirror\tssh://git@gitlab.com/x/y.git (fetch)",
   ].join("\n");
-  assert.equal(remoteFor("OnishellT/pi-improved", remotes), "upstream");
-  assert.equal(remoteFor("me/pi-improved", remotes), "origin");
-  assert.throws(() => remoteFor("other/repo", remotes), /no git remote points at other\/repo/);
+  assert.equal(remoteFor("https://github.com/OnishellT/pi-improved", remotes), "upstream");
+  assert.equal(remoteFor("https://github.com/me/pi-improved", remotes), "origin");
+  assert.throws(() => remoteFor("https://github.com/other/repo", remotes), /no git remote fetches/);
+  // The host counts: the same owner and name on another host is another repository.
+  assert.throws(() => remoteFor("https://github.com/x/y", remotes), /no git remote fetches/);
   // Only fetch URLs count: a push URL to the repository does not make a fork's remote fit.
-  assert.throws(() => remoteFor("x/y", "fork\thttps://github.com/me/y (fetch)\nfork\thttps://github.com/x/y (push)"), /no git remote/);
+  const fork = "fork\thttps://github.com/me/y (fetch)\nfork\thttps://github.com/x/y (push)";
+  assert.throws(() => remoteFor("https://github.com/x/y", fork), /no git remote/);
 });
 
 test("graphqlArgs sends strings raw with -f and numbers with -F", () => {
