@@ -7,6 +7,7 @@ import { fakeSubagentExec, isSubagent, ok, tempProject } from "./helpers.ts";
 const task: Task = { id: "t1", title: "Stop and trailing levels", status: "planning", allowedExtra: [], startedAt: "now" };
 const plan: Plan = {
   summary: "Pure stop functions",
+  intent: "Stop and exit rules as pure functions",
   steps: ["tests", "impl"],
   files: ["src/lib/domain/protection.ts", "src/lib/domain/protection.test.ts"],
   decisions: [],
@@ -28,6 +29,9 @@ test("brief carries the ticket evidence, the plan interface and the sibling file
   assert.deepEqual(sib, ["- src/lib/domain/: calendar.ts, money.ts"]);
   const brief = buildPlanBrief(task, plan, "## Scope\n- `stopLevel(avgEntryPrice, stopPct)`", sib);
   assert.match(brief, /Plan check: Stop and trailing levels[\s\S]*stopLevel\(avgEntryPrice, stopPct\)[\s\S]*protection\.ts: stopLevel, shouldExit, shouldExit\(position[\s\S]*calendar\.ts, money\.ts/);
+  assert.match(brief, /Intent: Stop and exit rules as pure functions/);
+  assert.match(brief, /each `usage` line reads like the ticket's words[\s\S]*names a test would call in it match the interface names/);
+  assert.match(brief, /5\. Intent: the plan's intent restates the ticket/);
   assert.match(brief, /VERDICT: OK/);
   assert.match(brief, /Decisions are settled: an answer came from the user/);
   assert.match(buildPlanBrief(task, plan, "x".repeat(30_000), []), /truncated/);

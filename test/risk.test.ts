@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { assessRisk } from "../src/risk.ts";
+import { assessRisk, isTestFile } from "../src/risk.ts";
 import type { Manifest } from "../src/manifest.ts";
 import { tempProject } from "./helpers.ts";
 
@@ -127,4 +127,44 @@ test("the numstat asks for no renames, so a moved lockfile still counts as a dep
   const e: any = async (_c: string, a: string[]) => (a[0] === "diff" && (args = a), { code: 0, stderr: "", killed: false, stdout: a[0] === "diff" ? "1\t0\tpnpm-lock.yaml\0" : "" });
   assert.match((await risk(e)).reasons.join(), /dependencies/);
   assert.ok(args.includes("--no-renames") && args.includes("-z"));
+});
+
+const removing = (rows: [string, number, number][]): any => async (_cmd: string, args: string[]) => ({
+  code: 0, stderr: "", killed: false, stdout: args.includes("--numstat") ? rows.map(([f, a, d]) => `${a}\t${d}\t${f}\0`).join("") : "",
+});
+
+test("isTestFile: test directories", () => {
+  for (const f of ["test/a.ts", "tests/unit/a.py", "src/__tests__/a.js", "spec/models/user.rb", "e2e/login.ts", "app/e2e/login.ts", "src/__mocks__/fs.ts", "Tests/App/Main.swift", "pkg/test/x.go"]) assert.ok(isTestFile(f), f);
+  for (const f of ["src/testing/a.ts", "src/protest/a.ts", "src/contest/a.ts", "src/inspect/a.ts", "src/e2ee/a.ts", "src/specimen/a.ts", "src/latest/a.ts"]) assert.ok(!isTestFile(f), f);
+});
+
+test("isTestFile: test, tests or spec as a separated word in the file name, or a CamelCase suffix", () => {
+  for (const f of ["src/foo.test.ts", "src/foo.spec.js", "src/foo.tests.js", "pkg/foo_test.go", "pkg/foo_tests.go", "pkg/test_foo.py", "src/foo-test.js", "src/FooTest.java", "src/FooTests.swift", "src/FooSpec.scala", "src/TestFoo.java", "src/tests.rs", "src/test.ts", "lib/foo_spec.rb", "spec_helper.rb", "src/foo.test"]) assert.ok(isTestFile(f), f);
+  for (const f of ["src/latest.ts", "src/contest.ts", "src/Contest.java", "src/Latest.kt", "src/testing-utils.ts", "src/testify.ts", "docs/attest.md", "src/aspect.ts", "src/inspect.ts", "src/specimen.ts", "src/protest.go", "src/fee.ts", "README.md"]) assert.ok(!isTestFile(f), f);
+});
+
+test("removing or changing lines in an existing test file is a risk reason; adding tests is not", async () => {
+  const edited = await risk(removing([["test/fee.test.ts", 3, 2], ["src/fee.ts", 5, 1]]));
+  assert.equal(edited.level, "low");
+  assert.match(edited.reasons.join(), /existing tests changed \(test\/fee\.test\.ts\)/);
+  assert.deepEqual(await risk(removing([["test/fee.test.ts", 30, 0], ["src/fee.ts", 5, 5]])), { review: false, level: "none", reasons: [] });
+  assert.deepEqual(await risk(removing([["src/fee.ts", 5, 5]])), { review: false, level: "none", reasons: [] });
+  assert.equal((await risk(removing([["test/fee.test.ts", 3, 2]]), task, { ...base, review: { minLevel: "low" } })).review, true);
+});
+
+test("a new untracked test file is not an edited existing test; at most 3 paths are named", async () => {
+  assert.deepEqual(await risk(exec([], ["test/new.test.ts"])), { review: false, level: "none", reasons: [] });
+  const many = await risk(removing(["a", "b", "c", "d"].map((n) => [`test/${n}.test.ts`, 1, 1] as [string, number, number])));
+  assert.match(many.reasons.join(), /\(test\/a\.test\.ts, test\/b\.test\.ts, test\/c\.test\.ts\)/);
+});
+
+test("an existing test the approved plan lists in files, or names in a seam, is meant to change; others still raise", async () => {
+  const rows: [string, number, number][] = [["test/fee.test.ts", 3, 2], ["tests/unit/a_test.go", 1, 1], ["spec/b_spec.rb", 1, 1], ["e2e/c.ts", 1, 1]];
+  const planned = { ...task, plan: { ...plan, files: ["test/fee.test.ts", "e2e/"], seams: [{ name: "n", testFile: "tests/unit/a_test.go", catches: "x" }] } };
+  const r = await risk(removing(rows), planned);
+  assert.match(r.reasons.join(), /existing tests changed \(spec\/b_spec\.rb\)/);
+  assert.deepEqual(await risk(removing(rows.slice(0, 1)), planned), { review: false, level: "none", reasons: [] });
+  assert.deepEqual(await risk(removing(rows.slice(1, 2)), planned), { review: false, level: "none", reasons: [] });
+  assert.deepEqual(await risk(removing(rows.slice(3)), planned), { review: false, level: "none", reasons: [] });
+  assert.match((await risk(removing(rows.slice(0, 1)))).reasons.join(), /existing tests changed/);
 });

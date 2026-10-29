@@ -10,6 +10,10 @@ export type InterfaceEntry = Plan["interface"][number];
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 const word = (name: string, flags = "") => new RegExp(`(^|[^A-Za-z0-9_])${escape(name)}(?=$|[^A-Za-z0-9_])`, flags);
 
+/** A name is present when it appears as a word, or, for a qualified name (`A::B`, `A.B`, `A#B`, `A/B`), when every segment does. */
+export const hasName = (name: string, text: string, flags = "") =>
+  word(name, flags).test(text) || (/[^A-Za-z0-9_]/.test(name) && name.split(/[^A-Za-z0-9_]+/).filter(Boolean).every((seg) => word(seg, flags).test(text)));
+
 /** Tokens of a file stem: `entry-sizing` → entry, sizing; `orderGuards` → order, guards. */
 export const stemTokens = (file: string) =>
   path
@@ -25,7 +29,7 @@ export const stemTokens = (file: string) =>
  * Language-agnostic on purpose: plain text, no parsing.
  */
 export function missingNames(entry: InterfaceEntry, evidence: string, newFile: boolean): string[] {
-  const missing = entry.exports.filter((name) => !word(name, "i").test(evidence));
+  const missing = entry.exports.filter((name) => !hasName(name, evidence, "i"));
   if (newFile) {
     const tokens = stemTokens(entry.file);
     if (tokens.length && !tokens.every((t) => word(t, "i").test(evidence))) missing.push(path.basename(entry.file));
@@ -36,7 +40,7 @@ export function missingNames(entry: InterfaceEntry, evidence: string, newFile: b
 /** True when the document shares a word of 4+ letters with the question: cheap proof that a cited source is about it. */
 export const relatesTo = (question: string, text: string) => (question.match(/[A-Za-z0-9]{4,}/g) ?? []).some((w) => word(w, "i").test(text));
 
-/** Interface names the working copy does not expose yet: each export must appear literally (as a word) in its file. */
+/** Interface names the working copy does not expose yet: each export must appear as a word in its file (a qualified name: each segment). */
 export async function checkContract(root: string, plan: Plan): Promise<string[]> {
   const problems: string[] = [];
   for (const entry of plan.interface ?? []) {
@@ -45,7 +49,7 @@ export async function checkContract(root: string, plan: Plan): Promise<string[]>
       problems.push(`${entry.file}: the file does not exist`);
       continue;
     }
-    const missing = entry.exports.filter((name) => !word(name).test(text));
+    const missing = entry.exports.filter((name) => !hasName(name, text));
     if (missing.length) problems.push(`${entry.file}: missing ${missing.join(", ")}`);
   }
   return problems;

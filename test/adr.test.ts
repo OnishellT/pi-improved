@@ -26,10 +26,11 @@ test("ADRs are written only after the plan is approved, once per decision across
   await h.commands.get("task").handler("Add fee", ctxFor([]).ctx);
   const plan = {
     summary: "s",
+    intent: "i",
     steps: ["e"],
     files: ["src/fee.ts", "test/fee.test.ts"],
     decisions: [{ question: "Fee unit?", options: ["cents", "percent"] }],
-    interface: [{ file: "src/fee.ts", exports: ["fee"], source: "ticket" }],
+    interface: [{ file: "src/fee.ts", exports: ["fee"], usage: "fee(1)", source: "ticket" }],
     seams: [{ name: "x", testFile: "test/fee.test.ts", catches: "y" }],
   };
   const adrs = async () => (await fs.readdir(path.join(root, "docs/adr")).catch(() => [])).length;

@@ -61,11 +61,63 @@ test("sends the retro prompt on every 5th record, only with UI", async () => {
   assert.equal(f.sent.length, 0);
   await emit(5);
   assert.equal(f.sent.length, 1);
-  assert.match(f.sent[0], /Retro: 5 tasks[\s\S]*ask_user[\s\S]*Never write them without[\s\S]*pstack-maintain-verification-skill/);
+  assert.match(f.sent[0], /Retro: 5 tasks[\s\S]*ask_user[\s\S]*Never write them without/);
+  assert.doesNotMatch(f.sent[0].slice(f.sent[0].indexOf("Retro:")), /verification skill/);
   await emit(6);
   assert.equal(f.sent.length, 1);
   for (let i = 7; i <= 10; i++) await emit(i, false);
   assert.equal(f.sent.length, 1);
+});
+
+const SYNC = "a".repeat(40);
+const covered = (extra: object = {}) => ({ ".pi/skills/verify-app/features/coverage.json": JSON.stringify({ sync: SYNC, paths: ["src/", "lib/x.ts"], ...extra }) });
+
+async function retroWith(files: Record<string, string>, log: string, known = true, head = "") {
+  const root = await tempProject(files);
+  const logs: string[][] = [];
+  const f = fakePi((_cmd, args) => (args[0] === "log" && logs.push(args), { code: args[0] === "cat-file" && !known ? 128 : 0, stdout: args[0] === "log" ? log : args[0] === "rev-parse" ? head : "" }));
+  const listeners = new Map<string, (d: unknown) => unknown>();
+  f.pi.events = { on: (name: string, fn: any) => listeners.set(name, fn) };
+  registerLearn(f.pi);
+  for (let i = 1; i <= 5; i++) await listeners.get(TASK_DONE_EVENT)!({ root, hasUI: true, task: task(`T-${i}`, "T", "S", ["a.ts"]) });
+  return { sent: f.sent, logs };
+}
+
+test("retro asks to update the verification skill, naming the commits, only when covered code changed", async () => {
+  const { sent, logs } = await retroWith(covered(), "abc1234 Rename the search box\ndef5678 Add export\n");
+  assert.deepEqual(logs[0].slice(logs[0].indexOf(`${SYNC}..HEAD`)), [`${SYNC}..HEAD`, "--", "src/", "lib/x.ts"]);
+  assert.match(sent[0].slice(sent[0].indexOf("Retro:")), /verification skill covers changed[\s\S]*- abc1234 Rename the search box\n- def5678 Add export[\s\S]*ask_user[\s\S]*pstack-maintain-verification-skill[\s\S]*coverage\.json to the output of `git rev-parse HEAD`/);
+});
+
+test("retro says the sync commit is gone and asks to refresh coverage, instead of staying silent", async () => {
+  const { sent, logs } = await retroWith(covered(), "abc1234 x\n", false);
+  const retro = sent[0].slice(sent[0].indexOf("Retro:"));
+  assert.match(retro, new RegExp(`sync commit ${SYNC} no longer exists[\\s\\S]*ask_user[\\s\\S]*refresh the skill's coverage[\\s\\S]*git rev-parse HEAD`));
+  assert.equal(logs.length, 0);
+});
+
+test("retro asks for a first sync when the skill was set up before the first commit", async () => {
+  const { sent } = await retroWith(covered({ sync: "" }), "", true, "abc1234\n");
+  assert.match(sent[0].slice(sent[0].indexOf("Retro:")), /never synced[\s\S]*ask_user[\s\S]*git rev-parse HEAD/);
+});
+
+test("the record keeps the plan's intent, and has none for an old plan", async () => {
+  const root = await tempProject({});
+  const emit = setup();
+  const t = task("A-1", "T", "S", ["a.ts"]);
+  await emit({ root, task: { ...t, plan: { ...t.plan, intent: "Charge a fee on each payment" } } });
+  await emit({ root, task: task("A-2", "T", "S", ["a.ts"]) });
+  const [a, b] = (await fs.readFile(path.join(root, ".pi/memory/tasks.jsonl"), "utf8")).trim().split("\n").map((l) => JSON.parse(l));
+  assert.equal(a.intent, "Charge a fee on each payment");
+  assert.equal("intent" in b, false);
+});
+
+test("retro leaves the verification skill alone with no covered change, no record or a malformed one", async () => {
+  for (const [files, log] of [[covered(), ""], [{}, "abc1234 x\n"], [covered({ sync: "nope" }), "abc1234 x\n"], [covered({ paths: [] }), "abc1234 x\n"]] as const) {
+    const { sent } = await retroWith(files, log);
+    assert.equal(sent.length, 1);
+    assert.doesNotMatch(sent[0].slice(sent[0].indexOf("Retro:")), /verification skill/);
+  }
 });
 
 test("changed files are measured against the task's base commit, not HEAD", async () => {
@@ -75,4 +127,16 @@ test("changed files are measured against the task's base commit, not HEAD", asyn
   const emit = setup((_cmd, args) => (args[0] === "diff" && diffs.push(args), { code: 0, stdout: args[0] === "rev-parse" ? hash : args[0] === "diff" ? "src/a.ts\0" : "" }));
   await emit({ root, task: { ...task("B-1", "T", "S", ["src/"]), baseCommit: hash } });
   assert.ok(diffs[0].includes(hash) && diffs[0].includes("-z"));
+});
+
+test("retro lists covered code that is changed but not committed yet, and says only user messages are corrections", async () => {
+  const root = await tempProject(covered());
+  const f = fakePi((_cmd, args) => ({ code: 0, stdout: args[0] === "diff" ? "src/a.ts\0" : args[0] === "ls-files" ? "src/new.ts\0" : "" }));
+  const listeners = new Map<string, (d: unknown) => unknown>();
+  f.pi.events = { on: (name: string, fn: any) => listeners.set(name, fn) };
+  registerLearn(f.pi);
+  for (let i = 1; i <= 5; i++) await listeners.get(TASK_DONE_EVENT)!({ root, hasUI: true, task: task(`T-${i}`, "T", "S", ["a.ts"]) });
+  const retro = f.sent[0].slice(f.sent[0].indexOf("Retro:"));
+  assert.match(retro, /verification skill covers changed[\s\S]*Not committed yet:\n- src\/a\.ts\n- src\/new\.ts[\s\S]*ask_user/);
+  assert.match(retro, /Only messages from the user are corrections[\s\S]*contract-gate, verify-gate/);
 });

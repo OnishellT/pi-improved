@@ -5,14 +5,17 @@ import { test } from "node:test";
 import { updateManifest } from "../src/manifest.ts";
 import { readTask, writeTask } from "../src/task-state.ts";
 import { planCheckWanted, registerTask, specFiles } from "../src/task.ts";
+import { planText } from "../src/task-prompt.ts";
+import { VERIFY_EVENT } from "../src/events.ts";
 import { fakeCtx, fakePi, fakeUI, isSubagent, tempProject } from "./helpers.ts";
 
 const plan = (decisions: any[] = [], extra: any = {}) => ({
   summary: "Add fee",
+  intent: "Charge a fee on each payment",
   steps: ["edit"],
   files: ["src/fee.ts", "test/fee.test.ts"],
   decisions,
-  interface: [{ file: "src/fee.ts", exports: ["fee"], source: "ticket" }],
+  interface: [{ file: "src/fee.ts", exports: ["fee"], usage: "fee(100)", source: "ticket" }],
   seams: [{ name: "fee calc", testFile: "test/fee.test.ts", catches: "rounding" }],
   ...extra,
 });
@@ -203,7 +206,7 @@ test("interface from ticket or an existing path is accepted silently", async () 
   const { commands, tools, ctxFor, root } = await setup();
   await commands.get("task").handler("Add fee", ctxFor([]).ctx);
   const { ctx, ui } = ctxFor([true]);
-  const iface = [{ file: "src/fee.ts", exports: ["fee"], source: "ticket" }, { file: "src/money.ts", exports: ["m"], source: "src/money.ts#m" }];
+  const iface = [{ file: "src/fee.ts", exports: ["fee"], usage: "fee(100)", source: "ticket" }, { file: "src/money.ts", exports: ["m"], source: "src/money.ts#m" }];
   await tools.get("task_plan").execute("1", plan([], { interface: iface }), undefined, undefined, ctx);
   assert.equal(ui.asked.length, 1);
   assert.equal((await readTask(root))!.plan!.decisions.length, 0);
@@ -433,4 +436,122 @@ test("fast path is closed by size and by risk triggers", async () => {
   assert.match(planRiskReasons({ ...base, files: ["src/auth/login.ts"] }, m)[0], /sensitive/);
   assert.match(planRiskReasons(base, { review: { paths: ["src/**"] } } as any)[0], /review.paths/);
   assert.deepEqual(planRiskReasons(base, { review: { always: true } } as any), ["review.always"]);
+});
+
+test("a plan without an intent is refused before anything is asked", async () => {
+  const { commands, tools, ctxFor, root } = await setup();
+  await commands.get("task").handler("Add fee", ctxFor([]).ctx);
+  for (const intent of ["", "   ", undefined]) {
+    const { ctx, ui } = ctxFor([true]);
+    await assert.rejects(tools.get("task_plan").execute("1", plan([], { intent }), undefined, undefined, ctx), /no intent/);
+    assert.equal(ui.asked.length, 0);
+  }
+  assert.equal((await readTask(root))?.status, "planning");
+});
+
+test("the approval dialog shows the intent and each usage line, and the saved plan keeps them", async () => {
+  const { commands, tools, ctxFor, root } = await setup();
+  await commands.get("task").handler("Add fee", ctxFor([]).ctx);
+  const { ctx, ui } = ctxFor([true]);
+  const bodies: string[] = [];
+  const confirm = ui.confirm;
+  ui.confirm = ((title: string, body: string) => (bodies.push(body), confirm(title))) as any;
+  await tools.get("task_plan").execute("1", plan(), undefined, undefined, ctx);
+  assert.match(bodies[0], /Intent: Charge a fee on each payment[\s\S]*src\/fee\.ts: fee[\s\S]*usage: fee\(100\)/);
+  const saved = (await readTask(root))!.plan!;
+  assert.equal(saved.intent, "Charge a fee on each payment");
+  assert.equal(saved.interface[0].usage, "fee(100)");
+  assert.match(planText(saved), /^Intent: Charge a fee/);
+});
+
+async function baselineSetup(exec: (cmd: string, args: string[]) => { code: number; stdout?: string }) {
+  const runs: { step: string; timeout: number; signal?: AbortSignal }[] = [];
+  const h = fakePi(exec);
+  const base = h.pi.exec;
+  h.pi.exec = (cmd: string, args: string[], o: any) => (cmd === "bash" && runs.push({ step: args[1], timeout: o.timeout, signal: o.signal }), base(cmd, args));
+  const emitted: any[] = [];
+  h.pi.events = { emit: (name: string, payload: any) => emitted.push({ name, payload }) };
+  registerTask(h.pi);
+  const root = await tempProject({ "src/money.ts": "export const m = 1;\n" });
+  await updateManifest(root, (m) => void ((m.setup = "done"), (m.review = { always: true }), (m.verify = ["fast check", "slow check"])));
+  const status: (string | undefined)[] = [];
+  const ctxFor = (answers: unknown[]) => {
+    const { ctx } = fakeCtx(root, answers);
+    ctx.ui.setStatus = (key: string, text?: string) => key === "baseline" && status.push(text);
+    return ctx;
+  };
+  await h.commands.get("task").handler("Add fee", ctxFor([]));
+  return { ...h, root, runs, emitted, status, ctxFor };
+}
+
+test("approving the plan runs every verify command once, shows a status line, and stores the baseline with its duration", async () => {
+  const t = await baselineSetup((cmd) => (cmd === "bash" ? { code: 1, stdout: "FAIL old test 12" } : { code: 0 }));
+  const ctl = new AbortController();
+  await t.tools.get("task_plan").execute("1", plan(), ctl.signal, undefined, t.ctxFor(["Accept the proposed names", true]));
+  assert.deepEqual(t.runs.map((r) => r.step), ["fast check", "slow check"]);
+  assert.ok(t.runs.every((r) => r.timeout === 10 * 60_000 && r.signal === ctl.signal));
+  assert.match(t.status[0]!, /^running verify before the change/);
+  assert.equal(t.status.at(-1), undefined);
+  const baseline = (await readTask(t.root))!.baseline!;
+  assert.equal(baseline.ok, false);
+  assert.equal(typeof baseline.seconds, "number");
+  assert.deepEqual(baseline.failing, [{ step: "fast check", lines: ["FAIL old test 12"] }, { step: "slow check", lines: ["FAIL old test 12"] }]);
+  const event = t.emitted.find((e) => e.name === VERIFY_EVENT).payload;
+  assert.deepEqual([event.kind, event.ok, event.root, typeof event.seconds], ["baseline", false, t.root, "number"]);
+});
+
+test("no baseline runs while setup is not done, and none is stored without a verify command", async () => {
+  const t = await baselineSetup(() => ({ code: 1, stdout: "FAIL x" }));
+  await updateManifest(t.root, (m) => void (m.setup = "running"));
+  await t.tools.get("task_plan").execute("1", plan(), undefined, undefined, t.ctxFor(["Accept the proposed names", true]));
+  assert.deepEqual(t.runs, []);
+  assert.equal(t.status.length, 0);
+  assert.equal((await readTask(t.root))!.baseline, undefined);
+  const { commands, tools, ctxFor, root } = await setup();
+  await commands.get("task").handler("Add fee", ctxFor([]).ctx);
+  await tools.get("task_plan").execute("1", plan(), undefined, undefined, ctxFor([true]).ctx);
+  assert.equal((await readTask(root))!.baseline, undefined);
+});
+
+test("a passing baseline is stored as ok with its duration", async () => {
+  const t = await baselineSetup(() => ({ code: 0 }));
+  await t.tools.get("task_plan").execute("1", plan(), undefined, undefined, t.ctxFor(["Accept the proposed names", true]));
+  const baseline = (await readTask(t.root))!.baseline!;
+  assert.deepEqual([baseline.ok, baseline.failing, typeof baseline.seconds], [true, undefined, "number"]);
+});
+
+test("a baseline cut short by the abort signal is not stored", async () => {
+  const t = await baselineSetup(() => ({ code: 1, stdout: "FAIL x" }));
+  const ctl = new AbortController();
+  const base = t.pi.exec;
+  t.pi.exec = (cmd: string, args: string[], o: any) => (cmd === "bash" && ctl.abort(), base(cmd, args, o));
+  await t.tools.get("task_plan").execute("1", plan(), ctl.signal, undefined, t.ctxFor(["Accept the proposed names", true]));
+  assert.equal((await readTask(t.root))!.baseline, undefined);
+  assert.equal((await readTask(t.root))!.status, "implementing");
+});
+
+test("/task titles a long pasted ticket by its first line and keeps the whole text in the prompt and the evidence", async () => {
+  const h = fakePi();
+  registerTask(h.pi);
+  const root = await tempProject({ "TICKET.md": "# Superconduct shred is missing\n\nBody of the ticket.\n" });
+  await updateManifest(root, (m) => void (m.setup = "done"));
+  const ticket = "# Superconduct physical shred is missing, and the optimizer ignores enemy shred and more words to be long\n\nSecond paragraph with the details.";
+  await h.commands.get("task").handler(ticket, fakeCtx(root, []).ctx);
+  const task = (await readTask(root))!;
+  assert.ok(!task.title.includes("\n") && task.title.length <= 72, task.title);
+  assert.equal(task.body, ticket);
+  assert.match(h.sent[0], /Second paragraph with the details\./);
+  await h.commands.get("task").handler("cancel", fakeCtx(root, []).ctx);
+  // a request that is only a spec file is titled by the file's first line
+  await h.commands.get("task").handler("TICKET.md", fakeCtx(root, []).ctx);
+  const byFile = (await readTask(root))!;
+  assert.equal(byFile.title, "Superconduct shred is missing");
+  assert.equal(byFile.body, undefined);
+  assert.deepEqual(byFile.spec, ["TICKET.md"]);
+  // a short request stays as typed
+  await h.commands.get("task").handler("cancel", fakeCtx(root, []).ctx);
+  await h.commands.get("task").handler("Add fee", fakeCtx(root, []).ctx);
+  const plain = (await readTask(root))!;
+  assert.equal(plain.title, "Add fee");
+  assert.equal(plain.body, undefined);
 });

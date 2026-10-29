@@ -34,7 +34,7 @@ test("a selector that comes back after its approve stops with a message instead 
   t.ctx.ui.notify = (m: string) => notes.push(m);
   assert.equal(await resolvePolicyFailure(t.pi, t.ctx, { agentlint: "lint" } as any, "report"), "failed");
   assert.equal(t.calls.filter((a) => a[4] === "approve").length, 1);
-  assert.match(notes[0], /src\/a\.js:3 after it was accepted/);
+  assert.ok(notes.some((n) => /src\/a\.js:3 after it was accepted/.test(n)));
 });
 
 test("no open finding to accept is a failure, not an approval that would rerun the same failing verify", async () => {
@@ -43,7 +43,7 @@ test("no open finding to accept is a failure, not an approval that would rerun t
   t.ctx.ui.notify = (m: string) => notes.push(m);
   assert.equal(await resolvePolicyFailure(t.pi, t.ctx, { agentlint: "lint" } as any, "report"), "failed");
   assert.equal(t.calls.filter((a) => a[4] === "approve").length, 0);
-  assert.match(notes[0], /no open finding/);
+  assert.ok(notes.some((n) => /no open finding/.test(n)));
 });
 
 test("any number of distinct findings is accepted, with no fixed cap", async () => {
