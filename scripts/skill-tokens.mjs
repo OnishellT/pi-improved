@@ -17,6 +17,7 @@ const phases = {};
 for (const phase of Object.keys(DEFAULT_SKILLS)) {
   phases[phase] = { skills: DEFAULT_SKILLS[phase], ...size((await skillsBlock(root, phase)).length) };
 }
+await fs.rm(root, { recursive: true, force: true });
 
 const skills = {};
 for (const name of bundled) {

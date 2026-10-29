@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { dirname } from "node:path";
 import { test } from "node:test";
 import { registerGuards } from "../src/guards.ts";
-import { fakePi, fakeUI, tempProject } from "./helpers.ts";
+import { fakePi, fakeUI, tempDir, tempProject } from "./helpers.ts";
 
 test("agentlint commands that open the review UI are blocked", async () => {
   const { pi, emit } = fakePi();
@@ -40,10 +40,9 @@ test("an edit of the acceptances file points the agent at propose, not accept", 
 
 test("a symlink to the global config or a workflow state file is blocked like the file itself", async () => {
   const { globalPath } = await import("../src/config.ts");
-  const { mkdtempSync, symlinkSync, mkdirSync } = await import("node:fs");
-  const { tmpdir } = await import("node:os");
+  const { symlinkSync, mkdirSync } = await import("node:fs");
   const { join } = await import("node:path");
-  const dir = mkdtempSync(join(tmpdir(), "pi-guard-"));
+  const dir = await tempDir("pi-guard-");
   mkdirSync(join(dir, ".pi"));
   symlinkSync(globalPath(), join(dir, "alias.json"));
   symlinkSync(dirname(globalPath()), join(dir, "agent"));
@@ -59,10 +58,8 @@ test("a symlink to the global config or a workflow state file is blocked like th
 /** A project dir and a bash call whose "command" is a function that changes the acceptances file, like any command could. */
 async function acceptances(ui?: ReturnType<typeof fakeUI>) {
   const fs = await import("node:fs/promises");
-  const { mkdtemp } = fs;
-  const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
-  const dir = await mkdtemp(join(tmpdir(), "pi-accept-"));
+  const dir = await tempDir("pi-accept-");
   const file = join(dir, ".agentlint", "acceptances.jsonl");
   const { pi, emit } = fakePi();
   registerGuards(pi);
