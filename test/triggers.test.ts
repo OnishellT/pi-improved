@@ -130,3 +130,30 @@ test("migration asks once per file", async () => {
   assert.equal(s.ui.asked.length, 2);
   assert.equal(((await s.run("write", { path: "q.sql", content: "" })) as any).block, true);
 });
+
+async function headless(files: Record<string, string>, t: Task | null = task()) {
+  const s = await setup(files, [], t);
+  const { pi, emit } = fakePi();
+  registerTriggers(pi);
+  const ctx: any = { cwd: s.root, hasUI: false, ui: fakeUI([]) };
+  return (toolName: string, input: any) => emit("tool_call", { toolName, input }, ctx) as Promise<any>;
+}
+
+test("headless: a new dependency is denied with a reason, even one the plan's manifest allows; the other gates stay off", async () => {
+  const run = await headless({ "package.json": '{"dependencies":{"a":"1"}}', "src/a.ts": "" });
+  const bash = await run("bash", { command: "npm install left-pad" });
+  assert.equal(bash.block, true);
+  assert.match(bash.reason, /left-pad needs approval, and nobody is here to approve it/);
+  const edit = await run("write", { path: "package.json", content: '{"dependencies":{"a":"1","b":"2"}}' });
+  assert.match(edit.reason, /dependency b needs approval/);
+  assert.equal(await run("write", { path: "package.json", content: '{"dependencies":{"a":"2"}}' }), undefined, "no new name");
+  assert.match((await run("write", { path: "package.json", content: "{bad" })).reason, /cannot be checked/);
+  assert.equal(await run("bash", { command: "npm install" }), undefined);
+  assert.equal(await run("write", { path: "other/x.ts", content: "" }), undefined, "scope gate is still off");
+  assert.equal(await run("write", { path: "db/migrate/1.rb", content: "" }), undefined, "migration gate is still off");
+  const planned = await headless({ "package.json": "{}" }, task({ plan: { ...task().plan!, files: ["src/a.ts", "package.json"] } }));
+  assert.equal((await planned("bash", { command: "npm install left-pad" })).block, true);
+  assert.equal((await planned("write", { path: "package.json", content: '{"dependencies":{"b":"2"}}' })).block, true);
+  const idle = await headless({}, task({ status: "planning" }));
+  assert.equal(await idle("bash", { command: "npm install left-pad" }), undefined);
+});
