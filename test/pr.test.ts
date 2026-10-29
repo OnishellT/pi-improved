@@ -6,6 +6,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { branchName, buildBody, gatherFacts, newAdrs, prTitle, runPr, scrub, type PrFacts } from "../src/pr.ts";
 import { installMessage } from "../src/nix.ts";
+import { stepSignature } from "../src/verify.ts";
 import { fakeUI, tempProject } from "./helpers.ts";
 
 const plan = { summary: "Add the thing", steps: ["step one"], files: [], decisions: [] as any[], interface: [], seams: [{ name: "parser", testFile: "t", catches: "bad input", misses: "io" }] };
@@ -47,6 +48,15 @@ test("body: summary, closes, verify, risk, ADRs, tests", () => {
   assert.match(body, /- docs\/adr\/0002-x\.md\n- docs\/adr\/0003-y\.md \(uncommitted\)/);
   assert.match(body, /parser: catches bad input; misses io/);
   assert.doesNotMatch(body, /Evidence/);
+});
+
+test("body: the intent leads the summary; failures that predate the change are listed under verify", () => {
+  const withIntent = { ...task, predates: ["FAIL old", "expected 1 got 2"], plan: { ...task.plan, intent: "Let people add the thing" } };
+  const failed = buildBody({ task: withIntent, facts, verify: { ok: false, text: "verify FAILED" } });
+  assert.match(failed, /## Summary\nLet people add the thing\n\nAdd the thing\n\n- step one/);
+  assert.match(failed, /FAILED:[\s\S]*verify FAILED\n```\n\nVerify fails, but only with failures that predate this change[\s\S]*- FAIL old\n- expected 1 got 2/);
+  assert.doesNotMatch(buildBody({ task: withIntent, facts, verify: { ok: true, text: "verify passed" } }), /predate/);
+  assert.doesNotMatch(buildBody({ task, facts, verify: { ok: false, text: "verify FAILED" } }), /predate|Let people/);
 });
 
 test("body: template kept, evidence note, no verify steps", () => {
@@ -111,6 +121,23 @@ test("a failing git status stops /pr instead of passing for a clean tree", async
   const out = await runPr(exec, await project(), fakeUI([]) as any);
   assert.equal(out.status, "not-ready");
   assert.match(out.detail ?? "", /git status failed/);
+});
+
+test("the body calls a failing verify old only when this run's failures all predate the baseline", async () => {
+  const baseline = { ok: false, seconds: 1, failing: [stepSignature({ step: "npm test", ok: false, output: "FAIL old.test.ts" })!] };
+  const shownBody = async (output: string) => {
+    const root = await project();
+    await fs.writeFile(path.join(root, ".pi/task.json"), JSON.stringify({ ...task, status: "implementing", baseline, predates: ["FAIL old.test.ts"] }));
+    const inner = setup({ gh: false }).exec;
+    const exec: any = async (cmd: string, args: string[]) => (cmd === "bash" ? { code: 1, stdout: output, stderr: "", killed: false } : inner(cmd, args));
+    const ui: any = fakeUI([true]);
+    let shown = "";
+    ui.notify = (m: string) => void (shown += m);
+    await runPr(exec, root, ui);
+    return shown;
+  };
+  assert.match(await shownBody("FAIL old.test.ts"), /predate this change[\s\S]*- FAIL old\.test\.ts/);
+  assert.doesNotMatch(await shownBody("FAIL old.test.ts\nFAIL brand-new.test.ts"), /predate/);
 });
 
 test("on the base branch: needs a confirmed task branch first", async () => {
@@ -227,4 +254,12 @@ test("the local-state list is the one /setup ignores, and covers what their owne
   for (const f of [".pi/task.json", ".pi/contract.json", ".pi/metrics/a.jsonl", ".pi/evidence/x/y.png"]) assert.ok(isLocalState(f), f);
   for (const f of [".pi/workflow.json", ".pi/memory/tasks.jsonl", ".pi/skills/a/SKILL.md", ".pi/task.json.bak", "src/.pi/task.json"]) assert.ok(!isLocalState(f), f);
   assert.ok(isPiState(".pi/workflow.json"), "reviews and risk still look past all of .pi/");
+});
+
+test("a task that holds a whole ticket still gives a one-line PR title, commit subject and branch", () => {
+  const long = { ...task, ticket: undefined, title: `# ${"Superconduct shred ".repeat(10)}\n\nbody line\nmore` };
+  const title = prTitle(long, []);
+  assert.ok(!title.includes("\n") && title.length <= 72, title);
+  assert.ok(branchName(long).length <= "task/".length + 50);
+  assert.ok(!branchName(long).includes("body"));
 });

@@ -28,8 +28,8 @@ test("accumulates usage per phase and counts events", async () => {
   await fs.writeFile(path.join(root, ".pi/task.json"), taskJson("M-1", "implementing"));
   await s.emit("message_end", msg(0.25), ctx);
   await s.emit("message_end", msg(0.25), ctx);
-  await s.fire(VERIFY_EVENT, { root, ok: false, seconds: 1 });
-  await s.fire(VERIFY_EVENT, { root, ok: true, seconds: 1 });
+  await s.fire(VERIFY_EVENT, { root, kind: "gate", ok: false, seconds: 1 });
+  await s.fire(VERIFY_EVENT, { root, kind: "gate", ok: true, seconds: 1 });
   await s.fire(REVIEW_EVENT, { root, status: "changes", model: "x", seconds: 2 });
   await s.fire(ESCALATE_EVENT, { root, model: "big" });
   const m = taskMetrics("M-1")!;
@@ -38,10 +38,25 @@ test("accumulates usage per phase and counts events", async () => {
   assert.deepEqual([m.verifyRuns, m.verifyFailures, m.escalations, m.reviews.length], [2, 1, 1, 1]);
 });
 
+test("baseline, progress, predating and premise runs are recorded apart from the final verifies", async () => {
+  const root = await tempProject({ ".pi/task.json": taskJson("M-3", "implementing") });
+  const s = setup();
+  await s.fire(VERIFY_EVENT, { root, kind: "baseline", ok: false, seconds: 4.5 });
+  await s.fire(VERIFY_EVENT, { root, kind: "progress", ok: false, seconds: 1 });
+  await s.fire(VERIFY_EVENT, { root, kind: "progress", ok: true, seconds: 1 });
+  await s.fire(VERIFY_EVENT, { root, kind: "gate", ok: false, seconds: 2, predates: true });
+  await s.fire(VERIFY_EVENT, { root, kind: "gate", ok: false, seconds: 2, premise: true });
+  await s.fire(VERIFY_EVENT, { root, kind: "gate", ok: false, seconds: 2, premise: false });
+  const m = taskMetrics("M-3")!;
+  assert.deepEqual(m.baseline, { ok: false, seconds: 4.5 });
+  assert.deepEqual(m.progress, { runs: 2, failures: 1 });
+  assert.deepEqual([m.verifyRuns, m.verifyFailures, m.predated, m.premises], [3, 2, 1, 1]);
+});
+
 test("snapshots are written through a temp file: no leftovers, valid JSON", async () => {
   const root = await tempProject({ ".pi/task.json": taskJson("M-9", "planning") });
   const s = setup();
-  await Promise.all([s.emit("message_end", msg(0.1), { cwd: root }), s.fire(VERIFY_EVENT, { root, ok: true, seconds: 1 })]);
+  await Promise.all([s.emit("message_end", msg(0.1), { cwd: root }), s.fire(VERIFY_EVENT, { root, kind: "gate", ok: true, seconds: 1 })]);
   const files = await fs.readdir(path.join(root, ".pi/metrics"));
   assert.deepEqual(files, ["M-9.json"]);
   JSON.parse(await fs.readFile(path.join(root, ".pi/metrics/M-9.json"), "utf8"));

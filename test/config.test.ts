@@ -116,14 +116,14 @@ test("/models and /skills keep values from the global file out of the repo", asy
 
 test("limits: defaults are today's numbers, valid values are taken, bad ones fall back and are reported", () => {
   assert.deepEqual(resolveLimits(undefined), { limits: DEFAULT_LIMITS, problems: [] });
-  assert.deepEqual(DEFAULT_LIMITS, { interviewQuestions: 12, agentlintRules: 3, verifyRetries: 2, failuresBeforeEscalation: 2, planChecks: 1, retroEvery: 5, fastPath: { files: 8, interface: 6, decisions: 2 } });
-  assert.deepEqual(resolveLimits({ planChecks: 0, retroEvery: 0, verifyRetries: 0, fastPath: { files: 0 } }), {
-    limits: { ...DEFAULT_LIMITS, planChecks: 0, retroEvery: 0, verifyRetries: 0, fastPath: { ...DEFAULT_LIMITS.fastPath, files: 0 } },
+  assert.deepEqual(DEFAULT_LIMITS, { interviewQuestions: 12, agentlintRules: 3, verifyRetries: 2, failuresBeforeEscalation: 2, planChecks: 1, retroEvery: 5, verifyEvery: 5, fastPath: { files: 8, interface: 6, decisions: 2 } });
+  assert.deepEqual(resolveLimits({ planChecks: 0, retroEvery: 0, verifyRetries: 0, verifyEvery: 0, fastPath: { files: 0 } }), {
+    limits: { ...DEFAULT_LIMITS, planChecks: 0, retroEvery: 0, verifyRetries: 0, verifyEvery: 0, fastPath: { ...DEFAULT_LIMITS.fastPath, files: 0 } },
     problems: [],
   });
-  const bad = resolveLimits({ interviewQuestions: 0, agentlintRules: 2.5, verifyRetries: -1, failuresBeforeEscalation: "2", planChecks: null, retroEvery: -5, fastPath: { files: 1.5, interface: 3, bogus: 1 }, turbo: 1 });
+  const bad = resolveLimits({ interviewQuestions: 0, agentlintRules: 2.5, verifyRetries: -1, failuresBeforeEscalation: "2", planChecks: null, retroEvery: -5, verifyEvery: 1.5, fastPath: { files: 1.5, interface: 3, bogus: 1 }, turbo: 1 });
   assert.deepEqual(bad.limits, { ...DEFAULT_LIMITS, fastPath: { ...DEFAULT_LIMITS.fastPath, interface: 3 } });
-  assert.equal(bad.problems.length, 9);
+  assert.equal(bad.problems.length, 10);
   assert.match(bad.problems[0], /^limits\.interviewQuestions must be a whole number >= 1, not 0: ignored$/);
   assert.match(bad.problems.join("\n"), /limits\.fastPath\.bogus is not a known limit[\s\S]*limits\.turbo is not a known limit/);
   assert.equal(resolveLimits("lots").problems.length, 1);
@@ -277,7 +277,7 @@ test("planChecks sets the paid plan checks per task; 0 turns them off", async ()
       m.limits = limits;
     });
     await h.commands.get("task").handler("Add fee", fakeCtx(root, []).ctx);
-    const plan = { summary: "s", steps: ["a"], files: ["src/fee.ts"], decisions: [], interface: [{ file: "src/fee.ts", exports: ["fee"], source: "ticket" }], seams: [] };
+    const plan = { summary: "s", intent: "i", steps: ["a"], files: ["src/fee.ts"], decisions: [], interface: [{ file: "src/fee.ts", exports: ["fee"], usage: "fee(1)", source: "ticket" }], seams: [] };
     for (let i = 0; i < calls; i++) await h.tools.get("task_plan").execute("1", plan, undefined, undefined, fakeCtx(root, [true]).ctx).catch(() => {});
     return spawns.length;
   };

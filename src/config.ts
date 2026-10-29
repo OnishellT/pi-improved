@@ -12,7 +12,7 @@ export const globalPath = (dir = agentDir()) => path.join(dir, GLOBAL_FILE);
 export const STATE_KEYS = ["version", "setup", "language", "startedAt", "completedAt", "verify", "agentlint", "connectors"];
 
 /** Preferences the global file may hold (the project file may hold the same ones). */
-export const PREFERENCE_KEYS = ["mode", "models", "skills", "skillsOnDemand", "basePrompt", "maxReport", "contextWarn", "review", "limits", "computer", "subagentPanes", "selfCompact"];
+export const PREFERENCE_KEYS = ["mode", "models", "skills", "skillsOnDemand", "basePrompt", "useAgentlint", "maxReport", "contextWarn", "review", "limits", "computer", "subagentPanes", "selfCompact"];
 
 export const isObject = (value: unknown): value is Record<string, any> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 
@@ -119,6 +119,8 @@ export interface Limits {
   planChecks: number;
   /** A retro every N finished tasks; 0 turns it off. */
   retroEvery: number;
+  /** While implementing, run the first verify command after every N write/edit calls and append its tail to the tool result; 0 turns it off. */
+  verifyEvery: number;
   /** Largest plan that skips the approval dialog. */
   fastPath: { files: number; interface: number; decisions: number };
 }
@@ -130,11 +132,12 @@ export const DEFAULT_LIMITS: Limits = {
   failuresBeforeEscalation: 2,
   planChecks: 1,
   retroEvery: 5,
+  verifyEvery: 5,
   fastPath: { files: 8, interface: 6, decisions: 2 },
 };
 
 /** Smallest value that makes sense for each limit; every limit is a whole number. */
-const MIN_LIMITS: Record<string, number> = { interviewQuestions: 1, agentlintRules: 1, verifyRetries: 0, failuresBeforeEscalation: 1, planChecks: 0, retroEvery: 0 };
+const MIN_LIMITS: Record<string, number> = { interviewQuestions: 1, agentlintRules: 1, verifyRetries: 0, failuresBeforeEscalation: 1, planChecks: 0, retroEvery: 0, verifyEvery: 0 };
 const MIN_FAST_PATH = 0;
 
 /** What is valid in one file's `limits`, and what is wrong with the rest. A bad value is left out, so a lower layer's value (or the default) applies. */

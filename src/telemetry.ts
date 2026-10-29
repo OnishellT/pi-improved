@@ -8,6 +8,14 @@ export interface TaskMetrics {
   phases: Record<string, { input: number; output: number; cacheRead: number; cost: number; seconds: number }>;
   verifyRuns: number;
   verifyFailures: number;
+  /** Final verifies that failed only with failures that predate the change. */
+  predated: number;
+  /** Failures that came back and got the premise lines. */
+  premises: number;
+  /** The first verify step before implementing. */
+  baseline?: { ok: boolean; seconds: number };
+  /** The progress checks while implementing. */
+  progress: { runs: number; failures: number };
   reviews: { status: string; model: string; seconds: number; cost?: number; discarded?: boolean }[];
   escalations: number;
 }
@@ -15,7 +23,7 @@ export interface TaskMetrics {
 export const METRICS_DIR = ".pi/metrics/";
 const metrics = new Map<string, TaskMetrics>();
 
-const empty = (): TaskMetrics => ({ phases: {}, verifyRuns: 0, verifyFailures: 0, reviews: [], escalations: 0 });
+const empty = (): TaskMetrics => ({ phases: {}, verifyRuns: 0, verifyFailures: 0, predated: 0, premises: 0, progress: { runs: 0, failures: 0 }, reviews: [], escalations: 0 });
 const snapshotPath = (root: string, id: string) => path.join(root, METRICS_DIR, `${id.replace(/[^\w.-]/g, "_")}.json`);
 
 /** Metrics collected in memory for the task, or undefined when none were recorded or loaded. */
@@ -120,10 +128,18 @@ export function registerTelemetry(pi: ExtensionAPI) {
   });
 
   pi.events?.on(VERIFY_EVENT, (d) => {
-    const { root, ok } = d as VerifyPayload;
+    const { root, kind, ok, seconds, predates, premise } = d as VerifyPayload;
     return bump(root, (m) => {
-      m.verifyRuns++;
-      if (!ok) m.verifyFailures++;
+      if (kind === "baseline") m.baseline = { ok, seconds };
+      else if (kind === "progress") {
+        m.progress.runs++;
+        if (!ok) m.progress.failures++;
+      } else {
+        m.verifyRuns++;
+        if (predates) m.predated++;
+        else if (!ok) m.verifyFailures++;
+        if (premise) m.premises++;
+      }
     });
   });
   pi.events?.on(REVIEW_EVENT, (d) => {
