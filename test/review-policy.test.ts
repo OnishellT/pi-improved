@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { changedLines, wholeFileChanges } from "../scripts/review/diff.ts";
 import {
   buildReviewPayload,
   clampConfidence,
@@ -47,6 +48,58 @@ test("follow-up scope drops findings on unchanged lines unless critical", () => 
     "a.ts:10:minor",
     "a.ts:99:critical",
   ]);
+});
+
+test("a file emptied by the delta keeps findings on any of its lines", () => {
+  const delta = `diff --git a/a.ts b/a.ts
+--- a/a.ts
++++ b/a.ts
+@@ -1,2 +0,0 @@
+-one
+-two
+`;
+  const kept = scopeFindings(
+    [finding({ line: 1 }), finding({ line: 7 })],
+    changedLines(delta),
+    wholeFileChanges(delta),
+  );
+  assert.deepEqual(kept.map((f) => f.line), [1, 7]);
+});
+
+test("a rename-only file in the delta keeps no findings", () => {
+  const delta = `diff --git a/a.ts b/b.ts
+similarity index 100%
+rename from a.ts
+rename to b.ts
+`;
+  const kept = scopeFindings([finding({ path: "b.ts", line: 3 })], changedLines(delta), wholeFileChanges(delta));
+  assert.deepEqual(kept, []);
+});
+
+test("modified and deleted binaries in the delta keep findings on any line", () => {
+  const delta = `diff --git a/logo.png b/logo.png
+index 111..222 100644
+Binary files a/logo.png and b/logo.png differ
+diff --git a/old.bin b/old.bin
+deleted file mode 100644
+index 333..000
+Binary files a/old.bin and /dev/null differ
+`;
+  const kept = scopeFindings(
+    [finding({ path: "logo.png", line: 1 }), finding({ path: "old.bin", line: 1 })],
+    changedLines(delta),
+    wholeFileChanges(delta),
+  );
+  assert.deepEqual(kept.map((f) => f.path), ["logo.png", "old.bin"]);
+});
+
+test("a mode-only file in the delta keeps no findings", () => {
+  const delta = `diff --git a/run.sh b/run.sh
+old mode 100644
+new mode 100755
+`;
+  const kept = scopeFindings([finding({ path: "run.sh", line: 3 })], changedLines(delta), wholeFileChanges(delta));
+  assert.deepEqual(kept, []);
 });
 
 test("a first review keeps every finding", () => {
