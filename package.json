@@ -29,6 +29,7 @@
   "scripts": {
     "postinstall": "node scripts/postinstall.mjs",
     "test": "node --test test/*.test.ts",
-    "typecheck": "tsc -p ."
+    "typecheck": "tsc -p .",
+    "review": "node scripts/review-pr.ts"
   }
 }
