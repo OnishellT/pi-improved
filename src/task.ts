@@ -378,8 +378,9 @@ export function registerTask(pi: ExtensionAPI) {
     if (event.outcome !== "completed" || nudges >= MAX_NUDGES) return;
     const [task, manifest] = await Promise.all([readTask(ctx.cwd).catch(() => undefined), readManifest(ctx.cwd).catch(() => undefined)]);
     if (manifest?.setup === "running") return;
-    // A run that ends on a plain-text question (last line, last 400 chars) has nobody to answer it in RPC/headless: route it to ask_user.
-    const asking = task?.status === "implementing" && /\?\s*$/.test(lastText.trim().slice(-400).split("\n").filter(Boolean).at(-1) ?? "");
+    // A run that ends on a plain-text question (last line, last 400 chars) has nobody to answer it in RPC/print/json: route it to ask_user.
+    // In the TUI the person reads it and answers (`hasUI` is true in RPC too, so it is the mode that tells).
+    const asking = task?.status === "implementing" && ctx.mode !== "tui" && /\?\s*$/.test(lastText.trim().slice(-400).split("\n").filter(Boolean).at(-1) ?? "");
     if (task?.status !== "planning" && !asking) return;
     nudges++;
     const content = asking ? QUESTION_NUDGE : TASK_NUDGE;
