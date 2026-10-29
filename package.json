@@ -4,6 +4,9 @@
   "description": "Automatic project setup for Pi: discovery, interview, connectors, docs and a verify gate",
   "type": "module",
   "private": true,
+  "license": "MIT",
+  "repository": { "type": "git", "url": "git+https://github.com/OnishellT/pi-improved.git" },
+  "bugs": { "url": "https://github.com/OnishellT/pi-improved/issues" },
   "keywords": ["pi-package"],
   "engines": { "node": ">=22.18.0" },
   "pi": {
@@ -11,7 +14,7 @@
   },
   "dependencies": {
     "@aurelienbbn/agentlint": "^0.9.1",
-    "@earendil-works/pi-subagent": "github:badlogic/pi-subagent#4fc1fe5178d1a2b474794a5ee39e7295844e9d3c",
+    "@earendil-works/pi-subagent": "github:OnishellT/pi-subagent#25e85fca97270cecd1315119e110d9a6195e78a4",
     "@modelcontextprotocol/sdk": "^1.28.0",
     "zod": "^4.6.5"
   },
