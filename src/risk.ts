@@ -101,7 +101,7 @@ export interface RiskAssessment {
 }
 
 /**
- * How risky the diff since the task's base commit is. The level is computed from the diff (`review.always`/`review.never` short-circuit it); a model review is only requested when
+ * How risky the diff since the task's base commit is. The level is computed from the diff, under any policy; a model review is only requested when
  * the manifest asks for it: `review.always`, or `review.minLevel` "low" (above none) or "high" (the default). "off" never reviews.
  * Cheap: git and regexes, no LLM. Doubt goes up a level, never down.
  */
@@ -120,7 +120,7 @@ export async function assessRisk(exec: Exec, root: string, task: Task | undefine
   const numstat = await git(exec, root, ["diff", ref, "--numstat", "--no-renames", "-z"]);
   for (const row of (numstat ?? "").split("\0")) {
     const m = /^(\d+|-)\t(\d+|-)\t(.+)$/s.exec(row);
-    if (!m) continue;
+    if (!m || isOwnState(m[3])) continue;
     lines.set(m[3], (m[1] === "-" ? 0 : +m[1]) + (m[2] === "-" ? 0 : +m[2]));
   }
   for (const file of await untrackedFiles(exec, root)) {
@@ -146,9 +146,6 @@ export async function assessRisk(exec: Exec, root: string, task: Task | undefine
   });
   const flagged = [...quality.map((r) => r[0].toUpperCase() + r.slice(1)), ...weakened];
   const listed = { ...(touched.length && { touched }), ...(flagged.length && { flagged }) };
-  // `always` wins over `never`.
-  if (rule?.always) return { review: true, level: "high", reasons: ["review.always"], ...listed };
-  if (rule?.never) return { review: false, level: "none", reasons: ["review.never"], ...listed };
 
   const reasons: string[] = [];
   let level: RiskLevel = "none";
@@ -171,6 +168,7 @@ export async function assessRisk(exec: Exec, root: string, task: Task | undefine
   for (const reason of quality) raise("high", reason);
   const final = level as RiskLevel; // `raise` assigns it in a closure, which narrowing does not see
   const min = minLevelOf(rule);
-  const review = min === "low" ? final !== "none" : min === "high" ? final === "high" : false;
+  // `always` wins over `never`; either decides the review, not the level.
+  const review = rule?.always ? true : rule?.never ? false : min === "low" ? final !== "none" : min === "high" ? final === "high" : false;
   return { review, level: final, reasons, ...listed };
 }
