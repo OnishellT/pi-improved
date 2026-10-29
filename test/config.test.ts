@@ -57,8 +57,8 @@ test("readManifest: an old setup with agentlint only inside a script gets the st
     const old = { version: 1, setup: "done", verify: ["npm run lint"], connectors: [], agentlint: "npm exec agentlint --" };
     const root = await tempProject({ ".pi/workflow.json": JSON.stringify(old), "package.json": JSON.stringify({ scripts: { lint: "eslint . && npm exec agentlint -- check --all" } }) });
     const m = await readManifest(root);
-    assert.deepEqual(m.verify, ["npm run lint", "npm exec agentlint -- check --all"]);
-    assert.equal(m.agentlintStep, "npm exec agentlint -- check --all");
+    assert.deepEqual(m.verify, ["npm run lint", "npm exec --package=@aurelienbbn/agentlint -- agentlint check --all"], "the legacy npm command is read as the package-named one");
+    assert.equal(m.agentlintStep, "npm exec --package=@aurelienbbn/agentlint -- agentlint check --all");
     const saved = await readProjectManifest(root);
     assert.deepEqual([saved.verify, saved.agentlintStep], [m.verify, m.agentlintStep]);
     assert.deepEqual((await readManifest(root)).verify, m.verify, "a second read adds nothing");
@@ -536,4 +536,11 @@ test("exists is false for a missing path or parent and throws on other errors", 
   assert.equal(await exists(path.join(dir, "file", "child")), false);
   await fs.symlink("loop", path.join(dir, "loop"));
   await assert.rejects(exists(path.join(dir, "loop")), { code: "ELOOP" });
+});
+
+test("a legacy npx agentlint command is read as the package-named one; other commands are kept", async () => {
+  const root = await tempProject({ ".pi/workflow.json": JSON.stringify({ version: 1, agentlint: "npx agentlint", verify: ["npx agentlint check --all", "npx agentlint-x", "pnpm agentlint check"] }) });
+  const m = await readProjectManifest(root);
+  const cmd = "npm exec --package=@aurelienbbn/agentlint -- agentlint";
+  assert.deepEqual([m.agentlint, m.verify], [cmd, [`${cmd} check --all`, "npx agentlint-x", "pnpm agentlint check"]]);
 });

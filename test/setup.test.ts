@@ -348,10 +348,10 @@ test("setup_finish adds and records its own agentlint step even when a package s
   registerSetup(pi);
   await tools.get("setup_finish").execute("1", { verify: ["npm run verify"], summary: "s" }, undefined, undefined, { cwd: root, hasUI: true, ui: fakeUI([true]) });
   const manifest = await readManifest(root);
-  assert.deepEqual(manifest.verify, ["npm run verify", "npm exec agentlint -- check --all"]);
-  assert.equal(manifest.agentlintStep, "npm exec agentlint -- check --all");
+  assert.deepEqual(manifest.verify, ["npm run verify", "npm exec --package=@aurelienbbn/agentlint -- agentlint check --all"]);
+  assert.equal(manifest.agentlintStep, "npm exec --package=@aurelienbbn/agentlint -- agentlint check --all");
   // Its own step runs first, so a failing script that also runs agentlint cannot stop verify before the per-finding approval.
-  assert.deepEqual(ran.filter((c) => manifest.verify.includes(c)), ["npm exec agentlint -- check --all", "npm run verify"]);
+  assert.deepEqual(ran.filter((c) => manifest.verify.includes(c)), ["npm exec --package=@aurelienbbn/agentlint -- agentlint check --all", "npm run verify"]);
 });
 
 test("setup_finish refuses outside setup", async () => {

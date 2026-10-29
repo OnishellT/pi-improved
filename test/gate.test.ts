@@ -651,7 +651,7 @@ test("a repeated agentlint failure asks the user; approval records the exception
   const second = await h.emit("agent_before_settle", { outcome: "completed" }, ctx);
   assert.match(ui.asked[0], /agentlint blocks/);
   assert.match(second.entries[0].content, /approved the agentlint exception/);
-  assert.ok(calls.some((c) => /shift; npm exec agentlint -- "\$@" human:\S+ approve --reason Cambio revisado por finanzas sel-1$/.test(c)));
+  assert.ok(calls.some((c) => /shift; npm exec --package=@aurelienbbn\/agentlint -- agentlint "\$@" human:\S+ approve --reason Cambio revisado por finanzas sel-1$/.test(c)));
 });
 
 test("interface contract: names missing from the files block before verify and the review; present names pass", async () => {
