@@ -33,7 +33,37 @@ Write `.claude/skills/verify-<app>/SKILL.md` with YAML frontmatter (`name: verif
 
 ## 3. Seed the feature map
 
-Create `.claude/skills/verify-<app>/features/README.md` plus one file per user-facing feature you can identify (aim for the top 3-5 to start, from routes, commands, menus, or docs). Follow the shape in [`references/feature-map-example/`](references/feature-map-example/), with a README index and one file per feature. Each file answers, from the user's point of view: what the feature is, how to reach it, how to drive it with the harness, and what observable end state proves it works. The four H2s are `Sub-features`, `How to get to it (user POV)`, `Driving it with <harness>`, and `Gotchas`. The map is the repo's maintained verification source; a proof that drives one convenient entry point is incomplete when the map lists others.
+Create `.claude/skills/verify-<app>/features/README.md` plus one file per user-facing feature you can identify (aim for the top 3-5 to start, from routes, commands, menus, or docs). The README indexes the files and holds the baseline preconditions and proof standards. Each feature file answers, from the user's point of view: what the feature is, how to reach it, how to drive it with the harness, and what observable end state proves it works. It has an H1, one paragraph, then exactly these four H2s in this order (setup checks them):
+
+```markdown
+# Search notes
+
+Search finds notes by title or body text and opens a match.
+
+## Sub-features
+
+- `search-match` returns title and body matches without changing data.
+- `search-empty` shows an empty state for a query with no matches.
+
+## How to get to it (user POV)
+
+- Choose the `Search` button in the toolbar.
+- Run `notes search <query>` in a terminal.
+
+## Driving it with control-notes
+
+Preconditions: Notes is healthy at `http://127.0.0.1:4173`; `Quarterly plan` exists.
+
+- **Title match.** Run `control-notes browser fill --role searchbox --name "Search notes" --value "quarterly"`. The `Search results` list contains `Quarterly plan`.
+
+## Gotchas
+
+- Results update after a 200 ms debounce: wait for the list, do not sleep.
+```
+
+A full example (README plus two features) is in `references/feature-map-example/` inside this skill's directory, `pstack-create-verification-skill` under `{{package}}/vendor/skills`. The map is the repo's maintained verification source; a proof that drives one convenient entry point is incomplete when the map lists others.
+
+Also write `features/coverage.json`: `{"sync": "<output of git rev-parse HEAD>", "paths": ["src/", "..."]}`. `paths` are the code directories and files the map describes; `sync` is the commit the map was checked against. A retro compares them to later commits to tell when the map may be stale.
 
 ## 4. Prove the generated skill before handing it over
 
