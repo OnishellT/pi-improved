@@ -114,7 +114,7 @@ export async function readProjectManifest(root: string): Promise<Manifest> {
     return m;
   } catch (error: any) {
     if (error.code === "ENOENT") return empty();
-    throw new Error(`${MANIFEST_PATH} is not valid JSON: ${error.message}`);
+    throw new Error(`${MANIFEST_PATH} ${error.code ? "cannot be read" : "is not valid JSON"}: ${error.message}`);
   }
 }
 
