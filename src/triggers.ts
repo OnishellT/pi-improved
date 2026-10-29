@@ -93,13 +93,42 @@ async function approveDependency(task: Task, ctx: ExtensionContext, title: strin
   await writeAdr(ctx.cwd, { title: `Add dependency ${names.join(", ")}`, context: task.title, decision });
 }
 
+/** The dependency names an edit adds to a manifest; undefined when the edit cannot be parsed. */
+async function addedByEdit(event: any, abs: string, file: string) {
+  const before = dependencyNames(file, await read(abs));
+  let after: Set<string> | undefined;
+  if (event.toolName === "write") after = dependencyNames(file, event.input.content ?? "");
+  else {
+    const next = applyEdits(await read(abs), event.input.edits ?? []);
+    after = next === undefined ? undefined : dependencyNames(file, next);
+  }
+  return before && after ? [...after].filter((n) => !before.has(n)) : undefined;
+}
+
+/** Nobody can approve a dependency in a headless run, so every new one is denied, with the reason for the model, and so is a manifest edit that cannot be checked. A plan that names a manifest does not say which package it may get, so it approves none. */
+async function headlessDependency(event: any, ctx: ExtensionContext) {
+  const deny = (what: string) => ({ block: true, reason: `${what}, and nobody is here to approve it. Do not add it: use what the project already has, or finish and say in your last message that the task needs it.` });
+  if (event.toolName === "bash") {
+    const names = addedPackagesFromCommand(event.input?.command ?? "");
+    return names.length ? deny(`The new dependency ${names.join(", ")} needs approval`) : undefined;
+  }
+  if (event.toolName !== "write" && event.toolName !== "edit") return;
+  const abs = path.resolve(ctx.cwd, event.input?.path ?? "");
+  const file = toRelative(ctx.cwd, abs);
+  if (!isManifest(file)) return;
+  const added = await addedByEdit(event, abs, file);
+  if (added === undefined) return deny(`This edit touches dependencies in ${file} in a way that cannot be checked`);
+  if (added.length) return deny(`The new dependency ${added.join(", ")} needs approval`);
+}
+
 export function registerTriggers(pi: ExtensionAPI) {
   const approvedMigrations = new Set<string>();
 
   pi.on("tool_call", async (event: any, ctx: ExtensionContext) => {
-    if (!ctx.hasUI) return; // headless: the scope, dependency and migration gates are off
     const task = await readTask(ctx.cwd).catch(() => undefined);
     if (task?.status !== "implementing") return;
+    // Headless: the scope and migration gates are off; a new dependency is denied, since nobody can approve it.
+    if (!ctx.hasUI) return headlessDependency(event, ctx);
 
     if (event.toolName === "bash") {
       const command: string = event.input?.command ?? "";
@@ -122,14 +151,7 @@ export function registerTriggers(pi: ExtensionAPI) {
     }
 
     if (isManifest(file)) {
-      const before = dependencyNames(file, await read(abs));
-      let after: Set<string> | undefined;
-      if (event.toolName === "write") after = dependencyNames(file, event.input.content ?? "");
-      else {
-        const next = applyEdits(await read(abs), event.input.edits ?? []);
-        after = next === undefined ? undefined : dependencyNames(file, next);
-      }
-      const added = before && after ? [...after].filter((n) => !before.has(n)) : undefined;
+      const added = await addedByEdit(event, abs, file);
       if (added === undefined || added.length) return approveDependency(task, ctx, added ? `New dependency in ${file}` : `This edit touches dependencies in ${file}`, added, `Edit of \`${file}\``);
     }
 
