@@ -124,9 +124,10 @@ export async function runDoctor(pi: ExtensionAPI, ctx: ExtensionContext, version
   if (problems.length) checks.push({ name: "Limits", ok: false, detail: problems.join("; ") });
   // agentlint matters only to a project whose verify or policy runs it.
   if (manifest?.agentlint || manifest?.verify?.some((c) => c.includes("agentlint"))) {
-    // The project's own command, as verify and the policy run it; pi-improved's copy only when the project names none.
-    const agentlint = manifest?.agentlint ?? resolveBin("agentlint");
-    const ok = await probe("bash", ["-lc", `${agentlint} --help`]);
+    // The project's own command, as verify and the policy run it, only when the user runs /doctor: a repo's command never runs at session start.
+    const own = nix.resolve ? manifest?.agentlint : undefined;
+    const agentlint = own ?? resolveBin("agentlint");
+    const ok = own ? await probe("bash", ["-lc", `${own} --help`]) : await probe(agentlint, ["--help"]);
     checks.push({ name: "agentlint", ok, detail: ok ? agentlint : "not found or not running" });
   }
   // Bend matters only to a project that keeps laws.

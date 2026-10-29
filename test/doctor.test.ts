@@ -82,6 +82,9 @@ test("the agentlint check runs the project's own command", async () => {
   const t = await setup((cmd, args) => (ran.push([cmd, ...args].join(" ")), { code: 0 }), true, undefined, { agentlint: "pnpm agentlint" });
   await t.commands.get("doctor").handler("", t.ctx);
   assert.ok(ran.includes("bash -lc pnpm agentlint --help"), ran.join("\n"));
+  ran.length = 0;
+  await runDoctor(t.pi, t.ctx, undefined, { has: async () => true });
+  assert.ok(!ran.some((c) => c.includes("pnpm agentlint")), "never at session start");
 });
 
 test("/doctor reports a corrupt workflow.json as a problem instead of throwing", async () => {

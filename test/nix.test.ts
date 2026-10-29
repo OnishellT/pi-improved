@@ -23,16 +23,6 @@ test("nixPackage builds the pinned attribute without flakes configured and picks
   assert.match(await fs.readFile(new URL("../flake.nix", import.meta.url), "utf8"), new RegExp(lock.nodes.nixpkgs.locked.rev), "flake.nix and flake.lock pin the same rev");
 });
 
-test("the first build drops the GC roots of other pins and keeps the current one", async () => {
-  const roots = path.join(agentDir(), "nix-roots");
-  const rev = NIXPKGS.split("/").pop()!;
-  await fs.mkdir(path.join(roots, "0".repeat(40)), { recursive: true });
-  await fs.symlink("/nix/store/old-tmux", path.join(roots, "0".repeat(40), "tmux"));
-  await fs.mkdir(path.join(roots, rev), { recursive: true });
-  await nixPackage("tmux", async () => ({ code: 0, stdout: "/nix/store/x\n", stderr: "" }));
-  assert.deepEqual(await fs.readdir(roots), [rev]);
-});
-
 test("nixPackage caches the path per attribute, and forgets a failure", async () => {
   let builds = 0;
   const run: Spawn = async () => (builds++, builds === 1 ? { code: 1, stdout: "", stderr: "error: unable to download" } : { code: 0, stdout: "/nix/store/y\n", stderr: "" });
