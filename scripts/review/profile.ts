@@ -1,7 +1,15 @@
 // Links the owner's pi credentials into the reviewer's profile. Symlinks, never copies:
 // a copied OAuth file goes stale when the main profile refreshes and rotates its token.
-import { existsSync, rmSync, symlinkSync } from "node:fs";
+import { existsSync, readlinkSync, renameSync, rmSync, symlinkSync } from "node:fs";
 import { join, resolve } from "node:path";
+
+function linkOf(path: string) {
+  try {
+    return readlinkSync(path);
+  } catch {
+    return undefined;
+  }
+}
 
 // auth.json is required; models-store.json is a cache pi may not have written yet.
 export function linkCredentials(mainDir: string, piDir: string, provider: string) {
@@ -11,9 +19,17 @@ export function linkCredentials(mainDir: string, piDir: string, provider: string
   ] as const) {
     const source = resolve(mainDir, file);
     const target = join(piDir, file);
-    // Relinked every run: an old link (another main profile, or signed out) or a copy goes.
-    rmSync(target, { force: true });
-    if (existsSync(source)) symlinkSync(source, target);
-    else if (required) throw new Error(`${source} is missing: sign pi in to the ${provider} provider first`);
+    if (!existsSync(source)) {
+      if (required) throw new Error(`${source} is missing: sign pi in to the ${provider} provider first`);
+      rmSync(target, { force: true });
+      continue;
+    }
+    if (linkOf(target) === source) continue;
+    // Anything else (a link to another main profile, a dangling link, a copy) is replaced
+    // atomically, so a concurrent review never sees the file missing.
+    const temporary = `${target}.${process.pid}`;
+    rmSync(temporary, { force: true });
+    symlinkSync(source, temporary);
+    renameSync(temporary, target);
   }
 }
