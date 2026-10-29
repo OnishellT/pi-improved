@@ -1,6 +1,6 @@
 ---
 name: principle-explain-the-number
-description: "Apply before you measure, and before you trust, report or act on a number you measured (a speedup, regression, throughput, latency or eval result): find what limits it and rule out that it measured something other than the work."
+description: "Use before you measure, or trust, report or act on a measured number (speedup, latency, eval): find what limits it and rule out a measure of the wrong work."
 ---
 
 # Explain the number

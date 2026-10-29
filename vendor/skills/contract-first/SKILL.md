@@ -9,15 +9,7 @@ Hidden tests fail on wrong names, argument shapes and unchecked input far more t
 
 ## 1. Before editing
 
-Write the caller's usage first: for each `interface` entry, the call a test would make, in the ticket's words, goes in its `usage` line (code checks the names it calls exist). Then fix every name, signature and return shape in `task_plan`'s `interface` field, spelled letter for letter as the ticket does; with no ticket detail, copy the sibling files' conventions and record each guess as an assumption in `notes`.
-
-Save it as `.pi/contract.json` (plain JSON, any language):
-
-```json
-{"files": ["src/slug.js", "src/slug.test.js"], "names": ["slugify"], "notes": "assumed: named export like title-case.js; throws TypeError on non-string"}
-```
-
-`files` are the paths you create or change, `names` the identifiers that must exist. Keep it small: only what a caller or test depends on.
+Write the caller's usage first: for each `interface` entry, the call a test would make, in the ticket's words, goes in its `usage` line (code checks the names it calls exist). Then fix every name, signature and return shape in `task_plan`'s `interface` field, spelled letter for letter as the ticket does. With no ticket detail, copy the sibling files' conventions; a name nobody gave gets `source: 'user'`, so the user is asked. Keep it small: only what a caller or test depends on.
 
 ## 2. Input validation checklist
 
@@ -33,12 +25,8 @@ Per case: reject (the error the siblings use), normalize (say how) or accept.
 
 ## 3. Implement
 
-One test per decided behavior, invalid-input cases included, using the contract's exact names. If the contract changes, edit `contract.json` and say why in your final message.
+One test per decided behavior, invalid-input cases included, using the interface's exact names. If a name must change, say why in your final message.
 
 ## 4. Before calling it done
 
-```
-node {{package}}/scripts/contract-check.mjs
-```
-
-It prints `CONTRACT OK` or `CONTRACT NOT MET` with the missing file or name (exit 0 or 1). It matches names as text only, so also confirm every checklist case has a passing test. Do not report the work as finished while it fails.
+The gate checks that every interface name exists in its files, as text only, so also confirm every checklist case has a passing test.

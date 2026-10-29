@@ -24,6 +24,15 @@ test("the workflow state files are blocked for write and edit, even through ./ s
   assert.equal(await call("edit", "src/a.ts"), undefined);
 });
 
+test("an edit of the acceptances file points the agent at propose, not accept", async () => {
+  const { pi, emit } = fakePi();
+  registerGuards(pi);
+  const r = await emit("tool_call", { toolName: "edit", input: { path: ".agentlint/acceptances.jsonl" } }, { cwd: "/" });
+  assert.equal(r?.block, true);
+  assert.match(r.reason, /agentlint propose <selector> --summary/);
+  assert.doesNotMatch(r.reason, /agentlint accept/);
+});
+
 test("a symlink to the global config or a workflow state file is blocked like the file itself", async () => {
   const { globalPath } = await import("../src/config.ts");
   const { mkdtempSync, symlinkSync, mkdirSync } = await import("node:fs");

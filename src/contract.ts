@@ -2,9 +2,6 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { Plan } from "./task-state.ts";
 
-/** The plan's pinned interface as JSON, read by scripts/contract-check.mjs and the contract-first skill; local state. */
-export const CONTRACT_PATH = ".pi/contract.json";
-
 export type InterfaceEntry = Plan["interface"][number];
 
 const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");

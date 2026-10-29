@@ -25,11 +25,12 @@ test("compressed skills stay under their size caps and inject no companion files
   }
 });
 
-test("contract-first keeps the contract file, the check step and the five input cases", async () => {
+test("contract-first keeps the interface step and the five input cases, with no hand-written contract file", async () => {
   const { body } = await loadSkill("contract-first");
-  for (const needle of ["contract.json", "contract-check.mjs", "Wrong type", "null", "Empty", "Out of range", "Duplicates"]) {
+  for (const needle of ["interface", "usage", "Wrong type", "null", "Empty", "Out of range", "Duplicates"]) {
     assert.ok(body.includes(needle), `contract-first lost "${needle}"`);
   }
+  assert.doesNotMatch(body, /contract\.json|contract-check/);
 });
 
 test("scripts/skill-tokens.mjs --json reports every phase and skill with chars and tokens", async () => {

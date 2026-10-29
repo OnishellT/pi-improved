@@ -25,4 +25,4 @@ Tests verify behavior through public interfaces, not implementation details. A g
 - Confirm each new test fails for the reason you intend, not a typo or missing import.
 - Once per task, break the code on purpose, see the test catch it, undo.
 
-Examples and mocking guidance: `references/tests.md`, `references/mocking.md` (not injected; read only if needed).
+Examples and mocking guidance, read only if needed: `{{package}}/vendor/skills/tdd/references/tests.md` and `{{package}}/vendor/skills/tdd/references/mocking.md`.

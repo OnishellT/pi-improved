@@ -1,5 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { exists as fileExists } from "./config.ts";
 import { changedFiles, git, gitHead, isCommit, untrackedFiles, type Exec } from "./git.ts";
 import { resolveInside } from "./task-state.ts";
 
@@ -38,7 +39,7 @@ export async function readCoverage(root: string): Promise<Coverage | undefined> 
 const resolves = async (exec: Exec, root: string, sync: string) => (await git(exec, root, ["cat-file", "-e", `${sync}^{commit}`])) !== undefined;
 const exists = (root: string, rel: string) => {
   const abs = resolveInside(root, rel);
-  return abs ? fs.access(abs).then(() => true, () => false) : Promise.resolve(false);
+  return abs ? fileExists(abs) : Promise.resolve(false);
 };
 
 /** What is missing from the verification skill: its SKILL.md, the feature map README, the four H2s of each feature file, and a coverage record whose commit exists and whose paths exist. */

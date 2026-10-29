@@ -101,7 +101,7 @@ async function retroPrompt(root: string, every: number, exec: Exec) {
 
 Retro: ${every} tasks have been completed. Read the last ${every} records of ${MEMORY_PATH} (and ${METRICS_DIR}) and summarise: decisions that were missing from the plans, rules that repeated, verify failures by cause, and review findings.
 Then PROPOSE edits to AGENTS.md, docs/adr or .pi/skills through ask_user options. Never write them without the user's approval.
-Only messages from the user are corrections. Entries of type custom_message (contract-gate, verify-gate, verify-diagnose, diff-review, task-nudge) are pstack's automated checks, not the operator; report them as gate findings.${await verifyAppNote(exec, root)}`;
+Only messages from the user are corrections. Entries of type custom_message (contract-gate, verify-gate, verify-diagnose, diff-review, task-nudge, setup-nudge) are this extension's automated checks, not the operator; report them as gate findings.${await verifyAppNote(exec, root)}`;
 }
 
 export function registerLearn(pi: ExtensionAPI) {

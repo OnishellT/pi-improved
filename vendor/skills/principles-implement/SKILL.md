@@ -10,4 +10,4 @@ description: Working rules while implementing: one purpose, no swallowed errors,
 - Never swallow errors (empty, log-only, catch-all).
 - Bug fix: add a test that fails without it. Never weaken, skip or delete a test; if one is wrong, say so.
 - No abstraction before a second use, no commented-out code.
-- No unplanned dependency. Show real verify output before done.
+- No unplanned dependency. Run only the plan's test files; the gate runs the full verify.

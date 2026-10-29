@@ -57,10 +57,10 @@ export function setupPrompt(found: Discovery, manifest: Manifest, resuming: bool
       ? `Read recent context from these connectors (find their tools with tool_search). Never create or change anything there.\n${connectors.join("\n")}`
       : "No connectors are enabled. Skip this step.",
     `List what you could not determine and any contradictions between the code, the docs and the connectors.
-   Interview the user following the grilling skill, ONE question at a time via \`ask_user\`, until the domain and the main workflows are clear (max ~${limits.interviewQuestions} questions).
+   Interview the user following the grilling skill. One round is one \`ask_user\` call with at most 5 questions, never a plain-text round, until the domain and the main workflows are clear (max ~${limits.interviewQuestions} questions).
    Give 2-4 options per question, recommended option first. Don't ask anything the code already answers.`,
     `Write \`GLOSSARY.md\` at the repo root following GLOSSARY-FORMAT.md, and ADRs following ADR-FORMAT.md in \`docs/adr/\` (reuse existing GLOSSARY.md / docs/agents/ if present: never duplicate).${found.glossary ? " GLOSSARY.md already exists: extend it." : ""}${found.agentDocs ? " docs/agents/ already exists: link to it instead of repeating it." : ""}`,
-    `Write AGENTS.md and the domain skills following the technical-writing skill (Diátaxis; short sentences):
+    `Write AGENTS.md and the domain skills following the pstack-technical-writing skill (Diátaxis; short sentences):
    - \`AGENTS.md\`, at most ${AGENTS_MAX_LINES} lines: purpose, stack, commands, architecture map, conventions, hard rules (MUST / NEVER), and links to the skills. If it already exists, update it and keep the user's content.
    - Two short sections (about 10 lines in total, \`AGENTS.md\` is reread every turn): "Before finishing", listing the verify commands (${manifest.verify.length ? manifest.verify.map((v) => `\`${v}\``).join(", ") : "from the verify step below"}) to run and pass before calling a task done; and "When to use /task", saying that dependencies, migrations, \`review.paths\` areas and big changes go through \`/task\` (plan, gates, review) while small edits are done directly.
    - \`.pi/skills/domain-<name>/SKILL.md\`, one per business area. Use frontmatter with \`name\` and \`description\`, then the vocabulary, invariants, key files and pitfalls.

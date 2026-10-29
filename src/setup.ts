@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
+import { exists } from "./config.ts";
 import { CATALOG, connectorById, type ConnectorSignal } from "./connectors.ts";
 import { agentlintCheck, agentlintCmd, discover, hasAgentlintConfig, isProject, type Discovery, type Run } from "./discover.ts";
 import type { Exec } from "./git.ts";
@@ -40,7 +41,7 @@ export async function checkOutputs(root: string, verify: string[], exec: Exec): 
     else problems.push(`.pi/skills/${dir}/SKILL.md needs frontmatter with name and description.`);
   }
   const wanted = await phaseSkills(root, "setup");
-  if (wanted.includes("domain-modeling") && !(await fs.access(path.join(root, "GLOSSARY.md")).then(() => true, () => false))) problems.push("GLOSSARY.md is missing.");
+  if (wanted.includes("domain-modeling") && !(await exists(path.join(root, "GLOSSARY.md")))) problems.push("GLOSSARY.md is missing.");
   if (wanted.includes("pstack-create-verification-skill")) problems.push(...(await checkVerifyApp(root, exec)));
   if (!valid) problems.push("No domain skill found in .pi/skills/<name>/SKILL.md.");
   if (!verify.length) problems.push("No verify steps. Every project needs at least one check that runs.");
@@ -257,7 +258,7 @@ export function registerSetup(pi: ExtensionAPI) {
         throw new Error(`The user did not approve. Feedback: ${feedback || "(none)"}. Apply it and call setup_finish again.`);
       }
 
-      await ensureIgnored(root, [...IGNORED_STATE, ...((await fs.access(path.join(root, "package.json")).then(() => true, () => false)) ? ["node_modules/"] : [])]);
+      await ensureIgnored(root, [...IGNORED_STATE, ...((await exists(path.join(root, "package.json"))) ? ["node_modules/"] : [])]);
 
       await updateManifest(root, (m) => {
         m.setup = "done";

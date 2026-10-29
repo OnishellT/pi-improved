@@ -27,7 +27,7 @@ export const DEFAULT_ON_DEMAND: Record<Phase, string[]> = {
   plan: ["how", "architect", "codebase-design"],
   implement: ["handoff"],
   diagnose: ["why", "benchmark-checklist", "principle-explain-the-number"],
-  review: ["benchmark-checklist", "principle-explain-the-number"],
+  review: [],
   learn: ["pstack-maintain-verification-skill"],
 };
 

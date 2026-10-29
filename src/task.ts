@@ -4,7 +4,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { writeAdr, type AdrInput } from "./adr.ts";
 import { selectOrType } from "./ask.ts";
-import { limitsOf } from "./config.ts";
+import { exists, limitsOf } from "./config.ts";
 import { missingNames, relatesTo } from "./contract.ts";
 import { REVIEW_EVENT, VERIFY_EVENT, type ReviewPayload, type VerifyPayload } from "./events.ts";
 import { relatedTasks } from "./learn.ts";
@@ -30,7 +30,6 @@ const PLAN_STATUS = { ok: "plan-ok", fix: "plan-fix", skipped: "skipped" } as co
 // Doc files named in a request: relative or absolute paths ending in .md/.txt/..., bare or quoted, with prose punctuation around them.
 const SPEC_FILE = /(?:^|[\s:(\[`"'])((?:\.{1,2}\/|\/|[\w.-]+\/)?[\w.-]+(?:\/[\w.-]+)*\.(?:md|markdown|txt|rst|adoc))(?=$|[\s:,;.)\]`"'])/g;
 
-const exists = (file: string) => fs.access(file).then(() => true, () => false);
 
 const tracker = (manifest: Manifest) => manifest.connectors.find((c) => TRACKERS.includes(c.id))?.id;
 

@@ -1,7 +1,7 @@
-import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { exists } from "./config.ts";
 
-/** Bend is optional: nothing here runs, and no prompt mentions it, unless the project has a LAWS.bend. */
+/** Bend is optional: outside /setup, nothing here runs and no prompt mentions it unless the project has a LAWS.bend. */
 const LAWS = /(^|\/)LAWS\.bend$/;
 
 /** The human's spec of a Bend project. Editing an existing one changes what "correct" means, so the user must see it. */
@@ -16,7 +16,6 @@ export interface BendProject {
   installed?: boolean;
 }
 
-const exists = (file: string) => fs.access(file).then(() => true, () => false);
 
 /** LAWS.bend at the root (one per project); undefined for every project that does not use Bend. */
 export async function findBend(root: string): Promise<BendProject | undefined> {
