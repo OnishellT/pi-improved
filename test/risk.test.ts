@@ -106,7 +106,8 @@ test("minLevel decides when a review is requested; default is high; always beats
   assert.deepEqual([(await risk(med, task, withLevel("high"))).review, (await risk(high, task, withLevel("high"))).review], [false, true]);
   assert.equal((await risk(high, task, withLevel())).level, "high");
   const both = await risk(med, task, { ...base, review: { always: true, never: true } });
-  assert.deepEqual([both.review, both.level], [true, "high"]);
+  // The policy decides the review; the level and reasons are still the diff's.
+  assert.deepEqual([both.review, both.level, both.reasons], [true, "low", ["300 lines changed"]]);
 });
 
 test("the diff is measured against the task's baseCommit when it resolves, else the commit before the task started, else no base", async () => {
@@ -300,4 +301,15 @@ test("one change over limits.changeCap is high risk; lockfiles and vendored path
   await r.write("poetry.lock", lines(900));
   assert.equal((await assessRisk(r.real, r.root, task, big)).level, "none", "vendored and lock files are not counted");
   assert.match((await assessRisk(r.real, r.root, task, { ...big, limits: { changeCap: 100 } } as any)).reasons.join(), /500 changed lines in one change \(cap 100\)/);
+});
+
+test("review.always and review.never decide the review, not the level: the reasons are still measured", async () => {
+  const deps = exec([["package.json", 1]]);
+  assert.deepEqual(await risk(deps, task, { ...base, review: { never: true } }), { review: false, level: "high", reasons: ["dependencies (package.json)"] });
+  assert.deepEqual(await risk(exec([["src/a.ts", 1]]), task, { ...base, review: { always: true } }), { review: true, level: "none", reasons: [] });
+});
+
+test("the memory record learn appends is pi-improved's own state: it does not count as a changed file", async () => {
+  const six = [1, 2, 3, 4, 5, 6].map((i): [string, number] => [`src/${i}.ts`, 1]);
+  assert.equal((await risk(exec([...six, [".pi/memory/tasks.jsonl", 1]]))).level, "none");
 });

@@ -24,3 +24,15 @@ test("/cost shows the active task's phases, total and last risk level", async ()
   assert.match(report, /Total \$0\.500 \| last risk: low/);
   assert.match(await costReport(await tempProject({})), /No active task/);
 });
+
+test("/cost names the last review's status instead of calling every review high risk", async () => {
+  const root = await tempProject({ ".pi/task.json": taskJson("C-2", "implementing") });
+  const f = fakePi();
+  const listeners = new Map<string, (d: unknown) => unknown>();
+  f.pi.events = { on: (name: string, fn: any) => listeners.set(name, fn) };
+  registerTelemetry(f.pi);
+  await listeners.get(REVIEW_EVENT)!({ root, status: "skipped", model: "x", seconds: 0 });
+  assert.match(await costReport(root), /last risk: review skipped \|/);
+  await listeners.get(REVIEW_EVENT)!({ root, status: "approved", model: "x", seconds: 1, cost: 0.1 });
+  assert.match(await costReport(root), /last risk: review approved \|/);
+});

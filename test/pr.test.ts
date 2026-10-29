@@ -41,7 +41,7 @@ test("scrub removes attribution lines only; product names in the work survive", 
 });
 
 test("body: summary, closes, verify, risk, ADRs, tests", () => {
-  const body = buildBody({ task, facts, verify: { ok: true, text: "verify passed\n✓ npm test" }, risk: { review: true, reasons: ["8 files"] } });
+  const body = buildBody({ task, facts: { ...facts, branch: "task/42-add-it" }, verify: { ok: true, text: "verify passed\n✓ npm test" }, risk: { review: true, level: "low", reasons: ["8 files"] } });
   assert.match(body, /## Summary\nAdd the thing\n\n- step one\n\nCloses #42/);
   assert.match(body, /Passed:[\s\S]*✓ npm test/);
   assert.match(body, /Risky: 8 files\./);
@@ -337,4 +337,11 @@ test("the commit subject and PR title stay within 72 characters, without a trail
   const title = prTitle(task, []);
   assert.ok(title.length <= 72 && title.startsWith("[ABC-123] "), title);
   assert.equal(prTitle({ title: "Fix the cart total." } as any, []), "Fix the cart total");
+});
+
+test("body: the risk reasons show whatever the review policy decided; a ticket alone never closes an issue", () => {
+  const off = buildBody({ task, facts, risk: { review: false, level: "high", reasons: ["dependencies (package.json)"] } });
+  assert.match(off, /## Risk\nRisk high: dependencies \(package\.json\)\./);
+  assert.match(buildBody({ task, facts, risk: { review: false, level: "none", reasons: [] } }), /## Risk\nLow risk: no reason found\./);
+  assert.doesNotMatch(off, /Closes/);
 });

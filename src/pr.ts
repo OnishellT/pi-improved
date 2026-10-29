@@ -65,13 +65,13 @@ export interface BodyInput {
   task?: Task;
   facts: PrFacts;
   verify?: { ok: boolean; text: string } | "none";
-  risk?: { review: boolean; reasons: string[] };
+  risk?: { review: boolean; level: string; reasons: string[] };
 }
 
 /** The PR body: the repo's template when there is one (kept as is, facts appended), otherwise fixed sections. */
 export function buildBody({ task, facts, verify, risk }: BodyInput): string {
   const plan = task?.plan;
-  const issue = /^#?(\d+)$/.exec(task?.ticket ?? "")?.[1] ?? /(?:^|\/)(\d+)-/.exec(facts.branch)?.[1];
+  const issue = /(?:^|\/)(\d+)-/.exec(facts.branch)?.[1];
   const adrs = newAdrs(facts.changes, facts.dirty);
   const summary = [
     ...(plan?.intent ? [plan.intent, ""] : []),
@@ -83,7 +83,8 @@ export function buildBody({ task, facts, verify, risk }: BodyInput): string {
   const predates = task?.predates?.length ? `\n\nVerify fails, but only with failures that predate this change (they already failed before it):\n${task.predates.map((l) => `- ${l}`).join("\n")}` : "";
   const verified =
     !verify ? "Not run." : verify === "none" ? "The project has no verification steps." : `${verify.ok ? "Passed" : "FAILED"}:\n\n\`\`\`\n${verify.text}\n\`\`\`${verify.ok ? "" : predates}`;
-  const riskText = risk ? (risk.review ? `Risky: ${risk.reasons.join("; ")}.` : "Low risk: no reason found.") : "Not assessed.";
+  // The reasons show whatever the review policy decided.
+  const riskText = !risk ? "Not assessed." : risk.reasons.length ? `${risk.review ? "Risky" : `Risk ${risk.level}`}: ${risk.reasons.join("; ")}.` : "Low risk: no reason found.";
   const sections: [string, string][] = [
     ["Summary", summary || "(no task plan: see the commits)"],
     ["How it was verified", verified],
