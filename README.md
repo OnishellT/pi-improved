@@ -126,7 +126,7 @@ Scripts in `scripts/`:
 
 ### Reviewing pull requests
 
-`npm run review -- <pr> [--dry-run] [--force]` (run from an up-to-date `main` checkout) reviews a PR with pi and posts
+`npm run review -- <pr> [--dry-run] [--force]` (run from a checkout with a git remote for the PR's repository) reviews a PR with pi and posts
 one GitHub review: inline comments, a summary and a confidence score from 1 (must not merge) to 5 (safe to merge).
 The reviewer reads the PR head in a throwaway worktree, read-only, with an empty home and no secrets in its environment.
 Its context is `README.md`, `docs/*.md`, any `CLAUDE.md`, `AGENTS.md` and `CONTRIBUTING.md`, the PR text, the linked
@@ -136,9 +136,12 @@ a head that already has a review is skipped, and a fourth round needs `--force` 
 by design (there is no code to review).
 `--dry-run` prints the review instead of posting it, and it ignores both gates.
 
-It needs pi signed in to the `openai` provider. Defaults: model `gpt-6.1-terra`, thinking `xhigh`; override with
-`REVIEW_MODEL` and `REVIEW_THINKING`. It keeps its own pi profile in `~/.pi/reviewer-pi-improved` (`REVIEW_PI_DIR`),
-rebuilt from `scripts/review/pi-settings.json`, with `auth.json` symlinked from `~/.pi/agent`. The prompt and
+It needs pi signed in to the reviewer's provider. Defaults: provider `openai`, model `gpt-6.1-terra`, thinking `xhigh`;
+override with `REVIEW_PROVIDER`, `REVIEW_MODEL` and `REVIEW_THINKING`. A run is killed after `REVIEW_TIMEOUT_MS`
+(10 minutes) or `REVIEW_IDLE_MS` without output (2 minutes). It keeps its own pi profile in
+`~/.pi/reviewer-pi-improved` (`REVIEW_PI_DIR`), rebuilt from `scripts/review/pi-settings.json`, with `auth.json`
+(and `models-store.json` when present) symlinked from the main pi dir: `PI_MAIN_DIR`, else `PI_CODING_AGENT_DIR`,
+else `~/.pi/agent`. A context over 1,000,000 characters stops the run before the model is called. The prompt and
 settings are read from the PR's base branch, so a PR cannot change the reviewer that judges it.
 
 pi-subagent is pinned to a commit in `package.json`; bump the sha deliberately. `package-lock.json` is gitignored on purpose. Module map: [docs/WORKFLOW.md](docs/WORKFLOW.md#internals).
