@@ -51,14 +51,14 @@ export async function metricsReport(root: string): Promise<string> {
     const phases = Object.values<any>(r.metrics.phases ?? {});
     const sum = (k: string) => phases.reduce((s, p) => s + (p[k] ?? 0), 0);
     const reviews: any[] = r.metrics.reviews ?? [];
-    const verdicts = reviews.map((x) => (x.status === "skipped-low-risk" ? "·" : x.discarded ? `(${x.status})` : x.status)).join(",") || "-";
+    const verdicts = reviews.map((x) => (x.status === "skipped-low-risk" || x.status === "not-requested" ? "·" : x.discarded ? `(${x.status})` : x.status)).join(",") || "-";
     const reviewCost = reviews.reduce((s, x) => s + (x.cost ?? 0), 0);
     return { id: String(r.ticket ?? r.id), cost: sum("cost") + reviewCost, tokens: sum("input") + sum("output"), seconds: sum("seconds"), fails: r.metrics.verifyFailures ?? 0, verdicts };
   });
   const lines = rows.map((r) => `${r.id.padEnd(14)} $${r.cost.toFixed(3).padStart(7)} ${String(r.tokens).padStart(9)} tok ${String(Math.round(r.seconds)).padStart(6)} s  verify✗ ${r.fails}  review: ${r.verdicts}`);
   const avg = rows.reduce((s, r) => s + r.cost, 0) / rows.length;
   const all: any[] = records.flatMap((r) => r.metrics.reviews ?? []);
-  const paid = all.filter((x) => x.status !== "skipped-low-risk" && !String(x.status).startsWith("plan-") && x.cost !== undefined);
+  const paid = all.filter((x) => x.status !== "skipped-low-risk" && x.status !== "not-requested" && !String(x.status).startsWith("plan-") && x.cost !== undefined);
   const avoided = all.filter((x) => x.status === "skipped-low-risk").length;
   const mean = paid.length ? paid.reduce((s, x) => s + x.cost, 0) / paid.length : 0;
   return [`Last ${rows.length} tasks (id, cost, tokens in+out, seconds, verify failures, reviews):`, ...lines, `Mean cost per task: $${avg.toFixed(3)}`, `Reviews avoided: ${avoided} (≈ $${(avoided * mean).toFixed(2)} saved)`].join("\n");
@@ -74,7 +74,7 @@ export async function costReport(root: string): Promise<string> {
   const reviewCost = data.reviews.reduce((s, r) => s + (r.cost ?? 0), 0);
   const total = Object.values(data.phases).reduce((s, p) => s + p.cost, 0) + reviewCost;
   const verdict = [...data.reviews].reverse().find((r) => !r.status.startsWith("plan-"));
-  const risk = !verdict ? "not assessed yet" : verdict.status === "skipped-low-risk" ? "low (review skipped)" : "high (review ran)";
+  const risk = !verdict ? "not assessed yet" : verdict.status === "skipped-low-risk" ? "low (review skipped)" : verdict.status === "not-requested" ? "review not requested (review.minLevel)" : "high (review ran)";
   return [`${task.id}: phase ${task.status}`, ...rows, `  review        $${reviewCost.toFixed(3).padStart(7)}`, `Total $${total.toFixed(3)} | last risk: ${risk} | verify runs ${data.verifyRuns} (${data.verifyFailures} failed)`].join("\n");
 }
 

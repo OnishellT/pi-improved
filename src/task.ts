@@ -11,7 +11,7 @@ import { relatedTasks } from "./learn.ts";
 import { usePhaseModel } from "./models.ts";
 import { gitHead } from "./git.ts";
 import { checkPlan } from "./plan-check.ts";
-import { highRiskReasons, planRiskReasons } from "./risk.ts";
+import { highRiskReasons, minLevelOf, planRiskReasons } from "./risk.ts";
 import { phaseSkills, skillsBlock } from "./skills.ts";
 import { readManifest, type Manifest } from "./manifest.ts";
 import { inFiles, oneLine, readTask, resolveInside, updateTask, writeTask, type Decision, type Plan, type Task } from "./task-state.ts";
@@ -31,13 +31,13 @@ const exists = (file: string) => fs.access(file).then(() => true, () => false);
 
 const tracker = (manifest: Manifest) => manifest.connectors.find((c) => TRACKERS.includes(c.id))?.id;
 
-/** The plan check costs a model call: off unless `review.always`, `review.plan` true, or a risk policy is set and the plan touches high-risk files. `always` beats `never`. */
+/** The plan check costs a model call: off unless `review.always`, `review.plan` true, or the review policy is not "off" and the plan touches high-risk files. `always` beats `never`. */
 export function planCheckWanted(manifest: Manifest, files: string[]): boolean {
   const rule = manifest.review;
   if (rule?.always) return true;
   if (rule?.never || rule?.plan === false) return false;
   if (rule?.plan === true) return true;
-  return !!rule?.minLevel && rule.minLevel !== "off" && highRiskReasons(files, rule).length > 0;
+  return minLevelOf(rule) !== "off" && highRiskReasons(files, rule).length > 0;
 }
 
 /** Existing spec files named in a /task request; files outside the repo are ignored. */
