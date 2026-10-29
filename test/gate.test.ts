@@ -366,6 +366,8 @@ test("a failure that predates the change lets the agent finish: no retry, no esc
   assert.equal(t.notes.filter((n) => /predate this change/.test(n)).length, 1);
   assert.match(t.notes.find((n) => /predate/.test(n))!, /^Verify fails, but only with failures that predate this change: FAIL test\/old\.test\.ts after 9ms \| Error: expected 1 got 2$/);
   assert.deepEqual(gateEvents(t).map((p) => [p.kind, p.ok, p.predates]), [["gate", false, true]]);
+  assert.deepEqual(t.ctx.ui.asked, ["Only old failures remain"]);
+  assert.match(t.ctx.ui.messages[0], /done\?\n\nThese steps still fail, as they did before the task:\n- check$/);
   t.setOut("a brand new failure: Error 5");
   await t.emit("tool_result", { toolName: "write" }, t.ctx);
   const fresh = await t.settle();

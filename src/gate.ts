@@ -67,7 +67,7 @@ export function registerGate(pi: ExtensionAPI) {
     const t0 = Date.now();
     const isAgentlint = agentlintStepOf(manifest);
     const result = await runVerify(verifySteps(manifest), pi.exec.bind(pi), cwd, undefined, validCap(manifest.maxReport), undefined, carryOnWhenPredated(before, isAgentlint));
-    return { ok: result.ok, report: formatVerify(result), infra: infraFailure(result), policy: !result.ok && isPolicyFailure(result, isAgentlint), signature: failureSignature(result), predated: predatesBaseline(result, before, isAgentlint), lines: failedLines(result), seconds: (Date.now() - t0) / 1000 };
+    return { ok: result.ok, report: formatVerify(result), infra: infraFailure(result), policy: !result.ok && isPolicyFailure(result, isAgentlint), signature: failureSignature(result), predated: predatesBaseline(result, before, isAgentlint), lines: failedLines(result), failing: result.results.filter((r) => !r.ok).map((r) => r.step), seconds: (Date.now() - t0) / 1000 };
   };
   const emitVerify = (payload: Omit<VerifyPayload, "kind"> & { kind?: VerifyPayload["kind"] }) => void pi.events?.emit(VERIFY_EVENT, { kind: "gate", ...payload } satisfies VerifyPayload);
   /** Every `limits.verifyEvery` writes while implementing: the first verify command's result, to append to that tool result. Off when it was slow at baseline. */
@@ -183,7 +183,7 @@ export function registerGate(pi: ExtensionAPI) {
     const reviewing = wanted && task && reviewModel ? review(ctx.cwd, task, reviewModel, abort.signal) : undefined;
     if (reviewing) ctx.ui.setStatus("review", `reviewing the diff with ${reviewModel}…`);
     const clearStatus = () => ctx.ui.setStatus("review", undefined);
-    const { ok, report, policy, infra, signature, predated: onlyOld, lines, seconds } = await verify(manifest, ctx.cwd, task?.baseline?.failing);
+    const { ok, report, policy, infra, signature, predated: onlyOld, lines, failing, seconds } = await verify(manifest, ctx.cwd, task?.baseline?.failing);
     const emit = (extra: Pick<VerifyPayload, "predates" | "premise"> = {}) => emitVerify({ root: ctx.cwd, ok, seconds, ...extra });
     if (infra) {
       // Not a verify failure: the code cannot be at fault, so the model hears nothing and no retry is spent.
@@ -267,7 +267,7 @@ export function registerGate(pi: ExtensionAPI) {
         return { entries: [{ type: "custom_message", customType: "diff-review", content, display: true }], continue: true };
       }
     }
-    if (task?.status === "implementing" && ctx.hasUI && (await ctx.ui.confirm("Verification OK", `Is the task "${oneLine(task.title, 80)}" done?${touchedNote(risk?.touched)}`))) {
+    if (task?.status === "implementing" && ctx.hasUI && (await ctx.ui.confirm(predated ? "Only old failures remain" : "Verification OK", `Is the task "${oneLine(task.title, 80)}" done?${predated ? `\n\nThese steps still fail, as they did before the task:\n${failing.map((s) => `- ${s}`).join("\n")}` : ""}${touchedNote(risk?.touched)}`))) {
       const done = await updateTask(ctx.cwd, (t) => {
         t.status = "done";
         t.completedAt = new Date().toISOString();
