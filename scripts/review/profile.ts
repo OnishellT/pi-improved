@@ -1,7 +1,7 @@
 // Links the owner's pi credentials into the reviewer's profile. Symlinks, never copies:
 // a copied OAuth file goes stale when the main profile refreshes and rotates its token.
 import { existsSync, readlinkSync, realpathSync, renameSync, rmSync, symlinkSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 function linkOf(path: string) {
   try {
@@ -11,7 +11,13 @@ function linkOf(path: string) {
   }
 }
 
-const canonical = (dir: string) => (existsSync(dir) ? realpathSync(dir) : resolve(dir));
+// A directory that does not exist yet resolves through its nearest existing ancestor, so a symlinked parent cannot hide a nesting.
+function canonical(dir: string): string {
+  const full = resolve(dir);
+  if (existsSync(full)) return realpathSync(full);
+  const parent = dirname(full);
+  return parent === full ? full : join(canonical(parent), basename(full));
+}
 
 // The reviewer profile is rewritten on every run: if it were the main profile (or inside or
 // around it), its settings would be overwritten and auth.json replaced by a link to itself.
