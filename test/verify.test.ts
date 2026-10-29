@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { test } from "node:test";
-import { DEFAULT_MAX_REPORT, VERIFY_TIMEOUT, carryOnWhenPredated, failedLines, failureSignature, formatVerify, predates, predatesBaseline, runBaseline, runVerify, sameFailure, stepSignature, validCap } from "../src/verify.ts";
+import { DEFAULT_MAX_REPORT, VERIFY_TIMEOUT, agentlintStepOf, verifySteps, carryOnWhenPredated, failedLines, failureSignature, formatVerify, predates, predatesBaseline, runBaseline, runVerify, sameFailure, stepSignature, validCap } from "../src/verify.ts";
 import { installMessage } from "../src/nix.ts";
 import type { Exec } from "../src/git.ts";
 import { tempProject } from "./helpers.ts";
@@ -141,4 +141,20 @@ test("a step whose output was cut to the report size has no signature, so it nev
   const run = await runVerify(["check"], async () => ({ code: 1, stdout: "FAIL a.test.ts\n".repeat(50), stderr: "", killed: false }) as any, "/tmp", undefined, 100);
   assert.ok(run.results[0].output.startsWith("…"));
   assert.equal(stepSignature(run.results[0]), undefined);
+});
+
+test("agentlintStepOf: the step setup recorded, or a bare agentlint check; nothing else is parsed", () => {
+  const recorded = agentlintStepOf({ agentlintStep: "npm exec agentlint -- check --all" });
+  assert.ok(recorded("npm exec agentlint -- check --all"));
+  assert.ok(agentlintStepOf({ agentlint: "pnpm agentlint" })("pnpm agentlint check --all"), "a setup from before the record");
+  for (const step of ["agentlint check", "agentlint check --all", "./node_modules/.bin/agentlint check --all"]) assert.ok(agentlintStepOf()(step), step);
+  // A script, a compound command or a mention is an ordinary step: setup's own step is the gate.
+  for (const step of ["npm run lint", "npx agentlint check", "agentlint check && npm test", "echo 'agentlint check'", "agentlint check $(ls)", "make lint"]) assert.ok(!recorded(step), step);
+});
+
+test("verifySteps: the recorded agentlint step runs first, the others keep their order; without a record nothing moves", () => {
+  const verify = ["npm run verify", "npm test", "npm exec agentlint -- check --all"];
+  assert.deepEqual(verifySteps({ verify, agentlintStep: "npm exec agentlint -- check --all" }), ["npm exec agentlint -- check --all", "npm run verify", "npm test"]);
+  assert.deepEqual(verifySteps({ verify }), verify);
+  assert.deepEqual(verifySteps({ verify, agentlintStep: "gone check --all" }), verify);
 });

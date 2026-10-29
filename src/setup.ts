@@ -3,7 +3,7 @@ import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { CATALOG, connectorById, type ConnectorSignal } from "./connectors.ts";
-import { agentlintCheck, agentlintCmd, discover, hasAgentlintConfig, isProject, readPackageJson, type Discovery, type Run } from "./discover.ts";
+import { agentlintCheck, agentlintCmd, discover, hasAgentlintConfig, isProject, type Discovery, type Run } from "./discover.ts";
 import type { Exec } from "./git.ts";
 import { isNixFailure } from "./nix.ts";
 import { agentDir } from "./subagent-ext.ts";
@@ -14,7 +14,7 @@ import { AGENTS_MAX_LINES, SETUP_NUDGE, setupPrompt } from "./setup-prompt.ts";
 import { LOCAL_STATE } from "./task-state.ts";
 import { resolvePolicyFailure } from "./policy.ts";
 import { checkVerifyApp } from "./verify-app.ts";
-import { formatVerify, isPolicyFailure, runVerify } from "./verify.ts";
+import { agentlintStepOf, formatVerify, isPolicyFailure, runVerify, verifySteps } from "./verify.ts";
 
 const MAX_NUDGES = 2;
 const START_TIMEOUT = 30_000;
@@ -78,13 +78,6 @@ async function ensureIgnored(root: string, entries: string[]) {
   const lines = current.split("\n").map((l) => l.trim());
   const missing = entries.filter((e) => !lines.includes(e) && !lines.includes(e.replace(/\/$/, "")));
   if (missing.length) await fs.appendFile(gitignore, `${current && !current.endsWith("\n") ? "\n" : ""}${missing.join("\n")}\n`);
-}
-
-/** True when a verify step already runs the agentlint gate, directly or through a package script. */
-async function runsAgentlint(root: string, verify: string[]) {
-  const scripts: Record<string, string> = (await readPackageJson(root)).scripts ?? {};
-  const expand = (step: string) => step.replace(/^(?:npm|pnpm|yarn|bun)(?: run)? ([\w:-]+)$/, (all, name) => scripts[name] ?? all);
-  return verify.some((step) => /agentlint\b.*\bcheck\b/.test(expand(step)));
 }
 
 /** Returns the agentlint command when the project will enforce agentlint rules. */
@@ -162,7 +155,8 @@ export function registerSetup(pi: ExtensionAPI) {
         if (manifest.mode === undefined) m.mode = "direct";
       });
       manifest = await readManifest(root);
-      if (use === "never" && (await runsAgentlint(root, manifest.verify))) ctx.ui.notify("useAgentlint is \"never\", but a verify step of yours still runs agentlint. Setup leaves your commands alone: change that step yourself if you want it gone.", "warning");
+      // Only a hint, so a mention is enough: nothing is classified by it.
+      if (use === "never" && manifest.verify.some((step) => /\bagentlint\b/.test(step))) ctx.ui.notify("useAgentlint is \"never\", but a verify step of yours still runs agentlint. Setup leaves your commands alone: change that step yourself if you want it gone.", "warning");
       registerConnectors(pi, connectors);
       nudges = 0;
       verifyFailures = 0;
@@ -219,20 +213,21 @@ export function registerSetup(pi: ExtensionAPI) {
           const noRules = tests.results.some((r) => /No matching rules/.test(r.output));
           if (!tests.ok && !noRules) problems.push(`agentlint rule fixtures fail:\n${formatVerify(tests)}`);
         }
-        if (!(await runsAgentlint(root, verify))) {
-          addedStep = agentlintCheck(agentlint);
-          verify = [...verify, addedStep];
-        }
+        // Always a step of its own, even when a script of the user's also runs agentlint: running it twice is cheaper than parsing scripts to tell.
+        addedStep = agentlintCheck(agentlint);
+        if (!verify.includes(addedStep)) verify = [...verify, addedStep];
       }
       if (problems.length) throw new Error(`Setup incomplete:\n- ${problems.join("\n- ")}`);
 
-      let result = await runVerify(verify, pi.exec.bind(pi), root);
+      // Stored where the user put it, run first: a script of the user's that also runs agentlint must not stop the run before the approval below.
+      const steps = verifySteps({ verify, agentlintStep: addedStep });
+      let result = await runVerify(steps, pi.exec.bind(pi), root);
       // Findings in code that predates the rules are the user's call, not another model round: they accept each one or send it back.
-      while (!result.ok && agentlint && ctx.hasUI && isPolicyFailure(result)) {
+      while (!result.ok && agentlint && ctx.hasUI && isPolicyFailure(result, agentlintStepOf({ agentlintStep: addedStep }))) {
         const report = formatVerify(result);
         const outcome = await resolvePolicyFailure(pi, ctx, manifest, report);
         if (outcome === "approved") {
-          result = await runVerify(verify, pi.exec.bind(pi), root);
+          result = await runVerify(steps, pi.exec.bind(pi), root);
           continue;
         }
         if (outcome === "stop") {

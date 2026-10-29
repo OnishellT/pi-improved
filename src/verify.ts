@@ -1,4 +1,6 @@
 import type { Exec } from "./git.ts";
+import { agentlintCheck } from "./discover.ts";
+import type { Manifest } from "./manifest.ts";
 import { isNixFailure } from "./nix.ts";
 
 export interface StepResult {
@@ -33,9 +35,19 @@ export async function runVerify(steps: string[], exec: Exec, cwd: string, timeou
 /** The Nix message when verify could not run because Nix is missing or failed to build: the user must act, and no change to the code helps. */
 export const infraFailure = ({ results }: Awaited<ReturnType<typeof runVerify>>) => results.find((r) => r.infra)?.output;
 
-/** A failing agentlint gate needs a fix or a recorded decision, not a smarter model. */
-export const isPolicyStep = (r: StepResult) => !r.ok && /\bagentlint\b|gate closed|unresolved findings/i.test(`${r.step}\n${r.output}`);
-export const isPolicyFailure = ({ results }: Awaited<ReturnType<typeof runVerify>>) => results.some(isPolicyStep);
+/** One `agentlint check` command and its plain arguments: no shell operators, quotes, redirections or substitutions. */
+const BARE_AGENTLINT = /^\s*(?:\S*\/)?agentlint\s+check(?:\s+[^\s;&|<>`$()'"\\]+)*\s*$/;
+/** Which verify steps are the agentlint gate: the step setup recorded (`agentlintStep`; a setup from before the record added `<agentlint> check --all`), or a bare `agentlint check …`. Nothing else is parsed. Setup always adds its own step, so a package script or compound command that also runs agentlint is an ordinary step. */
+export const agentlintStepOf = (manifest: Pick<Manifest, "agentlint" | "agentlintStep"> = {}) => {
+  const recorded = manifest.agentlintStep ?? (manifest.agentlint ? agentlintCheck(manifest.agentlint) : undefined);
+  return (step: string) => step === recorded || BARE_AGENTLINT.test(step);
+};
+/** A failing agentlint gate needs a fix or a recorded decision, not a smarter model. It is recognised by its command, never by words in the output. */
+/** The verify steps in run order: the recorded agentlint step first, so its findings reach the per-finding approval before another step that also runs agentlint stops the run. */
+export const verifySteps = ({ verify, agentlintStep }: Pick<Manifest, "verify" | "agentlintStep">) =>
+  agentlintStep && verify.includes(agentlintStep) ? [agentlintStep, ...verify.filter((step) => step !== agentlintStep)] : verify;
+export const isPolicyStep = (r: StepResult, isAgentlint = agentlintStepOf()) => !r.ok && isAgentlint(r.step);
+export const isPolicyFailure = ({ results }: Awaited<ReturnType<typeof runVerify>>, isAgentlint?: (step: string) => boolean) => results.some((r) => isPolicyStep(r, isAgentlint));
 
 export function formatVerify({ ok, results }: Awaited<ReturnType<typeof runVerify>>) {
   const lines = results.map((r) => `${r.ok ? "✓" : "✗"} ${r.step}`);
@@ -99,9 +111,9 @@ export function predates(now?: Signature, before?: Signature) {
 const stepPredates = (r: StepResult, before: Signature[] | undefined) => predates(stepSignature(r), Array.isArray(before) ? before.find((f) => f.step === r.step) : undefined);
 
 /** Something failed, and every failing step failed only with lines it already had at the baseline. A step the baseline never ran or never saw fail counts as new. */
-export const predatesBaseline = ({ results }: VerifyRun, before: Signature[] | undefined) => {
+export const predatesBaseline = ({ results }: VerifyRun, before: Signature[] | undefined, isAgentlint?: (step: string) => boolean) => {
   const failed = results.filter((r) => !r.ok);
-  return failed.length > 0 && failed.every((r) => !isPolicyStep(r) && stepPredates(r, before));
+  return failed.length > 0 && failed.every((r) => !isPolicyStep(r, isAgentlint) && stepPredates(r, before));
 };
 
 /** The failure lines of every failing step, as printed. */
@@ -113,7 +125,7 @@ export const failedLines = ({ results }: VerifyRun) =>
   });
 
 /** The carryOn for `runVerify`: a failing step that predates the baseline does not stop the run, so later steps still run. */
-export const carryOnWhenPredated = (before: Signature[] | undefined) => (r: StepResult) => !isPolicyStep(r) && stepPredates(r, before);
+export const carryOnWhenPredated = (before: Signature[] | undefined, isAgentlint?: (step: string) => boolean) => (r: StepResult) => !isPolicyStep(r, isAgentlint) && stepPredates(r, before);
 
 export interface Baseline {
   ok: boolean;

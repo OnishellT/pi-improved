@@ -22,7 +22,7 @@ function agentlintStep(cmd: string, found: Discovery, rules: number) {
    - Pick the lifecycle by what the rule judges. A rule about changing something ("changing X needs Y") is \`lifecycle: "change"\`: it judges the diff against the merge base, so existing code is never flagged. \`lifecycle: "state"\` judges the current code, existing code included. A change detector is \`detect({ context })\`: loop \`context.change.files\` (\`path\`, \`status\`, \`hunks[].lines[]\` with \`kind\` "addition" | "deletion" | "context") and call \`context.report({ key, file, message, evidence })\`; its fixtures are \`{ before: { path: text }, after: { path: text } }\`.
    - Write each rule in \`.agentlint/config.ts\` with fixtures. Run \`${cmd} rules test\`, then \`${cmd} rules scan\` and tell the user how many findings each rule has in the existing code.
    - For existing findings: narrow the detector or \`binding.include\`, or turn the rule into a \`change\` rule. What is left, setup_finish shows to the user one by one to accept with their own reason. Never run \`approve\`, \`accept\` or \`review\` yourself, and NEVER bulk-accept findings with a generic reason.
-   - \`${agentlintCheck(cmd)}\` runs as part of verify and must exit 0.`;
+   - setup_finish adds \`${agentlintCheck(cmd)}\` to verify as a step of its own, and it must exit 0; do not add agentlint to the other steps or scripts.`;
 }
 
 /** The one model-facing instruction for setup. Short on purpose: cheap models follow short lists. */

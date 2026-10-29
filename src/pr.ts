@@ -7,7 +7,7 @@ import { readManifest } from "./manifest.ts";
 import { isNixFailure, NixError } from "./nix.ts";
 import { assessRisk } from "./risk.ts";
 import { isLocalState, LOCAL_STATE, oneLine, readTask, type Task } from "./task-state.ts";
-import { carryOnWhenPredated, failedLines, formatVerify, predatesBaseline, runVerify, validCap } from "./verify.ts";
+import { agentlintStepOf, carryOnWhenPredated, failedLines, formatVerify, predatesBaseline, runVerify, validCap, verifySteps } from "./verify.ts";
 
 const TEMPLATES = [".github/pull_request_template.md", ".github/PULL_REQUEST_TEMPLATE.md", "docs/pull_request_template.md", "pull_request_template.md"];
 const EVIDENCE_SKILL = ".pi/skills/verify-app/SKILL.md";
@@ -187,10 +187,11 @@ export async function runPr(exec: Exec, root: string, ui: Pick<ExtensionContext[
 
   let verify: BodyInput["verify"] = "none";
   if (manifest?.verify.length) {
-    const result = await runVerify(manifest.verify, exec, root, undefined, validCap(manifest.maxReport), undefined, carryOnWhenPredated(task?.baseline?.failing));
+    const isAgentlint = agentlintStepOf(manifest);
+    const result = await runVerify(verifySteps(manifest), exec, root, undefined, validCap(manifest.maxReport), undefined, carryOnWhenPredated(task?.baseline?.failing, isAgentlint));
     verify = { ok: result.ok, text: formatVerify(result) };
     // Only this run decides: a failure that appeared after the gate's check is not "old".
-    if (task && !result.ok) task = { ...task, predates: predatesBaseline(result, task.baseline?.failing) ? failedLines(result) : undefined };
+    if (task && !result.ok) task = { ...task, predates: predatesBaseline(result, task.baseline?.failing, isAgentlint) ? failedLines(result) : undefined };
     if (!result.ok && !(await ui.confirm("Verify failed", `${verify.text}\n\nOpen the PR anyway?`))) return { status: "declined", detail: "Verify failed; nothing was pushed." };
   }
   const risk = manifest ? await assessRisk(exec, root, task, manifest) : undefined;
