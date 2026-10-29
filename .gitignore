@@ -1,6 +1,10 @@
 node_modules/
 .bundled/
 __pycache__/
+.pi/task.json
+.pi/contract.json
+.pi/metrics/
+.pi/evidence/
 .env
 *.log
 .DS_Store
