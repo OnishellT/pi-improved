@@ -1,6 +1,7 @@
 // Trust model: the endpoint is loopback only (see endpoint), and every page command goes to the one
 // target this server created, never to the person's tabs. `evaluate` runs arbitrary JS in that page and
-// is not a sandbox; URLs are limited by allowedUrl. The window is left open when this server exits.
+// is not a sandbox; URLs are limited by allowedUrl. When this server exits, the relay window is left open and the
+// isolated one is closed: that browser outlives every session, so its windows would pile up unseen.
 import {spawn} from 'node:child_process';
 import {access, chmod, mkdir, readFile, readlink} from 'node:fs/promises';
 import {connect as tcp} from 'node:net';
@@ -158,6 +159,8 @@ export class OwnedBrowser {
     });
     socket.addEventListener('close', () => {
       if (this.socket !== socket) return; // a failed earlier attempt closing late must not reject the new connection's requests
+      // The isolated browser needs no approval: after it dies (crash, OOM, killed), the next open starts it again.
+      if (this.active?.launch) this.socket = this.target = this.session = undefined;
       for (const pending of this.pending.values()) {
         clearTimeout(pending.timer);
         pending.reject(Error(`${this.label} connection closed; action outcome may be unknown. Do not retry blindly.`));
@@ -241,6 +244,12 @@ export class OwnedBrowser {
     this.target = this.session = undefined;
     return {closed:true};
   }
+
+  /** On exit: closes the isolated browser's window (relay keeps its window by design), then the connection. */
+  async exit() {
+    try { if (this.active?.launch && this.target) await this.request('Target.closeTarget', {targetId:this.target}); } catch {}
+    this.socket?.close();
+  }
 }
 
 const snapshot = `(() => ({
@@ -282,7 +291,7 @@ export function buildServer(browser) {
     tool('click','Click one visible, unobscured CSS-selected control in our page using CDP input; never the physical cursor.',{selector:z.string().min(1).max(1000)},({selector})=>browser.click(selector));
     tool('close','Close only the target created by this server; never the browser or personal tabs.',{},()=>browser.close());
   }
-  server.server.onclose = () => { browser.socket?.close(); };
+  server.server.onclose = () => { browser.exit(); };
   return server;
 }
 

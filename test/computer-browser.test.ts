@@ -4,15 +4,14 @@ import * as fs from "node:fs/promises";
 import * as http from "node:http";
 import * as path from "node:path";
 import { test } from "node:test";
-import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { WebSocketServer } from "ws";
 import { cdpServer } from "../src/computer/browsers.ts";
-import { OwnedBrowser, allowedUrl, endpoint, parseTargets, servesProfile } from "../src/computer/cdp-server.mjs";
-import { tempDir } from "./helpers.ts";
+import { OwnedBrowser, allowedUrl, buildServer, endpoint, parseTargets, servesProfile } from "../src/computer/cdp-server.mjs";
+import { tempDir, withEnv } from "./helpers.ts";
 
-const script = fileURLToPath(new URL("../src/computer/cdp-server.mjs", import.meta.url));
 const value = (result: any) => JSON.parse(result.content[0].text);
 
 async function scratch() {
@@ -25,14 +24,21 @@ async function portFile(dir: string, name: string, contents?: string) {
   return file;
 }
 
+/** The server in this process (a spawned one costs about 2 s): the config test below covers the real stdio transport. */
 async function client(targets: object[], subagent = false) {
-  const env: Record<string, string> = { ...(process.env as Record<string, string>) };
-  delete env.PI_SUBAGENT_RUN_DIR;
-  if (subagent) env.PI_SUBAGENT_RUN_DIR = "/test/read-only";
-  const transport = new StdioClientTransport({ command: process.execPath, args: [script, JSON.stringify(targets)], env, stderr: "pipe" });
+  const server = await withEnv({ PI_SUBAGENT_RUN_DIR: subagent ? "/test/read-only" : undefined }, async () => buildServer(new OwnedBrowser(parseTargets(JSON.stringify(targets)))));
+  const [ours, theirs] = InMemoryTransport.createLinkedPair();
+  await server.connect(theirs);
   const result = new Client({ name: "browser-check", version: "1.0.0" });
-  await result.connect(transport);
+  await result.connect(ours);
   return result;
+}
+
+/** Waits up to 2 s for `check`, so a loaded machine does not fail a test that a fixed sleep would. */
+async function until(check: () => boolean | Promise<boolean>, what: string) {
+  for (const deadline = Date.now() + 2000; !(await check()); await new Promise((resolve) => setTimeout(resolve, 10))) {
+    if (Date.now() > deadline) assert.fail(`timed out waiting for ${what}`);
+  }
 }
 
 /** A CDP endpoint that answers like a browser: records every call, hands out one owned target. */
@@ -94,7 +100,7 @@ test("parseTargets needs a non-empty list of absolute port files", () => {
   for (const bad of ["", "{}", "[]", '[{"portFile":"relative"}]', "[1]"]) assert.throws(() => parseTargets(bad), bad);
 });
 
-test("the real MCP transport fails closed without a consent endpoint; subagents have status only", async () => {
+test("open fails closed without a consent endpoint; subagents have status only", async () => {
   const dir = await scratch();
   const targets = [{ id: "helium", name: "Helium", portFile: await portFile(dir, "a") }, { id: "brave", name: "Brave", portFile: await portFile(dir, "b") }];
   let main, sub;
@@ -178,6 +184,10 @@ test("native WebSocket and MCP route every page command to the created target, n
     assert.ok(calls.filter((c) => c.sessionId).every((c) => c.sessionId === "owned-session"));
     assert.equal(calls.find((c) => c.method === "Target.closeTarget").params.targetId, "owned");
     assert.ok(!calls.some((c) => /getTargets|Discover|AutoAttach|Browser.close|Cookie/.test(c.method)));
+    assert.equal(value(await main.callTool({ name: "open", arguments: {} })).ownedTarget, "owned");
+    await main.close();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    assert.equal(calls.filter((c) => c.method === "Target.closeTarget").length, 1, "the relay window stays open when the server exits");
   } finally {
     await main?.close();
     await stop(server);
@@ -221,8 +231,7 @@ test("open after close creates a new window", async () => {
 test("a window the person closed by hand is forgotten: the next open makes a new one", async () => {
   await opened(async (main, calls, server) => {
     for (const socket of server.clients) socket.send(JSON.stringify({ method: "Target.detachedFromTarget", params: { sessionId: "owned-session", targetId: "owned" } }));
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    assert.equal(value(await main.callTool({ name: "status", arguments: {} })).ownedWindow, false);
+    await until(async () => value(await main.callTool({ name: "status", arguments: {} })).ownedWindow === false, "the window to be forgotten");
     assert.equal(value(await main.callTool({ name: "open", arguments: {} })).ownedTarget, "owned");
     assert.equal(calls.filter((c) => c.method === "Target.createTarget").length, 2);
     assert.equal(calls.filter((c) => c.method === "Target.attachToTarget").length, 2);
@@ -315,6 +324,37 @@ test("a browser that listens but rejects the connection is the answer: no second
     await main?.close();
     await stop(live);
     await new Promise((resolve) => denied.close(resolve));
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("the isolated browser starts again after it dies, and its window closes when the server exits", async () => {
+  const dir = await scratch();
+  const profile = path.join(dir, "profile");
+  const file = path.join(profile, "DevToolsActivePort");
+  const calls: any[] = [];
+  const serve = async () => {
+    const chrome = await fakeChrome(calls);
+    await fs.writeFile(file, `${(chrome.address() as any).port}\n/devtools/browser\n`);
+    return chrome;
+  };
+  await fs.mkdir(profile);
+  let chrome = await serve();
+  let main: any;
+  try {
+    // A browser already listens on the profile's port file, so launch starts nothing (no Nix needed).
+    main = await client([{ id: "isolated", name: "Headless Chromium", portFile: file, launch: { profile } }]);
+    assert.equal(value(await main.callTool({ name: "open", arguments: {} })).ownedTarget, "owned");
+    await stop(chrome); // it crashed
+    await until(async () => value(await main.callTool({ name: "status", arguments: {} })).connected === false, "the dead browser to disconnect");
+    chrome = await serve();
+    assert.equal(value(await main.callTool({ name: "open", arguments: {} })).ownedTarget, "owned", "no 'Reconnect the MCP server'");
+    assert.equal(calls.filter((c) => c.method === "Target.createTarget").length, 2);
+    await main.close();
+    await until(() => calls.some((c) => c.method === "Target.closeTarget" && c.params.targetId === "owned"), "the window to close on exit");
+  } finally {
+    await main?.close();
+    await stop(chrome);
     await fs.rm(dir, { recursive: true, force: true });
   }
 });
