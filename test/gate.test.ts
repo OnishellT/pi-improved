@@ -29,7 +29,7 @@ async function setup(opts: { setup?: string; task?: boolean; pass?: boolean; ans
   const h = fakePi((cmd, args) => {
     if (cmd === "git" && opts.nix !== undefined) return { code: 127, stderr: opts.nix === false ? installMessage() : String(opts.nix) };
     // rev-list: the commit before the task started, the diff base of a task without baseCommit.
-    if (cmd === "git") return { code: 0, stdout: args.includes("--name-status") ? opts.status ?? "" : args[0] === "diff" ? diff : args[0] === "rev-list" ? "a".repeat(40) : args[0] === "ls-files" && untracked ? "new.ts\0" : args[0] === "hash-object" ? untracked : "" };
+    if (cmd === "git") return { code: 0, stdout: args.includes("--name-status") ? opts.status ?? "" : args[0] === "diff" ? diff : args[0] === "rev-list" ? "a".repeat(40) : args[0] === "ls-files" && untracked ? "new.ts\0link\0" : "" };
     if (isSubagent(cmd)) subagent.push(args[0]);
     if (isSubagent(cmd)) return args[0] === "spawn" ? { code: 0, stdout: "Spawned review (abc123)" } : args[0] === "wait" ? { code: 0, stdout: `abc123 finished\n\n${opts.review}` } : { code: 0 };
     verifies++;
@@ -48,7 +48,11 @@ async function setup(opts: { setup?: string; task?: boolean; pass?: boolean; ans
     diff = "changed";
   };
   const settle = () => h.emit("agent_before_settle", { outcome: "completed" }, ctx);
-  return { ...h, root, ctx, ui, notes, emitted, run, settle, verifies: () => verifies, subagent, setDiff: (d: string) => void (diff = d), setUntracked: (hash: string) => void (untracked = hash) };
+  return { ...h, root, ctx, ui, notes, emitted, run, settle, verifies: () => verifies, subagent, setDiff: (d: string) => void (diff = d), setUntracked: async (content: string) => {
+    untracked = content;
+    await fs.writeFile(path.join(root, "new.ts"), content);
+    await fs.symlink("missing", path.join(root, "link")).catch(() => {});
+  } };
 }
 
 test("an exception the user never saw is undone before the gate verifies", async () => {
@@ -865,18 +869,20 @@ test("leaving an escalated attempt does not undo a model picked since (/task can
   assert.deepEqual(t.set, ["p/strong"]);
 });
 
-test("editing an untracked file is a new diff to review; a review that did not run is tried again on the same diff", async () => {
+test("editing an untracked file (even only its line ends, next to a dangling link) is a new diff to review; a review that did not run is tried again on the same diff", async () => {
   const t = await setup({ pass: true, task: true, review: "VERDICT: APPROVED", answers: [false, false] });
-  t.setUntracked("h1");
+  await t.setUntracked("a\n");
   await t.run();
   await t.settle();
   await t.run();
-  t.setUntracked("h2");
+  await t.setUntracked("a\r\n");
   await t.settle();
   assert.equal(t.notes.filter((n) => n === "Diff review: approved.").length, 2);
   const s = await setup({ pass: true, task: true, review: "no verdict here", answers: [false, false] });
   await s.run();
+  await s.emit("tool_result", { toolName: "write" }, s.ctx);
   await s.settle();
+  // The same single write as the first turn: the same state, which a skipped review must not leave verified.
   await s.run();
   await s.emit("tool_result", { toolName: "write" }, s.ctx);
   await s.settle();

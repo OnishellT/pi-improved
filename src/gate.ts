@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { ESCALATE_EVENT, REVIEW_EVENT, TASK_DONE_EVENT, VERIFY_EVENT, type EscalatePayload, type ReviewPayload, type TaskDonePayload, type VerifyPayload } from "./events.ts";
 import { checkContract, formatContract } from "./contract.ts";
@@ -76,7 +78,11 @@ export function registerGate(pi: ExtensionAPI) {
     const exec = pi.exec.bind(pi);
     // `git diff` leaves out untracked files: their contents count too, or editing one would look like no change.
     const untracked = (await git(exec, cwd, ["ls-files", "--others", "--exclude-standard", "-z"]))?.split("\0").filter(Boolean);
-    const contents = !untracked ? undefined : untracked.length ? await git(exec, cwd, ["hash-object", "--", ...untracked]) : "";
+    // Raw bytes, and a symlink's target path: git's filters could hide a change, and a link may point nowhere.
+    const contents = await Promise.all((untracked ?? []).map(async (f) => {
+      const file = path.join(cwd, f);
+      return (await fs.lstat(file)).isSymbolicLink() ? `link ${await fs.readlink(file)}` : createHash("sha1").update(await fs.readFile(file)).digest("hex");
+    })).then((h) => (untracked ? h.join("\n") : undefined), () => undefined);
     const parts = [await git(exec, cwd, ["status", "--porcelain"]), await git(exec, cwd, ["diff", "HEAD"]), await git(exec, cwd, ["rev-parse", "HEAD"]), contents];
     // A snapshot git could not take (no Nix, no repository) is never equal to another: the work counts as changed, and verify says what is wrong.
     if (parts.some((p) => p === undefined)) return UNREADABLE;
@@ -289,6 +295,7 @@ export function registerGate(pi: ExtensionAPI) {
       reviews++;
       // A review that did not run (no tmux, a failed child) is tried again on the same diff, and still counts as one for the low-risk skip.
       if (task) reviewed.set(task.id, review.status === "skipped" ? "" : now);
+      if (review.status === "skipped") verified = undefined;
       // One round: the fixes are checked by verify, not by another paid review.
       if (review.status === "changes") {
         verified = undefined;
