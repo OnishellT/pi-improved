@@ -35,7 +35,7 @@ test("contract-first keeps the interface step and the five input cases, with no 
 
 test("scripts/skill-tokens.mjs --json reports every phase and skill with chars and tokens", async () => {
   const script = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "scripts/skill-tokens.mjs");
-  const out = JSON.parse(execFileSync("node", [script, "--json"], { encoding: "utf8" }));
+  const out = JSON.parse(execFileSync(process.execPath, [script, "--json"], { encoding: "utf8" }));
   assert.deepEqual((Object.keys(out.skills)).sort(), (await listSkills()).sort());
   for (const entry of [...Object.values(out.phases), ...Object.values(out.skills)] as { chars: number; tokens: number }[]) {
     assert.ok(entry.chars >= 0 && entry.tokens === Math.round(entry.chars / 4));
