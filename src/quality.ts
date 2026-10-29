@@ -72,10 +72,17 @@ export const isFixTask = (task: Pick<Task, "title" | "body" | "plan"> | undefine
 const ASSERTION = /\bassert\w*\b|\b(expect|should)\s*[.(]|\b(EXPECT|ASSERT)_\w+|\.(toBe\w*|toEqual|toStrictEqual|toThrow\w*|toMatch\w*|toHaveBeen\w*|toContain|toHaveLength)\(|\bt\.(Errorf?|Fatalf?)\(|\brequire\.\w+\(/;
 const SKIP_MARKER = /\.(skip|only)\b|\bx(it|describe|test)\(|\bf(it|describe)\(|@pytest\.mark\.(skip\w*|xfail)|pytest\.(skip|xfail)\(|@unittest\.(skip\w*|expectedFailure)|@(Disabled|Ignore)\b|\bt\.Skip\w*\(|#\[ignore\]|\bskipIf\b|\bxfail\b|\bretryTimes\b|@retry\b|\bflaky\b|\bit\.todo\(/;
 
-/** What a test file's diff did to its checks: assertion lines lost for good (removed minus added, so a changed expected value is not a loss) and skip/only/xfail/retry markers added. */
+/** What a test file's diff did to its checks: assertion lines removed or changed (a removed line with no identical added line, so an edited expected value counts) and skip/only/xfail/retry markers added. */
 export function weakening(added: string[], removed: string[]): { lost: number; markers: string[] } {
-  const count = (lines: string[]) => lines.filter((l) => ASSERTION.test(l)).length;
-  return { lost: Math.max(0, count(removed) - count(added)), markers: added.filter((l) => SKIP_MARKER.test(l)).map((l) => l.trim().slice(0, 80)) };
+  const kept = new Map<string, number>();
+  for (const l of added) kept.set(l.trim(), (kept.get(l.trim()) ?? 0) + 1);
+  const lost = removed.filter((l) => {
+    if (!ASSERTION.test(l)) return false;
+    const n = kept.get(l.trim()) ?? 0;
+    if (n) kept.set(l.trim(), n - 1);
+    return !n;
+  }).length;
+  return { lost, markers: added.filter((l) => SKIP_MARKER.test(l)).map((l) => l.trim().slice(0, 80)) };
 }
 
 // --- The verdict: facts -> why the change is high risk ---
@@ -112,7 +119,7 @@ export function weakenedNotes(diffs: FileDiff[], isTest: (file: string) => boole
   for (const d of diffs) {
     if (!isTest(d.file)) continue;
     const { lost, markers } = weakening(d.added, d.removed);
-    if (lost) notes.push(`${d.file}: ${lost} assertion${lost === 1 ? "" : "s"} removed`);
+    if (lost) notes.push(`${d.file}: ${lost} assertion${lost === 1 ? "" : "s"} removed or changed`);
     if (markers.length) notes.push(`${d.file}: ${markers.length} skip/only/xfail/retry marker${markers.length === 1 ? "" : "s"} added (${markers[0]})`);
   }
   return notes;

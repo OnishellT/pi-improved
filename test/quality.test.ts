@@ -45,8 +45,9 @@ test("parseDiff splits files, keeps '-- ' lines as removed text and marks non-ad
   ]);
 });
 
-test("weakening: lost assertions net of added ones, and skip/only/xfail/retry markers", () => {
-  assert.deepEqual(weakening(["expect(a).toBe(2)"], ["expect(a).toBe(1)"]), { lost: 0, markers: [] });
+test("weakening: assertions removed or changed, and skip/only/xfail/retry markers", () => {
+  assert.equal(weakening(["expect(a).toBe(2)"], ["expect(a).toBe(1)"]).lost, 1, "an edited expectation counts");
+  assert.equal(weakening(["  expect(a).toBe(1)", "x"], ["expect(a).toBe(1)"]).lost, 0, "moved or re-indented is not a loss");
   assert.equal(weakening([], ["assert x == 1", "self.assertEqual(a, b)"]).lost, 2);
   assert.equal(weakening(["assert x == 1"], ["assert x == 1", "assert y"]).lost, 1);
   for (const line of ["it.skip('x', () => {})", "@pytest.mark.xfail", "@pytest.mark.skip(reason='x')", "t.Skip(\"later\")", "#[ignore]", "describe.only('x')", "@Disabled", "jest.retryTimes(3)", "xit('x')"]) assert.equal(weakening([line], []).markers.length, 1, line);
@@ -78,7 +79,7 @@ test("reviewWarnings: a clean diff gives nothing; findings are listed per kind a
   assert.match(out, /swallowed errors[\s\S]*a\.ts: \} catch/);
   assert.match(out, /Commented-out code[\s\S]*a\.ts: \/\/ const x/);
   assert.doesNotMatch(out, /README\.md/);
-  assert.match(out, /a\.test\.ts: 1 assertion removed[\s\S]*marker/);
+  assert.match(out, /a\.test\.ts: 1 assertion removed or changed[\s\S]*marker/);
   const many = reviewWarnings([{ file: "a.ts", added: Array.from({ length: 8 }, () => "x || true"), removed: [] }], isTestFile).join("\n");
   assert.match(many, /and 3 more/);
 });

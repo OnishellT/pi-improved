@@ -272,12 +272,12 @@ test("tests that lose assertions or gain skip markers are high risk and listed, 
   await r.write("src/a.test.ts", "test('a', () => {\n  expect(a).toBe(1);\n});\n");
   const out = await assessRisk(r.real, r.root, planned, base);
   assert.equal(out.level, "high");
-  assert.deepEqual(out.flagged, ["Existing tests weakened", "src/a.test.ts: 1 assertion removed"]);
+  assert.deepEqual(out.flagged, ["Existing tests weakened", "src/a.test.ts: 1 assertion removed or changed"]);
   assert.equal(out.touched, undefined);
   await r.write("src/a.test.ts", "test.skip('a', () => {\n  expect(a).toBe(1);\n  expect(a).toBeGreaterThan(0);\n});\n");
   assert.match((await assessRisk(r.real, r.root, planned, base)).flagged?.[1] ?? "", /marker/);
   await r.write("src/a.test.ts", "test('a', () => {\n  expect(a).toBe(2);\n  expect(a).toBeGreaterThan(0);\n});\n");
-  assert.equal((await assessRisk(r.real, r.root, planned, base)).level, "none", "a changed expected value is not a weakened test");
+  assert.equal((await assessRisk(r.real, r.root, planned, base)).level, "high", "an edited expected value is the usual way to weaken a test");
 });
 
 test("one change over limits.changeCap is high risk; lockfiles and vendored paths do not count", async () => {
