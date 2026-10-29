@@ -8,7 +8,7 @@
   "repository": { "type": "git", "url": "git+https://github.com/OnishellT/pi-improved.git" },
   "bugs": { "url": "https://github.com/OnishellT/pi-improved/issues" },
   "keywords": ["pi-package"],
-  "engines": { "node": ">=22.18.0" },
+  "engines": { "node": ">=22.19.0" },
   "pi": {
     "extensions": ["./src/index.ts", "./src/computer/index.ts", "./src/self-compact/index.ts"]
   },

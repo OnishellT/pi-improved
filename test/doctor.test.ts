@@ -16,8 +16,8 @@ const setup = async (exec: (cmd: string, args: string[]) => any, hasUI = true, m
 };
 
 test("node version gate", () => {
-  assert.ok(nodeOk("v22.18.0") && nodeOk("24.0.1"));
-  assert.ok(!nodeOk("22.17.9") && !nodeOk("20.11.0"));
+  assert.ok(nodeOk("v22.19.0") && nodeOk("24.0.1"));
+  assert.ok(!nodeOk("22.18.0") && !nodeOk("20.11.0"));
 });
 
 test("/doctor lists missing models with a login hint and failing CLIs", async () => {
