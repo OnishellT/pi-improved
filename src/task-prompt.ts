@@ -32,7 +32,7 @@ export function taskPrompt(title: string, ticket: string | undefined, tracker: s
     ...(related.length ? ["Similar past tasks:", ...related.map((r) => `- ${r}`), ""] : []),
     ...steps.map((s, i) => `${i + 1}. ${s}`),
     "",
-    "decisions: only real choices the code and docs leave open; if an ADR, doc or skill settles one, set source to its path (path#section allowed). 2-4 options, recommended first.",
+    "decisions: only real choices the code and docs leave open; if an ADR, doc or skill settles one, set source to its path (path#section allowed). 2-4 options, recommended first. Once the plan is approved, pi records each answered decision as an ADR in docs/adr/; you never write those.",
     "interface: file and export names (and signatures) the tests import, each with a source ('ticket', or a doc/GLOSSARY.md/code path). Code checks every name appears literally in that source; otherwise it counts as invented and the user is asked. Names nobody gave: source 'user', never invent silently.",
     "Name new files like their siblings, after the ticket's noun; one module per noun. Copy argument shapes from the ticket or existing callers. Reuse existing helpers.",
     "seams: test attachment points per the tdd skill: test file (in files), what it catches and misses. At least one; every acceptance criterion, invalid inputs included, needs a seam.",

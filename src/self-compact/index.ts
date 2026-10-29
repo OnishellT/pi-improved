@@ -1,11 +1,14 @@
 import { homedir } from "node:os";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { AssistantMessage } from "@earendil-works/pi-ai";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { checkThresholds, profileForModel, resolveConfig, sanitizeStatus, thresholdState, thresholdTokens } from "./config.ts";
-import { loadProfileFile } from "./profile.ts";
+import { globalPath, readGlobal } from "../config.ts";
+import { migrateLegacy } from "../legacy-config.ts";
+import { readProjectManifest } from "../manifest.ts";
+import { checkProfileFile } from "./profile.ts";
 
 export default function (pi: ExtensionAPI) {
   for (const [name, description] of [
@@ -31,7 +34,6 @@ export default function (pi: ExtensionAPI) {
   let lastTier = "below";
   let compacting = false;
   let activeContextWindow: number | undefined;
-  const profilePath = join(process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"), "self-compact.json");
 
   const usageFor = (ctx: ExtensionContext, selectedContextWindow?: number) => {
     const usage = ctx.getContextUsage();
@@ -193,16 +195,20 @@ export default function (pi: ExtensionAPI) {
   const configureForModel = async (provider: string | undefined, modelId: string | undefined, ctx: ExtensionContext) => {
     const notify = (text: string, error: unknown, fallback: string) =>
       report(ctx, `${text}: ${error instanceof Error ? error.message : String(error)}. ${fallback}`);
-    const load = async (path: string) => {
+    const load = async (where: string, read: () => unknown) => {
       try {
-        const file = await loadProfileFile(path);
+        const file = checkProfileFile((await read()) ?? {});
         return provider && modelId ? profileForModel(file, provider, modelId) : file.default ?? {};
       } catch (error) {
-        notify(`Could not load ${path}`, error, "Ignoring that file.");
+        notify(`Could not load ${where}`, error, "Ignoring it.");
         return {};
       }
     };
-    const profile = { ...(await load(profilePath)), ...(await load(join(ctx.cwd, ".pi", "self-compact.json"))) };
+    // Each file's own profile is resolved first, then the project's values win over the global ones.
+    const profile = {
+      ...(await load(`selfCompact in ${globalPath()}`, () => readGlobal().selfCompact)),
+      ...(await load("selfCompact in .pi/workflow.json", async () => (await readProjectManifest(ctx.cwd)).selfCompact)),
+    };
     try {
       config = resolveConfig(flagOverrides(), profile);
     } catch (error) {
@@ -220,6 +226,9 @@ export default function (pi: ExtensionAPI) {
     installFooter(ctx);
   });
   pi.on("session_start", async (_event, ctx) => {
+    // The old self-compact.json files are copied into the config files before the first read.
+    const moved = migrateLegacy(ctx.cwd);
+    if (moved.length) ctx.hasUI ? ctx.ui.notify(moved.join("\n"), "info") : console.error(`[self-compact] ${moved.join(" ")}`);
     await configureForModel(ctx.model?.provider, ctx.model?.id, ctx);
     installFooter(ctx);
   });

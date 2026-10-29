@@ -1,5 +1,9 @@
+import { existsSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import type { ComputerConfig } from "./computer/config.ts";
+import { globalPath, globalPreferences, merge, readGlobal, withValidLimits, writeFileAtomicAsync, type Limits } from "./config.ts";
+import type { ProfileFile } from "./self-compact/config.ts";
 
 export type SetupStatus = "pending" | "running" | "done" | "declined";
 
@@ -38,7 +42,7 @@ export interface EnabledConnector {
   mcp?: McpConfig;
 }
 
-/** Project state committed to the repo at `.pi/workflow.json`. */
+/** What the project file (`.pi/workflow.json`) says, with the user's global file (`<agent dir>/pi-improved.json`) under it for the preferences. */
 export interface Manifest {
   version: 1;
   setup: SetupStatus;
@@ -67,6 +71,14 @@ export interface Manifest {
    *  `always` beats `never`. `plan` true adds the plan check for any plan, false turns it off (otherwise it runs only when risk asks for it).
    *  `maxLines`/`maxFiles` set where "low" starts, `highLines`/`highFiles` where "high" starts. */
   review?: { paths?: string[]; always?: boolean; never?: boolean; plan?: boolean; minLevel?: "off" | "low" | "high"; maxLines?: number; maxFiles?: number; highLines?: number; highFiles?: number };
+  /** Numbers the workflow used to hardcode; see `Limits` in config.ts for the keys and DEFAULT_LIMITS for the defaults. Unchecked here: `resolveLimits` fills defaults and reports bad values. */
+  limits?: { [K in keyof Limits]?: unknown } | undefined;
+  /** What /computer saves: the browser and desktop the agent can drive. Meant for the global file. */
+  computer?: ComputerConfig;
+  /** `"tern"` opens subagent panes in Tern when pi runs in it (default: tmux only). */
+  subagentPanes?: string;
+  /** Self-compact thresholds per model, the shape of the old `self-compact.json`. */
+  selfCompact?: ProfileFile;
 }
 
 export interface PhaseModels {
@@ -84,7 +96,8 @@ export const MANIFEST_PATH = ".pi/workflow.json";
 
 const empty = (): Manifest => ({ version: 1, setup: "pending", verify: [], connectors: [] });
 
-export async function readManifest(root: string): Promise<Manifest> {
+/** The project file alone, with the state defaults. This is what gets written back; preferences from the global file are not in it. */
+export async function readProjectManifest(root: string): Promise<Manifest> {
   try {
     const raw = JSON.parse(await fs.readFile(path.join(root, MANIFEST_PATH), "utf8"));
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("the root must be an object");
@@ -98,12 +111,57 @@ export async function readManifest(root: string): Promise<Manifest> {
   }
 }
 
-/** Read-modify-write with no locking: concurrent writers are last-writer-wins. */
+/**
+ * The manifest in force: the global file's preferences with the project file on top. State (setup, verify, connectors...) comes from the project only.
+ * A global file that cannot be read counts as empty (callers must keep working; /doctor and the session start report it).
+ * Invalid `limits` are dropped per file before merging, so a bad project value falls back to the global one. A `null` in the project file unsets a global value.
+ */
+export async function readManifest(root: string): Promise<Manifest> {
+  const project = await readProjectManifest(root);
+  let global: Record<string, any> = {};
+  try {
+    global = globalPreferences(readGlobal());
+  } catch {}
+  return merge(withValidLimits(global), withValidLimits(project));
+}
+
+/** One map (models, skills, skillsOnDemand) of the global file alone; undefined when it has none or the file cannot be read. */
+export function globalMap<K extends "models" | "skills" | "skillsOnDemand">(key: K): Manifest[K] {
+  try {
+    return readGlobal()[key];
+  } catch {
+    return undefined;
+  }
+}
+
+/** Read-modify-write of the project file only (`change` gets its own content, never the global values); no locking: concurrent writers are last-writer-wins. */
 export async function updateManifest(root: string, change: (m: Manifest) => void): Promise<Manifest> {
-  const manifest = await readManifest(root);
+  const manifest = await readProjectManifest(root);
   change(manifest);
-  const file = path.join(root, MANIFEST_PATH);
-  await fs.mkdir(path.dirname(file), { recursive: true });
-  await fs.writeFile(file, `${JSON.stringify(manifest, null, 2)}\n`);
+  await writeFileAtomicAsync(path.join(root, MANIFEST_PATH), `${JSON.stringify(manifest, null, 2)}\n`);
   return manifest;
+}
+
+/**
+ * The map to store in the project file after an interactive edit of a merged map (models, skills): the project's own
+ * entries with only the keys the user changed applied, so values that come from the global file are not copied into the repo.
+ * A key the user unset while the global file (`inherited`) still has it is stored as `null`, which the merge reads as "unset".
+ */
+export function patchMap<T extends object>(own: T | undefined, before: T, after: T, inherited?: T): T | undefined {
+  const out: Record<string, unknown> = { ...own };
+  const was = before as Record<string, unknown>;
+  const now = after as Record<string, unknown>;
+  for (const key of new Set([...Object.keys(was), ...Object.keys(now)])) {
+    if (JSON.stringify(was[key]) === JSON.stringify(now[key])) continue;
+    if (now[key] !== undefined) out[key] = now[key];
+    else if ((inherited as Record<string, unknown> | undefined)?.[key] !== undefined) out[key] = null;
+    else delete out[key];
+  }
+  return Object.keys(out).length ? (out as T) : undefined;
+}
+
+/** Which of the two config files exist, for /doctor. */
+export function configFiles(root: string, dir?: string) {
+  const files = { global: globalPath(dir), project: path.join(root, MANIFEST_PATH) };
+  return Object.fromEntries(Object.entries(files).map(([name, file]) => [name, { file, exists: existsSync(file) }])) as Record<"global" | "project", { file: string; exists: boolean }>;
 }

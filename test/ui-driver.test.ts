@@ -17,7 +17,7 @@ async function binDir(files: Record<string, number>) {
 }
 
 const noAgent = () => tempProject({});
-const agentWith = async (config: object) => tempProject({ "computer.json": JSON.stringify(config) });
+const agentWith = async (config: object) => tempProject({ "pi-improved.json": JSON.stringify({ computer: config }) });
 
 test("detectUiDrivers finds an executable on PATH and ignores a non-executable file", async () => {
   const dir = await binDir({ "pi-desktop": 0o755 });
@@ -43,7 +43,7 @@ test("the bundled desktop is offered only when /computer turned it on and its to
   await fs.writeFile(path.join(home, ".local/bin/hypruse"), "", { mode: 0o755 });
   assert.deepEqual(await detectUiDrivers(await binDir(noHypruse), on, home), ["pi-desktop"]);
   // An mcp.json "desktop" entry wins, so /computer exports no $PI_DESKTOP: the bundled one must not be promised.
-  const shadowed = await tempProject({ "computer.json": JSON.stringify({ desktop: "on" }), "mcp.json": JSON.stringify({ mcpServers: { desktop: { command: "x" } } }) });
+  const shadowed = await tempProject({ "pi-improved.json": JSON.stringify({ computer: { desktop: "on" } }), "mcp.json": JSON.stringify({ mcpServers: { desktop: { command: "x" } } }) });
   assert.deepEqual(await detectUiDrivers(await binDir(all), shadowed, home), []);
 });
 

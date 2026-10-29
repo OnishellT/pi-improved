@@ -82,9 +82,12 @@ test("invalid source is asked and recorded as an ADR", async () => {
   await commands.get("task").handler("Add fee", ctxFor([]).ctx);
   const { ctx, ui } = ctxFor(["✏️  Other answer…", "basis points", true]);
   const decisions = [{ question: "Fee unit?", options: ["cents", "percent"], source: "docs/missing.md" }];
-  await tools.get("task_plan").execute("1", plan(decisions), undefined, undefined, ctx);
+  const result = await tools.get("task_plan").execute("1", plan(decisions), undefined, undefined, ctx);
   assert.equal(ui.asked.length, 3);
   const d = (await readTask(root))!.plan!.decisions[0];
+  // The model is told pi wrote the ADR, so it neither deletes it nor writes its own.
+  assert.ok(result.content[0].text.includes(`Fee unit? -> basis points (${d.source})`));
+  assert.match(result.content[0].text, /pi wrote each one as an ADR/);
   assert.equal(d.status, "decided");
   assert.equal(d.answer, "basis points");
   assert.match(await fs.readFile(path.join(root, d.source!), "utf8"), /basis points/);

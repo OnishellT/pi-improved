@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import { type ProfileFile, type ProfileValues, resolveConfig } from "./config.ts";
 
 const fields = new Set(["notice", "warning", "force", "buffer", "prompt"]);
@@ -19,8 +18,10 @@ function profileValues(value: unknown, where: string): ProfileValues {
   return value as ProfileValues;
 }
 
-export function parseProfileFile(text: string): ProfileFile {
-  const value: unknown = JSON.parse(text);
+export const parseProfileFile = (text: string): ProfileFile => checkProfileFile(JSON.parse(text));
+
+/** Validates the `selfCompact` value of a config file. */
+export function checkProfileFile(value: unknown): ProfileFile {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("Self-compact config must be a JSON object");
   const document = value as Record<string, unknown>;
   for (const key of Object.keys(document)) {
@@ -37,13 +38,4 @@ export function parseProfileFile(text: string): ProfileFile {
     }
   }
   return profiles;
-}
-
-export async function loadProfileFile(path: string): Promise<ProfileFile> {
-  try {
-    return parseProfileFile(await readFile(path, "utf8"));
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return {};
-    throw error;
-  }
 }
