@@ -77,5 +77,6 @@ test("overlapping main and reviewer profiles are rejected", async () => {
   assert.throws(() => checkSeparateProfiles(main, join(main, "reviewer")), /overlaps/);
   symlinkSync(main, join(pi, "alias"));
   assert.throws(() => checkSeparateProfiles(main, join(pi, "alias")), /overlaps/);
+  assert.throws(() => checkSeparateProfiles(main, join(pi, "alias", "not-yet", "reviewer")), /overlaps/, "a missing dir under a symlinked ancestor");
   checkSeparateProfiles(main, pi);
 });
