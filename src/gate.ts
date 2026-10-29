@@ -78,11 +78,9 @@ export function registerGate(pi: ExtensionAPI) {
     const exec = pi.exec.bind(pi);
     // `git diff` leaves out untracked files: their contents count too, or editing one would look like no change.
     const untracked = (await git(exec, cwd, ["ls-files", "--others", "--exclude-standard", "-z"]))?.split("\0").filter(Boolean);
-    // Raw bytes, and a symlink's target path: git's filters could hide a change, and a link may point nowhere.
-    const contents = await Promise.all((untracked ?? []).map(async (f) => {
-      const file = path.join(cwd, f);
-      return (await fs.lstat(file)).isSymbolicLink() ? `link ${await fs.readlink(file)}` : createHash("sha1").update(await fs.readFile(file)).digest("hex");
-    })).then((h) => (untracked ? h.join("\n") : undefined), () => undefined);
+    // Size and mtime from lstat: any write changes them, nothing is read (a large file costs nothing, a dangling link is fine).
+    const contents = await Promise.all((untracked ?? []).map((f) => fs.lstat(path.join(cwd, f)).then((st) => `${f} ${st.size} ${st.mtimeMs}`)))
+      .then((h) => (untracked ? h.join("\n") : undefined), () => undefined);
     const parts = [await git(exec, cwd, ["status", "--porcelain"]), await git(exec, cwd, ["diff", "HEAD"]), await git(exec, cwd, ["rev-parse", "HEAD"]), contents];
     // A snapshot git could not take (no Nix, no repository) is never equal to another: the work counts as changed, and verify says what is wrong.
     if (parts.some((p) => p === undefined)) return UNREADABLE;
