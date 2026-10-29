@@ -3,7 +3,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { test } from "node:test";
 import { writeAdr } from "../src/adr.ts";
-import { inFiles, inScope, readTask, resolveInside, updateTask, writeTask, type Task } from "../src/task-state.ts";
+import { inFiles, inScope, oneLine, readTask, resolveInside, updateTask, writeTask, type Task } from "../src/task-state.ts";
 import { tempProject } from "./helpers.ts";
 
 const task = (files: string[]): Task => ({ id: "t1", title: "x", status: "implementing", plan: { summary: "", steps: [], files, decisions: [], interface: [], seams: [] }, allowedExtra: [], startedAt: "" });
@@ -42,4 +42,11 @@ test("resolveInside keeps paths in the project root", () => {
   assert.equal(resolveInside("/p/root", "../x.md"), undefined);
   assert.equal(resolveInside("/p/root", "/etc/hosts"), undefined);
   assert.equal(resolveInside("/p/root", "a/../../b"), undefined);
+});
+
+test("oneLine takes the first line without markdown marks and cuts it", () => {
+  assert.equal(oneLine("# Superconduct shred is missing\n\nlong body"), "Superconduct shred is missing");
+  assert.equal(oneLine("\n\n  > quoted first\nsecond"), "quoted first");
+  assert.equal(oneLine("x".repeat(100), 72), `${"x".repeat(71)}…`);
+  assert.equal(oneLine(""), "");
 });

@@ -4,6 +4,8 @@ export type Exec = (command: string, args: string[], options: { cwd: string; tim
 
 const HASH = /^[0-9a-f]{7,64}$/;
 
+export const isCommit = (text: string) => HASH.test(text);
+
 /** stdout of `git args` in `root`, or undefined when the command fails, is killed or throws. */
 export async function git(exec: Exec, root: string, args: string[]): Promise<string | undefined> {
   const r = await exec("git", args, { cwd: root, timeout: 30_000 }).catch(() => undefined);
@@ -26,7 +28,7 @@ export async function diffBase(exec: Exec, root: string, task: Pick<Task, "baseC
 }
 
 /** Untracked, not-ignored files outside the `.pi/` state; empty when git fails. */
-export const untrackedFiles = async (exec: Exec, root: string) => names(await git(exec, root, ["ls-files", "--others", "--exclude-standard", "-z"]));
+export const untrackedFiles = async (exec: Exec, root: string, paths: string[] = []) => names(await git(exec, root, ["ls-files", "--others", "--exclude-standard", "-z", ...(paths.length ? ["--", ...paths] : [])]));
 
-/** Tracked files that differ from `base`, outside the `.pi/` state; empty when git fails. */
-export const changedFiles = async (exec: Exec, root: string, base: string) => names(await git(exec, root, ["diff", "--name-only", "-z", base]));
+/** Tracked files that differ from `base`, outside the `.pi/` state; empty when git fails. `paths` limits it to those pathspecs. */
+export const changedFiles = async (exec: Exec, root: string, base: string, paths: string[] = []) => names(await git(exec, root, ["diff", "--name-only", "-z", base, ...(paths.length ? ["--", ...paths] : [])]));

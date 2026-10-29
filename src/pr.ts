@@ -6,8 +6,8 @@ import type { Exec } from "./git.ts";
 import { readManifest } from "./manifest.ts";
 import { isNixMissing, NixError } from "./nix.ts";
 import { assessRisk } from "./risk.ts";
-import { isLocalState, LOCAL_STATE, readTask, type Task } from "./task-state.ts";
-import { formatVerify, runVerify } from "./verify.ts";
+import { isLocalState, LOCAL_STATE, oneLine, readTask, type Task } from "./task-state.ts";
+import { failedLines, formatVerify, predatesBaseline, runVerify } from "./verify.ts";
 
 const TEMPLATES = [".github/pull_request_template.md", ".github/PULL_REQUEST_TEMPLATE.md", "docs/pull_request_template.md", "pull_request_template.md"];
 const EVIDENCE_SKILL = ".pi/skills/verify-app/SKILL.md";
@@ -38,7 +38,7 @@ const slug = (text: string) => text.normalize("NFD").replace(/[̀-ͯ]/g, "").toL
 
 /** `task/<ticket>` when the task has one, otherwise a short slug of its title. */
 export function branchName(task: Task | undefined): string {
-  const key = (task?.ticket ? slug(task.ticket) : slug(task?.title ?? "")).split("-").filter((w) => !VENDOR.test(w)).join("-");
+  const key = (task?.ticket ? slug(task.ticket) : slug(oneLine(task?.title ?? "", 50))).split("-").filter((w) => !VENDOR.test(w)).join("-");
   return `task/${key || "change"}`;
 }
 
@@ -55,7 +55,7 @@ export function newAdrs(changes: string[], dirty: string[]): string[] {
 }
 
 export function prTitle(task: Task | undefined, commits: string[]): string {
-  const title = task?.title ?? commits[0]?.replace(/^\w+\s/, "") ?? "Changes";
+  const title = oneLine(task?.title ?? commits[0]?.replace(/^\w+\s/, "") ?? "Changes");
   return scrub(`${task?.ticket ? `[${task.ticket}] ` : ""}${title}`).trim() || "Changes";
 }
 
@@ -72,13 +72,15 @@ export function buildBody({ task, facts, verify, risk }: BodyInput): string {
   const issue = /^#?(\d+)$/.exec(task?.ticket ?? "")?.[1] ?? /(?:^|\/)(\d+)-/.exec(facts.branch)?.[1];
   const adrs = newAdrs(facts.changes, facts.dirty);
   const summary = [
-    plan?.summary ?? task?.title ?? "",
+    ...(plan?.intent ? [plan.intent, ""] : []),
+    plan?.summary ?? oneLine(task?.title ?? ""),
     ...(plan?.steps.length ? ["", ...plan.steps.map((s) => `- ${s}`)] : []),
     ...(!plan && facts.commits.length ? ["", ...facts.commits.map((c) => `- ${c}`)] : []),
     ...(issue ? ["", `Closes #${issue}`] : []),
   ].join("\n").trim();
+  const predates = task?.predates?.length ? `\n\nVerify fails, but only with failures that predate this change (they already failed before it):\n${task.predates.map((l) => `- ${l}`).join("\n")}` : "";
   const verified =
-    !verify ? "Not run." : verify === "none" ? "The project has no verification steps." : `${verify.ok ? "Passed" : "FAILED"}:\n\n\`\`\`\n${verify.text}\n\`\`\``;
+    !verify ? "Not run." : verify === "none" ? "The project has no verification steps." : `${verify.ok ? "Passed" : "FAILED"}:\n\n\`\`\`\n${verify.text}\n\`\`\`${verify.ok ? "" : predates}`;
   const riskText = risk ? (risk.review ? `Risky: ${risk.reasons.join("; ")}.` : "Low risk: no reason found.") : "Not assessed.";
   const sections: [string, string][] = [
     ["Summary", summary || "(no task plan: see the commits)"],
@@ -157,7 +159,7 @@ export async function runPr(exec: Exec, root: string, ui: Pick<ExtensionContext[
   if (!facts) return { status: "not-ready", detail: "This folder is not a git repository." };
   if (!facts.base) return { status: "not-ready", detail: "No base branch found. Run /pr <base-branch>." };
   const baseName = facts.base.replace(/^origin\//, "");
-  const task = await readTask(root).catch(() => undefined);
+  let task = await readTask(root).catch(() => undefined);
   const manifest = await readManifest(root).catch(() => undefined);
 
   let branch = facts.branch;
@@ -187,6 +189,8 @@ export async function runPr(exec: Exec, root: string, ui: Pick<ExtensionContext[
   if (manifest?.verify.length) {
     const result = await runVerify(manifest.verify, exec, root);
     verify = { ok: result.ok, text: formatVerify(result) };
+    // Only this run decides: a failure that appeared after the gate's check is not "old".
+    if (task && !result.ok) task = { ...task, predates: predatesBaseline(result, task.baseline?.failing) ? failedLines(result) : undefined };
     if (!result.ok && !(await ui.confirm("Verify failed", `${verify.text}\n\nOpen the PR anyway?`))) return { status: "declined", detail: "Verify failed; nothing was pushed." };
   }
   const risk = manifest ? await assessRisk(exec, root, task, manifest) : undefined;

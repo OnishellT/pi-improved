@@ -4,9 +4,15 @@ import type { Task } from "./task-state.ts";
 export const VERIFY_EVENT = "pi-improved:verify";
 export interface VerifyPayload {
   root: string;
+  /** baseline: the first step before implementing; progress: the check every few writes; gate: the final verify. */
+  kind: "baseline" | "progress" | "gate";
   ok: boolean;
   /** Seconds verify took. */
   seconds: number;
+  /** gate: every failure line was already failing at baseline, so the gate let the agent finish. */
+  predates?: boolean;
+  /** gate: the failure came back and the prompt carried the premise lines. */
+  premise?: boolean;
 }
 
 export const REVIEW_EVENT = "pi-improved:review";

@@ -1,5 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import type { Baseline } from "./verify.ts";
 
 export type TaskStatus = "planning" | "implementing" | "done";
 
@@ -14,13 +15,15 @@ export interface Decision {
 }
 
 export interface Plan {
+  /** The ticket restated in the planner's own words, one short paragraph. Absent in plans saved before it existed. */
+  intent?: string;
   summary: string;
   steps: string[];
   /** Repo-relative files the task may create or change. */
   files: string[];
   decisions: Decision[];
   /** Names the implementation must expose, pinned before any code is written. */
-  interface: { file: string; exports: string[]; signatures?: string[]; source?: string }[];
+  interface: { file: string; exports: string[]; signatures?: string[]; source?: string; usage?: string }[];
   /** Where the tests attach: what each catches and what it leaves uncovered. */
   seams: { name: string; testFile: string; catches: string; misses?: string }[];
 }
@@ -28,7 +31,10 @@ export interface Plan {
 /** The active task, local to the working copy at `.pi/task.json` (not committed). */
 export interface Task {
   id: string;
+  /** One line: the request's first line, cut. A longer request (a pasted ticket) is kept whole in `body`. */
   title: string;
+  /** The full /task request when it was more than the title. */
+  body?: string;
   ticket?: string;
   status: TaskStatus;
   plan?: Plan;
@@ -40,9 +46,19 @@ export interface Task {
   planChecks?: number;
   /** HEAD when the task entered implementing: risk and review measure the diff against it. */
   baseCommit?: string;
+  /** The first verify command run when implementation started. Failures that match its `failing` signature predate the change. */
+  baseline?: Baseline;
+  /** Failure lines the last verify showed, all of which were already failing at baseline. /pr says so under verify. */
+  predates?: string[];
   startedAt: string;
   completedAt?: string;
 }
+
+/** The first non-empty line of `text` without markdown heading/quote marks, cut to `max` characters: for dialog titles, PR titles and commit subjects. */
+export const oneLine = (text: string, max = 72) => {
+  const first = text.split("\n").map((l) => l.replace(/^[\s#>]+/, "").trim()).find(Boolean) ?? "";
+  return first.length > max ? `${first.slice(0, max - 1).trimEnd()}…` : first;
+};
 
 export const TASK_PATH = ".pi/task.json";
 export const MEMORY_PATH = ".pi/memory/tasks.jsonl";
