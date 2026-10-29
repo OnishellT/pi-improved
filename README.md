@@ -88,6 +88,7 @@ Every key the code reads. Setup and `/models` write most of them; the rest you e
 | `limits.planChecks` | integer >= 0 | `1` | Paid plan checks per task. `0` turns them off. |
 | `limits.retroEvery` | integer >= 0 | `5` | A retro every this many finished tasks. `0` turns it off. |
 | `limits.verifyEvery` | integer >= 0 | `5` | While implementing, every this many writes the first `verify` command runs (60 s cap) and its result is appended to the tool result. It is off when that command took 30 s or more before the change. `0` turns it off. |
+| `limits.changeCap` | integer >= 1 | `500` | Changed lines (lockfiles and generated or vendored paths excluded) above which a change is high risk and gets a model review. |
 | `limits.fastPath.files`, `.interface`, `.decisions` | integer >= 0 | `8`, `6`, `2` | Largest plan (files, interface entries, decisions) that skips the approval dialog. |
 | `computer` | `{ browser?, desktop? }` | off | Set by `/computer` ([docs/COMPUTER.md](docs/COMPUTER.md)). Global file only: a repo cannot choose what the agent drives. |
 | `subagentPanes` | `tern` | tmux only | `tern` opens subagent panes in Tern too. Global file only. |
