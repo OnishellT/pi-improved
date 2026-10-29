@@ -17,7 +17,13 @@ import { homedir, tmpdir } from "node:os";
 import { parseEnv } from "node:util";
 import { dirname, join, resolve } from "node:path";
 import { contextDocs, linkedIssues, skipsMarkdownOnly } from "./review/context.ts";
-import { addedLines, commentableLines, splitDiffByFile } from "./review/diff.ts";
+import {
+  changedLines,
+  commentableLines,
+  gitDiffCommand,
+  splitDiffByFile,
+  wholeFileChanges,
+} from "./review/diff.ts";
 import { collectPages, type Page } from "./review/pages.ts";
 import { parsePiStream } from "./review/pi-stream.ts";
 import {
@@ -601,7 +607,7 @@ async function main() {
     }
     // Changed paths come from the diff: `gh pr view --json files` stops at 100 entries.
     // Built from the captured head, so a push during the run cannot change what is reviewed.
-    const fullDiff = await sh(["git", "diff", `origin/${data.base}...${data.sha}`], {
+    const fullDiff = await sh(gitDiffCommand(`origin/${data.base}...${data.sha}`), {
       cwd: worktree,
     });
     const changed = splitDiffByFile(fullDiff).map((file) => file.path);
@@ -617,7 +623,7 @@ async function main() {
         cwd: worktree,
       });
       if (known.code === 0) {
-        const deltaDiff = await sh(["git", "diff", `${lastReviewed}..${data.sha}`], {
+        const deltaDiff = await sh(gitDiffCommand(`${lastReviewed}..${data.sha}`), {
           cwd: worktree,
         });
         delta = deltaDiff;
@@ -651,9 +657,9 @@ async function main() {
       openThreads.has(verdict.threadId),
     );
     const notFixed = verdicts.filter((verdict) => verdict.verdict === "not_fixed").length;
-    // Added lines only: unchanged hunk context is not "changed since the last review".
-    const deltaLines = delta === undefined ? undefined : addedLines(delta);
-    const deltaPaths = new Set(splitDiffByFile(delta ?? "").map((file) => file.path));
+    // Changed lines only: unchanged hunk context is not "changed since the last review".
+    const deltaLines = delta === undefined ? undefined : changedLines(delta);
+    const deltaPaths = wholeFileChanges(delta ?? "");
     const review = finalizeReview(
       rawReview,
       dedupeFindings(scopeFindings(rawReview.findings, deltaLines, deltaPaths), threadInfos),

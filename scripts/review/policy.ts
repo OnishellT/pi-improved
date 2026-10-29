@@ -28,10 +28,10 @@ export function scopeFindings(
   deltaPaths: ReadonlySet<string> = new Set(),
 ): Finding[] {
   if (deltaLines === undefined) return [...findings];
-  // A file the delta deleted has no lines to match; any finding on it is in scope.
+  // A file the delta changed as a whole (deleted, emptied, binary) has no lines to match; any finding on it counts.
   return findings.filter((finding) => {
     const lines = deltaLines.get(finding.path);
-    return finding.severity === "critical" || (lines ? lines.has(finding.line) : deltaPaths.has(finding.path));
+    return finding.severity === "critical" || (lines && lines.size > 0 ? lines.has(finding.line) : deltaPaths.has(finding.path));
   });
 }
 
