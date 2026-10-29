@@ -5,7 +5,7 @@ import { collectPages, type Page } from "./pages.ts";
 // `origin` is a fork). `remotes` is `git remote -v` output.
 export function remoteFor(repo: string, remotes: string): string {
   const wanted = repo.toLowerCase();
-  for (const line of remotes.split("\n")) {
+  for (const line of remotes.split("\n").filter((entry) => entry.endsWith("(fetch)"))) {
     const [name, url = ""] = line.split(/\s+/);
     const path = /[:/]([^:/]+\/[^/]+?)(?:\.git)?\/?$/.exec(url)?.[1]?.toLowerCase();
     if (name && path === wanted) return name;
