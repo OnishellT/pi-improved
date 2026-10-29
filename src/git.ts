@@ -20,11 +20,21 @@ export async function gitHead(exec: Exec, root: string): Promise<string | undefi
   return HASH.test(out) ? out : undefined;
 }
 
-/** The ref diffs are measured against: the task's `baseCommit` when it is a hash that still resolves, else `HEAD`. */
-export async function diffBase(exec: Exec, root: string, task: Pick<Task, "baseCommit"> | undefined): Promise<string> {
-  const base = task?.baseCommit;
-  if (!base || !HASH.test(base)) return "HEAD";
-  return ((await git(exec, root, ["rev-parse", "--verify", "-q", `${base}^{commit}`])) ?? "").trim() ? base : "HEAD";
+/** Git's empty tree: a diff against it counts every file as changed. */
+export const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+/**
+ * The ref a task's diffs are measured against: its `baseCommit` when that is a hash that still resolves, else the last commit
+ * before the task started, else no base at all: the empty tree, so the whole tree counts as the task's change. Never HEAD for
+ * a task, since commits made during it would drop out of the diff. Without a task, HEAD.
+ */
+export async function diffBase(exec: Exec, root: string, task: Partial<Pick<Task, "baseCommit" | "startedAt">> | undefined): Promise<string> {
+  if (!task) return "HEAD";
+  const base = task.baseCommit;
+  if (base && HASH.test(base) && ((await git(exec, root, ["rev-parse", "--verify", "-q", `${base}^{commit}`])) ?? "").trim()) return base;
+  const started = Date.parse(task.startedAt ?? "");
+  const before = Number.isNaN(started) ? "" : ((await git(exec, root, ["rev-list", "-1", `--before=${new Date(started).toISOString()}`, "HEAD"])) ?? "").trim();
+  return HASH.test(before) ? before : EMPTY_TREE;
 }
 
 /** Untracked, not-ignored files outside the `.pi/` state; empty when git fails. */

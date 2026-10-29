@@ -43,6 +43,7 @@ export async function withEnv<T>(env: Record<string, string | undefined>, run: (
 /** Scripted UI: each dialog consumes the next queued answer. */
 export function fakeUI(answers: unknown[]) {
   const asked: string[] = [];
+  const messages: string[] = [];
   const next = (title: string) => {
     asked.push(title);
     if (!answers.length) throw new Error(`Unexpected dialog: ${title}`);
@@ -50,8 +51,9 @@ export function fakeUI(answers: unknown[]) {
   };
   return {
     asked,
+    messages,
     select: (title: string) => next(title),
-    confirm: (title: string) => next(title),
+    confirm: (title: string, message?: string) => (messages.push(message ?? ""), next(title)),
     input: (title: string) => next(title),
     notify: () => {},
     setStatus: () => {},

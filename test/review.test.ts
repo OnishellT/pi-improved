@@ -43,7 +43,7 @@ test("a run that would not stop stays listed as this session's", async () => {
   }
 });
 
-test("the diff is taken against the task's baseCommit, HEAD without one", async () => {
+test("the diff is taken against the task's baseCommit, the empty tree without any base", async () => {
   const hash = "c".repeat(40);
   const diffArgs = (calls: { cmd: string; args: string[] }[]) => calls.find((c) => c.cmd === "git" && c.args[0] === "diff")!.args[1];
   const withBase = fakeExec();
@@ -52,7 +52,7 @@ test("the diff is taken against the task's baseCommit, HEAD without one", async 
   assert.match(withBase.brief(), new RegExp(`## Diff \\(git diff ${hash}\\)`));
   const without = fakeExec();
   await reviewDiff(without.exec, "/repo", task as any, "p/m");
-  assert.equal(diffArgs(without.calls), "HEAD");
+  assert.equal(diffArgs(without.calls), "4b825dc642cb6eb9a060e54bf8d69288fbee4904");
 });
 
 test("changes verdict keeps the findings", async () => {

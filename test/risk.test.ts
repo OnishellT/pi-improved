@@ -1,16 +1,18 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { assessRisk, isTestFile } from "../src/risk.ts";
+import { assessRisk, isTestFile, verifyFiles } from "../src/risk.ts";
 import type { Manifest } from "../src/manifest.ts";
 import { tempProject } from "./helpers.ts";
 
 const base: Manifest = { version: 1, setup: "done", verify: [], connectors: [], review: { minLevel: "low" } };
 const plan = { summary: "", steps: [], files: [], decisions: [] as any[], interface: [], seams: [] };
-const task: any = { id: "t", title: "T", status: "implementing", allowedExtra: [], startedAt: "", plan };
+const task: any = { id: "t", title: "T", status: "implementing", allowedExtra: [], startedAt: "2026-10-01T00:00:00.000Z", plan };
+/** The commit before the task started, which `git rev-list --before` finds when the task has no baseCommit. */
+const START = "c".repeat(40);
 
 const exec = (numstat: [string, number][], untracked: string[] = []): any => async (_cmd: string, args: string[]) => ({
   code: 0, stderr: "", killed: false,
-  stdout: args.includes("--numstat") ? numstat.map(([f, n]) => `${n}\t0\t${f}\0`).join("") : args[0] === "ls-files" ? untracked.map((f) => `${f}\0`).join("") : "",
+  stdout: args.includes("--numstat") ? numstat.map(([f, n]) => `${n}\t0\t${f}\0`).join("") : args[0] === "ls-files" ? untracked.map((f) => `${f}\0`).join("") : args[0] === "rev-list" ? START : "",
 });
 const risk = async (e: any, t: any = task, m: Manifest = base) => assessRisk(e, await tempProject({}), t === null ? undefined : t, m);
 
@@ -100,19 +102,24 @@ test("minLevel decides when a review is requested; default is off; always beats 
   assert.deepEqual([both.review, both.level], [true, "high"]);
 });
 
-test("the diff is measured against the task's baseCommit when it resolves, else HEAD", async () => {
+test("the diff is measured against the task's baseCommit when it resolves, else the commit before the task started, else no base", async () => {
   const hash = "b".repeat(40);
+  const empty = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
   const seen: string[] = [];
   const e: any = async (_cmd: string, args: string[]) => {
-    if (args[0] === "diff") seen.push(args[1]);
-    return { code: 0, stderr: "", killed: false, stdout: args[0] === "rev-parse" ? `${hash}\n` : args[0] === "diff" ? "700\t0\tsrc/a.ts" : "" };
+    if (args.includes("--numstat")) seen.push(args[1]);
+    return { code: 0, stderr: "", killed: false, stdout: args[0] === "rev-parse" ? `${hash}\n` : args[0] === "rev-list" ? START : args[0] === "diff" ? "700\t0\tsrc/a.ts" : "" };
   };
   assert.equal((await risk(e, { ...task, baseCommit: hash })).level, "high");
   await risk(e, { ...task, baseCommit: "not a hash; rm" });
   await risk(e);
-  const gone: any = async (_cmd: string, args: string[]) => ({ code: 0, stderr: "", killed: false, stdout: args[0] === "diff" ? (seen.push(args[1]), "") : "" });
-  await risk(gone, { ...task, baseCommit: hash });
-  assert.deepEqual(seen, [hash, "HEAD", "HEAD", "HEAD"]);
+  const gone: any = async (_cmd: string, args: string[]) => ({ code: 0, stderr: "", killed: false, stdout: args.includes("--numstat") ? (seen.push(args[1]), "") : args.includes("--name-status") ? "A\0test/a.test.ts\0" : "" });
+  const none = await risk(gone, { ...task, baseCommit: hash });
+  assert.deepEqual(seen, [hash, START, START, empty]);
+  // Never HEAD: commits made during the task would drop out. Without a base every test file counts as touched.
+  assert.equal(none.level, "high");
+  assert.match(none.reasons.join(), /no base/);
+  assert.deepEqual(none.touched, ["test/a.test.ts"]);
 });
 
 test("a failed git diff is low risk with a reason, not none", async () => {
@@ -129,8 +136,10 @@ test("the numstat asks for no renames, so a moved lockfile still counts as a dep
   assert.ok(args.includes("--no-renames") && args.includes("-z"));
 });
 
-const removing = (rows: [string, number, number][]): any => async (_cmd: string, args: string[]) => ({
-  code: 0, stderr: "", killed: false, stdout: args.includes("--numstat") ? rows.map(([f, a, d]) => `${a}\t${d}\t${f}\0`).join("") : "",
+/** Rows of numstat (file, added, removed); `status` is what name-status says about them (M by default, A for a file that is new). */
+const changing = (rows: [string, number, number][], status: Record<string, string> = {}): any => async (_cmd: string, args: string[]) => ({
+  code: 0, stderr: "", killed: false,
+  stdout: args.includes("--numstat") ? rows.map(([f, a, d]) => `${a}\t${d}\t${f}\0`).join("") : args.includes("--name-status") ? rows.map(([f]) => `${status[f] ?? "M"}\0${f}\0`).join("") : args[0] === "rev-list" ? START : "",
 });
 
 test("isTestFile: test directories", () => {
@@ -143,28 +152,69 @@ test("isTestFile: test, tests or spec as a separated word in the file name, or a
   for (const f of ["src/latest.ts", "src/contest.ts", "src/Contest.java", "src/Latest.kt", "src/testing-utils.ts", "src/testify.ts", "docs/attest.md", "src/aspect.ts", "src/inspect.ts", "src/specimen.ts", "src/protest.go", "src/fee.ts", "README.md"]) assert.ok(!isTestFile(f), f);
 });
 
-test("removing or changing lines in an existing test file is a risk reason; adding tests is not", async () => {
-  const edited = await risk(removing([["test/fee.test.ts", 3, 2], ["src/fee.ts", 5, 1]]));
-  assert.equal(edited.level, "low");
-  assert.match(edited.reasons.join(), /existing tests changed \(test\/fee\.test\.ts\)/);
-  assert.deepEqual(await risk(removing([["test/fee.test.ts", 30, 0], ["src/fee.ts", 5, 5]])), { review: false, level: "none", reasons: [] });
-  assert.deepEqual(await risk(removing([["src/fee.ts", 5, 5]])), { review: false, level: "none", reasons: [] });
-  assert.equal((await risk(removing([["test/fee.test.ts", 3, 2]]), task, { ...base, review: { minLevel: "low" } })).review, true);
+test("changing or deleting an existing test file is high risk and listed; a new one or a source file is not", async () => {
+  const edited = await risk(changing([["test/fee.test.ts", 3, 2], ["src/fee.ts", 5, 1]]));
+  assert.equal(edited.level, "high");
+  assert.match(edited.reasons.join(), /tests or verify setup changed \(test\/fee\.test\.ts\)/);
+  assert.deepEqual(edited.touched, ["test/fee.test.ts"]);
+  assert.equal((await risk(changing([["test/fee.test.ts", 0, 40]], { "test/fee.test.ts": "D" }))).level, "high");
+  assert.deepEqual(await risk(changing([["test/fee.test.ts", 30, 0], ["src/fee.ts", 5, 5]], { "test/fee.test.ts": "A" })), { review: false, level: "none", reasons: [] });
+  assert.deepEqual(await risk(changing([["src/fee.ts", 5, 5]])), { review: false, level: "none", reasons: [] });
+  assert.equal((await risk(changing([["test/fee.test.ts", 3, 2]]), task, { ...base, review: { minLevel: "high" } })).review, true);
 });
 
-test("a new untracked test file is not an edited existing test; at most 3 paths are named", async () => {
+test("verifyFiles: paths and file names in the commands, package.json for a package-manager script", () => {
+  assert.deepEqual(verifyFiles(["bash scripts/check.sh --fast", "node --test t.test.ts", "cd ./app && bash ci/test.sh", "pytest -q tests/ -k 'a.b'"]), ["scripts/check.sh", "t.test.ts", "app/ci/test.sh", "a.b"]);
+  assert.deepEqual(verifyFiles(["pnpm run lint"]), ["package.json"]);
+});
+
+test("a file the verify commands name, or package.json under a package-manager script, is high risk when it changes", async () => {
+  const withVerify = (verify: string[]): Manifest => ({ ...base, verify });
+  const script = await risk(changing([["scripts/check.sh", 1, 1], ["src/a.ts", 1, 1]]), task, withVerify(["bash scripts/check.sh"]));
+  assert.equal(script.level, "high");
+  assert.deepEqual(script.touched, ["scripts/check.sh"]);
+  assert.equal((await risk(changing([["scripts/other.sh", 1, 1]]), task, withVerify(["bash scripts/check.sh"]))).level, "none");
+  assert.deepEqual((await risk(changing([["package.json", 1, 1]]), task, withVerify(["npm test"]))).touched, ["package.json"]);
+  assert.equal((await risk(changing([["scripts/check.sh", 1, 1]], { "scripts/check.sh": "A" }), task, withVerify(["bash scripts/check.sh"]))).level, "none");
+});
+
+test("a verify file under .pi/ counts like any other; only pi-improved's own state files are left out", async () => {
+  const verify = ["bash .pi/skills/verify-app/scripts/verify.sh"];
+  const app = await risk(changing([[".pi/skills/verify-app/scripts/verify.sh", 1, 1]]), task, { ...base, verify });
+  assert.equal(app.level, "high");
+  assert.deepEqual(app.touched, [".pi/skills/verify-app/scripts/verify.sh"]);
+  for (const own of [".pi/workflow.json", ".pi/task.json", ".pi/memory/tasks.jsonl", ".pi/metrics/a.jsonl"]) {
+    assert.equal((await risk(changing([[own, 1, 1]]), task, { ...base, verify: [`bash ${own}`] })).touched, undefined, own);
+  }
+});
+
+test("a new untracked test file is not an edited existing test; at most 3 paths are named in the reason", async () => {
   assert.deepEqual(await risk(exec([], ["test/new.test.ts"])), { review: false, level: "none", reasons: [] });
-  const many = await risk(removing(["a", "b", "c", "d"].map((n) => [`test/${n}.test.ts`, 1, 1] as [string, number, number])));
+  const many = await risk(changing(["a", "b", "c", "d"].map((n) => [`test/${n}.test.ts`, 1, 1] as [string, number, number])));
   assert.match(many.reasons.join(), /\(test\/a\.test\.ts, test\/b\.test\.ts, test\/c\.test\.ts\)/);
+  assert.equal(many.touched?.length, 4);
 });
 
 test("an existing test the approved plan lists in files, or names in a seam, is meant to change; others still raise", async () => {
   const rows: [string, number, number][] = [["test/fee.test.ts", 3, 2], ["tests/unit/a_test.go", 1, 1], ["spec/b_spec.rb", 1, 1], ["e2e/c.ts", 1, 1]];
   const planned = { ...task, plan: { ...plan, files: ["test/fee.test.ts", "e2e/"], seams: [{ name: "n", testFile: "tests/unit/a_test.go", catches: "x" }] } };
-  const r = await risk(removing(rows), planned);
-  assert.match(r.reasons.join(), /existing tests changed \(spec\/b_spec\.rb\)/);
-  assert.deepEqual(await risk(removing(rows.slice(0, 1)), planned), { review: false, level: "none", reasons: [] });
-  assert.deepEqual(await risk(removing(rows.slice(1, 2)), planned), { review: false, level: "none", reasons: [] });
-  assert.deepEqual(await risk(removing(rows.slice(3)), planned), { review: false, level: "none", reasons: [] });
-  assert.match((await risk(removing(rows.slice(0, 1)))).reasons.join(), /existing tests changed/);
+  const r = await risk(changing(rows), planned);
+  assert.match(r.reasons.join(), /tests or verify setup changed \(spec\/b_spec\.rb\)/);
+  assert.deepEqual(await risk(changing(rows.slice(0, 1)), planned), { review: false, level: "none", reasons: [] });
+  assert.deepEqual(await risk(changing(rows.slice(1, 2)), planned), { review: false, level: "none", reasons: [] });
+  assert.deepEqual(await risk(changing(rows.slice(3)), planned), { review: false, level: "none", reasons: [] });
+  assert.match((await risk(changing(rows.slice(0, 1)))).reasons.join(), /tests or verify setup changed/);
+});
+
+test("verifyFiles resolves paths after a cd against that directory", async () => {
+  assert.deepEqual(verifyFiles(["cd app && ./verify.sh"]), ["app/verify.sh"]);
+  assert.deepEqual(verifyFiles(["cd app && npm test"]), ["app/package.json"]);
+  assert.deepEqual(verifyFiles(["make lint && CI=1 pnpm test"]), ["package.json"]);
+  assert.deepEqual((await risk(changing([["app/verify.sh", 1, 1]]), task, { ...base, verify: ["cd app && ./verify.sh"] })).touched, ["app/verify.sh"]);
+});
+
+test("review.always and review.never still list the tests or verify files that changed", async () => {
+  const edited = changing([["test/fee.test.ts", 3, 2]]);
+  assert.deepEqual((await risk(edited, task, { ...base, review: { always: true } })).touched, ["test/fee.test.ts"]);
+  assert.deepEqual((await risk(edited, task, { ...base, review: { never: true } })).touched, ["test/fee.test.ts"]);
 });

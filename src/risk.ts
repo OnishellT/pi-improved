@@ -1,9 +1,9 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { limitsOf } from "./config.ts";
-import { diffBase, git, untrackedFiles, type Exec } from "./git.ts";
-import type { Manifest } from "./manifest.ts";
-import { inFiles, type Task } from "./task-state.ts";
+import { diffBase, EMPTY_TREE, git, untrackedFiles, type Exec } from "./git.ts";
+import { MANIFEST_PATH, type Manifest } from "./manifest.ts";
+import { inFiles, isLocalState, MEMORY_PATH, type Task } from "./task-state.ts";
 import { isManifest, isMigration } from "./triggers.ts";
 
 // Defaults of the size thresholds; `review.maxLines/maxFiles/highLines/highFiles` override them.
@@ -23,6 +23,20 @@ export const isTestFile = (file: string) => {
   return TEST_DIR.test(file) || TEST_WORD.test(name) || TEST_CAMEL.test(name);
 };
 
+const PACKAGE_MANAGER = /^(npm|pnpm|yarn|bun)$/;
+
+/** Files the verify commands name (a script path or any word with a file name shape), and package.json when a command runs a package-manager script: changing them can turn verify green without fixing anything. A leading `cd <dir> &&` puts them under `dir`. Nothing else is parsed. */
+export function verifyFiles(commands: string[]): string[] {
+  const named = commands.flatMap((c) => {
+    const [, dir = "", rest = c] = c.match(/^\s*cd\s+([^\s;&|]+)\s*&&(.*)$/s) ?? [];
+    const words = rest.split(/[\s|;&<>()="']+/).filter(Boolean);
+    const files = words.filter((w) => /[\w-]\.\w|\//.test(w) && !w.startsWith("-") && !w.endsWith("/"));
+    if (words.some((w) => PACKAGE_MANAGER.test(w))) files.push("package.json");
+    return files.map((w) => (dir && !w.startsWith("/") ? path.posix.join(dir, w) : w.replace(/^\.\//, "")));
+  });
+  return [...new Set(named)].filter((w) => w !== "." && !w.startsWith(".."));
+}
+
 export type RiskLevel = "none" | "low" | "high";
 type ReviewPolicy = NonNullable<Manifest["review"]>;
 
@@ -39,6 +53,17 @@ export function planRiskReasons(plan: { files: string[]; interface: unknown[]; d
   if (plan.decisions.length > small.decisions) reasons.push(`${plan.decisions.length} decisions`);
   reasons.push(...highRiskReasons(plan.files, manifest.review));
   return reasons;
+}
+
+/** The files pi-improved itself writes under `.pi/`. Any other `.pi/` file, `.pi/skills/**` included, is the project's and counts like any other. */
+const isOwnState = (file: string) => isLocalState(file) || file === MANIFEST_PATH || file === MEMORY_PATH || file === ".pi/self-compact.json";
+
+/** The files a `git diff --name-status -z` lists as modified or deleted, without pi-improved's own state. */
+function nameStatus(out: string | undefined, added = false) {
+  const parts = (out ?? "").split("\0");
+  const files: string[] = [];
+  for (let i = 0; i + 1 < parts.length; i += 2) if ((parts[i] === "M" || parts[i] === "D" || added) && !isOwnState(parts[i + 1])) files.push(parts[i + 1]);
+  return files;
 }
 
 const threshold = (value: number | undefined, fallback: number) => (typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback);
@@ -64,6 +89,8 @@ export interface RiskAssessment {
   review: boolean;
   level: RiskLevel;
   reasons: string[];
+  /** Files that existed before the task, look like tests or are named by the verify commands, were changed or deleted and are not in the plan. The person should look at them. */
+  touched?: string[];
 }
 
 /**
@@ -73,19 +100,25 @@ export interface RiskAssessment {
  */
 export async function assessRisk(exec: Exec, root: string, task: Task | undefined, manifest: Manifest): Promise<RiskAssessment> {
   const rule = manifest.review;
+  const ref = await diffBase(exec, root, task);
+  // Only a file that existed before the task (changed or deleted, `M`/`D`) can have been weakened to turn verify green. Files the approved plan names are meant to change.
+  const planned = (f: string) => !!task?.plan && (inFiles(task.plan.files, f) || task.plan.seams.some((x) => x.testFile === f));
+  const watched = new Set(verifyFiles(manifest.verify));
+  // Without a base, nothing tells which files existed before the task: every test and verify file counts.
+  const noBase = ref === EMPTY_TREE;
+  const touched = nameStatus(await git(exec, root, ["diff", ref, "--name-status", "--no-renames", "-z"]), noBase).filter((f) => (isTestFile(f) || watched.has(f)) && !planned(f));
+  const listed = touched.length ? { touched } : {};
   // `always` wins over `never`.
-  if (rule?.always) return { review: true, level: "high", reasons: ["review.always"] };
-  if (rule?.never) return { review: false, level: "none", reasons: ["review.never"] };
+  if (rule?.always) return { review: true, level: "high", reasons: ["review.always"], ...listed };
+  if (rule?.never) return { review: false, level: "none", reasons: ["review.never"], ...listed };
 
   const lines = new Map<string, number>();
-  const removed = new Map<string, number>();
   // `-z` keeps odd names intact; `--no-renames` lists a rename as delete + add, so a moved lockfile or migration still shows.
-  const numstat = await git(exec, root, ["diff", await diffBase(exec, root, task), "--numstat", "--no-renames", "-z"]);
+  const numstat = await git(exec, root, ["diff", ref, "--numstat", "--no-renames", "-z"]);
   for (const row of (numstat ?? "").split("\0")) {
     const m = /^(\d+|-)\t(\d+|-)\t(.+)$/s.exec(row);
     if (!m) continue;
     lines.set(m[3], (m[1] === "-" ? 0 : +m[1]) + (m[2] === "-" ? 0 : +m[2]));
-    if (m[2] !== "-" && +m[2] > 0) removed.set(m[3], +m[2]);
   }
   for (const file of await untrackedFiles(exec, root)) {
     const text = await fs.readFile(path.join(root, file), "utf8").catch(() => "");
@@ -102,19 +135,17 @@ export async function assessRisk(exec: Exec, root: string, task: Task | undefine
   };
   // Doubt goes up: an unreadable diff is not "no changes".
   if (numstat === undefined) raise("low", "git diff failed");
+  if (noBase && numstat !== undefined) raise("high", "no base: the task has no recorded start commit, so the whole tree counts as changed");
   const [maxLines, maxFiles] = [threshold(rule?.maxLines, MAX_LINES), threshold(rule?.maxFiles, MAX_FILES)];
   // `high` never sits below `low`.
   const [highLines, highFiles] = [Math.max(maxLines, threshold(rule?.highLines, HIGH_LINES)), Math.max(maxFiles, threshold(rule?.highFiles, HIGH_FILES))];
   if (total > maxLines) raise(total > highLines ? "high" : "low", `${total} lines changed`);
   if (files.length > maxFiles) raise(files.length > highFiles ? "high" : "low", `${files.length} files`);
   for (const reason of highRiskReasons(files, rule)) raise("high", reason);
-  // Untracked and new files have no removed lines: only a test that existed before can have been weakened. Tests the approved plan names are meant to change.
-  const planned = (f: string) => !!task?.plan && (inFiles(task.plan.files, f) || task.plan.seams.some((x) => x.testFile === f));
-  const edited = [...removed.keys()].filter((f) => isTestFile(f) && !planned(f));
-  if (edited.length) raise("low", `existing tests changed (${edited.slice(0, 3).join(", ")})`);
+  if (touched.length) raise("high", `tests or verify setup changed (${touched.slice(0, 3).join(", ")})`);
   if (!task?.plan) raise("low", "no plan");
   else if (task.plan.decisions.some((d) => d.status === "decided")) raise("low", "new user decisions");
   const final = level as RiskLevel; // `raise` assigns it in a closure, which narrowing does not see
   const review = rule?.minLevel === "low" ? final !== "none" : rule?.minLevel === "high" ? final === "high" : false;
-  return { review, level: final, reasons };
+  return { review, level: final, reasons, ...listed };
 }
