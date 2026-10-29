@@ -7,6 +7,8 @@ import { ownRuns } from "./subagent-view.ts";
 import { oneLine, type Task } from "./task-state.ts";
 import { agentDir, ensureTrusted } from "./subagent-ext.ts";
 import { diffBase, git, untrackedFiles, type Exec } from "./git.ts";
+import { collectDiffs, reviewWarnings } from "./quality.ts";
+import { isTestFile } from "./risk.ts";
 
 export type ReviewStatus = "approved" | "changes" | "skipped";
 export interface ReviewResult {
@@ -46,7 +48,7 @@ async function collectDiff(exec: Exec, root: string, task?: Pick<Task, "baseComm
   return { diff: truncated ? diff.slice(0, MAX_DIFF) : diff, truncated, untracked, contents, base };
 }
 
-export function buildBrief(task: Task, d: { diff: string; truncated: boolean; untracked: string[]; contents?: Record<string, string>; base?: string }, skills = "") {
+export function buildBrief(task: Task, d: { diff: string; truncated: boolean; untracked: string[]; contents?: Record<string, string>; base?: string; warnings?: string[]; verify?: string[] }, skills = "") {
   const plan = task.plan;
   const list = (items: string[]) => (items.length ? items.map((i) => `- ${i}`).join("\n") : "- (none)");
   return [
@@ -72,6 +74,8 @@ export function buildBrief(task: Task, d: { diff: string; truncated: boolean; un
     ...(plan?.seams?.length ? plan.seams.map((x) => `- ${x.name} → ${x.testFile}: catches ${x.catches}${x.misses ? `; misses ${x.misses}` : ""}`) : ["- (none)"]),
     "## New files",
     ...(d.untracked.length ? d.untracked.map((f) => (d.contents?.[f] === undefined ? `- ${f} (read it directly)` : `### ${f}\n\`\`\`\n${d.contents[f]}\n\`\`\``)) : ["- (none)"]),
+    ...(d.verify?.length ? ["## Verify", "The gate runs these commands on the real project in parallel with this review, and the task closes only if they pass. You cannot run them: do not claim you did.", ...d.verify.map((c) => `- \`${c}\``)] : []),
+    ...(d.warnings?.length ? ["## Automated warnings", "Line scans of the added code. They are fuzzy: judge each one against the code, and block only on a real problem.", ...d.warnings] : []),
     `## Diff (git diff ${d.base ?? "HEAD"})${d.truncated ? `\nTRUNCATED to the first ${MAX_DIFF} characters; inspect the rest with your tools.` : ""}`,
     "```diff",
     d.diff || "(empty)",
@@ -175,7 +179,7 @@ export async function runSubagent(exec: Exec, root: string, opts: { name: string
 }
 
 /** Read-only review of the working diff by a stronger model through the pi-subagent CLI. Never throws. */
-export async function reviewDiff(exec: Exec, root: string, task: Task, model: string, signal?: AbortSignal, skills?: string): Promise<ReviewResult> {
+export async function reviewDiff(exec: Exec, root: string, task: Task, model: string, signal?: AbortSignal, skills?: string, verify: string[] = []): Promise<ReviewResult> {
   let diff: Awaited<ReturnType<typeof collectDiff>>;
   try {
     diff = await collectDiff(exec, root, task);
@@ -187,7 +191,7 @@ export async function reviewDiff(exec: Exec, root: string, task: Task, model: st
     name: "review",
     model,
     signal,
-    brief: buildBrief(task, diff, skills),
+    brief: buildBrief(task, { ...diff, verify, warnings: reviewWarnings(await collectDiffs(exec, root, diff.base), isTestFile) }, skills),
     prompt: "Review the diff in the attached brief. End with VERDICT: APPROVED or VERDICT: CHANGES and a numbered findings list.",
   });
   const withCost = (r: ReviewResult): ReviewResult => (run.cost === undefined ? r : { ...r, cost: run.cost });

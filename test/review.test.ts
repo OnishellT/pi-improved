@@ -181,3 +181,10 @@ test("the review brief shows each interface entry's usage line", () => {
   const brief = buildBrief({ ...task, plan } as any, { diff: "", truncated: false, untracked: [] });
   assert.match(brief, /- src\/fee\.ts → fee \(source: ticket\) \(usage: fee\(100\)\)\n- src\/m\.ts → m\n/);
 });
+
+test("the brief lists the verify commands and the automated warnings, and leaves both out when empty", () => {
+  const d = { diff: "d", truncated: false, untracked: [] };
+  const brief = buildBrief(task, { ...d, verify: ["pytest -q", "ruff check"], warnings: ["Commented-out code in added lines (remove it instead):", "- a.py: # x = 1"] });
+  assert.match(brief, /## Verify\n.*do not claim you did\.\n- `pytest -q`\n- `ruff check`\n## Automated warnings\n.*\nCommented-out code[\s\S]*- a\.py: # x = 1\n## Diff/);
+  assert.doesNotMatch(buildBrief(task, d), /## Verify|## Automated warnings/);
+});
