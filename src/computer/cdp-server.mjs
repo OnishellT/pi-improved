@@ -160,7 +160,8 @@ export class OwnedBrowser {
     socket.addEventListener('close', () => {
       if (this.socket !== socket) return; // a failed earlier attempt closing late must not reject the new connection's requests
       // The isolated browser needs no approval: after it dies (crash, OOM, killed), the next open starts it again.
-      if (this.active?.launch) this.socket = this.target = this.session = undefined;
+      // The window is kept: if only the connection dropped, open attaches to it again instead of making a second one.
+      if (this.active?.launch) this.socket = this.session = undefined;
       for (const pending of this.pending.values()) {
         clearTimeout(pending.timer);
         pending.reject(Error(`${this.label} connection closed; action outcome may be unknown. Do not retry blindly.`));
@@ -202,7 +203,14 @@ export class OwnedBrowser {
       this.target = created.targetId;
     }
     if (!this.session) {
-      const attached = await this.request('Target.attachToTarget', {targetId:this.target, flatten:true});
+      let attached;
+      try { attached = await this.request('Target.attachToTarget', {targetId:this.target, flatten:true}); }
+      catch (error) {
+        if (!this.active?.launch) throw error;
+        // The isolated browser was started again: our window went with the old one.
+        this.target = (await this.request('Target.createTarget', {url:'about:blank', newWindow:true, background:true})).targetId;
+        attached = await this.request('Target.attachToTarget', {targetId:this.target, flatten:true});
+      }
       this.session = attached.sessionId;
     }
     if (url !== 'about:blank') {
@@ -296,5 +304,8 @@ export function buildServer(browser) {
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  await buildServer(new OwnedBrowser(parseTargets(process.argv[2] ?? ''))).connect(new StdioServerTransport());
+  const transport = new StdioServerTransport();
+  await buildServer(new OwnedBrowser(parseTargets(process.argv[2] ?? ''))).connect(transport);
+  // The SDK ignores the end of stdin, which is how a client stops a stdio server: close, so onclose cleans up.
+  process.stdin.once('end', () => { transport.close(); });
 }

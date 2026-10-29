@@ -8,7 +8,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { WebSocketServer } from "ws";
-import { cdpServer } from "../src/computer/browsers.ts";
+import { cdpServer, isolatedServer } from "../src/computer/browsers.ts";
 import { OwnedBrowser, allowedUrl, buildServer, endpoint, parseTargets, servesProfile } from "../src/computer/cdp-server.mjs";
 import { tempDir, withEnv } from "./helpers.ts";
 
@@ -45,13 +45,15 @@ async function until(check: () => boolean | Promise<boolean>, what: string) {
 async function fakeChrome(calls: any[], hold?: Promise<void>) {
   const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
   await once(server, "listening");
+  let created = false; // a window lives as long as this browser, across connections
   server.on("connection", (socket) =>
     socket.on("message", async (data) => {
       const call = JSON.parse(String(data));
       calls.push(call);
       if (call.method === "Target.createTarget") await hold; // a slow window: the server may exit meanwhile
       let result: any = {};
-      if (call.method === "Target.createTarget") result = { targetId: "owned" };
+      if (call.method === "Target.createTarget") result = ((created = true), { targetId: "owned" });
+      else if (call.method === "Target.attachToTarget" && !created) return socket.send(JSON.stringify({ id: call.id, error: { message: "No target with given id found" } }));
       else if (call.method === "Target.attachToTarget") result = { sessionId: "owned-session" };
       else if (call.method === "Target.closeTarget") result = { success: true };
       else if (call.method === "Runtime.evaluate") {
@@ -187,7 +189,7 @@ test("native WebSocket and MCP route every page command to the created target, n
     assert.ok(!calls.some((c) => /getTargets|Discover|AutoAttach|Browser.close|Cookie/.test(c.method)));
     assert.equal(value(await main.callTool({ name: "open", arguments: {} })).ownedTarget, "owned");
     await main.close();
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    await until(() => server.clients.size === 0, "the connection to close");
     assert.equal(calls.filter((c) => c.method === "Target.closeTarget").length, 1, "the relay window stays open when the server exits");
   } finally {
     await main?.close();
@@ -355,6 +357,49 @@ test("the isolated browser starts again after it dies, and its window closes whe
     await until(() => calls.some((c) => c.method === "Target.closeTarget" && c.params.targetId === "owned"), "the window to close on exit");
   } finally {
     await main?.close();
+    await stop(chrome);
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("after only the connection to the isolated browser drops, open reuses its window", async () => {
+  const dir = await scratch();
+  const profile = path.join(dir, "profile");
+  const file = path.join(profile, "DevToolsActivePort");
+  const calls: any[] = [];
+  const chrome = await fakeChrome(calls);
+  await fs.mkdir(profile);
+  await fs.writeFile(file, `${(chrome.address() as any).port}\n/devtools/browser\n`);
+  let main: any;
+  try {
+    main = await client([{ id: "isolated", name: "Headless Chromium", portFile: file, launch: { profile } }]);
+    await main.callTool({ name: "open", arguments: {} });
+    for (const socket of chrome.clients) socket.terminate();
+    await until(async () => value(await main.callTool({ name: "status", arguments: {} })).connected === false, "the connection to drop");
+    assert.equal(value(await main.callTool({ name: "open", arguments: {} })).ownedTarget, "owned");
+    assert.equal(calls.filter((c) => c.method === "Target.createTarget").length, 1, "no second window");
+  } finally {
+    await main?.close();
+    await stop(chrome);
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("the stdio server closes the isolated window when its client stops it", async () => {
+  const dir = await scratch();
+  const profile = path.join(dir, "profile");
+  const calls: any[] = [];
+  const chrome = await fakeChrome(calls);
+  await fs.mkdir(profile);
+  await fs.writeFile(path.join(profile, "DevToolsActivePort"), `${(chrome.address() as any).port}\n/devtools/browser\n`);
+  const config: any = isolatedServer(profile);
+  const main = new Client({ name: "stdio-check", version: "1.0.0" });
+  try {
+    await main.connect(new StdioClientTransport({ command: config.command, args: config.args, stderr: "pipe" }));
+    await main.callTool({ name: "open", arguments: {} });
+    await main.close(); // ends stdin, the way pi stops it
+    await until(() => calls.some((c) => c.method === "Target.closeTarget"), "the window to close");
+  } finally {
     await stop(chrome);
     await fs.rm(dir, { recursive: true, force: true });
   }
