@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { nodeOk, registerDoctor, runDoctor, type NixProbe } from "../src/doctor.ts";
+import { extensionDetail, nodeOk, registerDoctor, runDoctor, type NixProbe } from "../src/doctor.ts";
 import { fakePi, tempProject } from "./helpers.ts";
 
 const models = [{ provider: "anthropic", id: "opus" }];
@@ -109,4 +109,9 @@ test("/doctor says gh is the one login when the configured helper is not availab
   const fine = await setup(() => ({ code: 0 }), true, undefined, {}, nix(async () => ({ configured: ["store"], missing: [], ok: true })));
   await fine.commands.get("doctor").handler("", fine.ctx);
   assert.match(fine.notes[0].msg, /✓ git credentials: helper: store/);
+});
+
+test("a missing subagent extension says how to get it back", () => {
+  assert.match(extensionDetail(undefined), /node scripts\/postinstall\.mjs/);
+  assert.equal(extensionDetail("bundled"), "bundled");
 });
