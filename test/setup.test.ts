@@ -362,3 +362,12 @@ test("setup_finish refuses outside setup", async () => {
   const { ctx } = ctxFor(root, []);
   await assert.rejects(tools.get("setup_finish").execute("1", { verify: ["true"], summary: "s" }, undefined, undefined, ctx), /No setup is running/);
 });
+
+test("a .pi/workflow.json that cannot be read says so; only bad JSON is called invalid", async () => {
+  const root = await tempProject({});
+  await fs.mkdir(path.join(root, ".pi/workflow.json"), { recursive: true });
+  await assert.rejects(readManifest(root), /\.pi\/workflow\.json cannot be read: EISDIR/);
+  await fs.rm(path.join(root, ".pi/workflow.json"), { recursive: true });
+  await fs.writeFile(path.join(root, ".pi/workflow.json"), "{");
+  await assert.rejects(readManifest(root), /\.pi\/workflow\.json is not valid JSON/);
+});
