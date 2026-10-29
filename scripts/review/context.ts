@@ -37,3 +37,31 @@ export function linkedIssues(body: string): number[] {
   );
   return [...new Set(numbers)];
 }
+
+// Bodies of the linked issues. One that cannot be read (a typo, a deleted or transferred
+// issue, or prose quoting the keyword) is skipped instead of aborting the review.
+export async function linkedIssueBodies(
+  body: string,
+  fetchBody: (number: number) => Promise<string>,
+): Promise<{ number: number; body: string }[]> {
+  const issues = [];
+  for (const number of linkedIssues(body)) {
+    try {
+      issues.push({ number, body: await fetchBody(number) });
+    } catch (cause) {
+      console.error(`skipping linked issue #${number}: ${cause instanceof Error ? cause.message : String(cause)}`);
+    }
+  }
+  return issues;
+}
+
+// About 250k tokens. A larger context fails both reviewer runs after paying for them.
+export const maxContextChars = 1_000_000;
+
+export function checkContextSize(context: string) {
+  if (context.length > maxContextChars) {
+    throw new Error(
+      `the review context has ${context.length} characters (limit ${maxContextChars}): split the pull request`,
+    );
+  }
+}

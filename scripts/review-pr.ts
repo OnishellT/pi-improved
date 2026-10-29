@@ -2,21 +2,12 @@
 // Builds curated context, runs the reviewer in a disposable worktree at the PR head, and
 // posts one GitHub review with inline comments and a confidence score (README.md, "Reviewing pull requests").
 import { spawn, spawnSync } from "node:child_process";
-import {
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  symlinkSync,
-  unlinkSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { parseEnv } from "node:util";
 import { dirname, join, resolve } from "node:path";
-import { contextDocs, linkedIssues, skipsMarkdownOnly } from "./review/context.ts";
+import { parseArgs, reviewConfig, usageLine } from "./review/config.ts";
+import { checkContextSize, contextDocs, linkedIssueBodies, skipsMarkdownOnly } from "./review/context.ts";
 import {
   changedLines,
   commentableLines,
@@ -25,7 +16,8 @@ import {
   wholeFileChanges,
 } from "./review/diff.ts";
 import { planDelta } from "./review/delta.ts";
-import { collectPages, type Page } from "./review/pages.ts";
+import { fetchThreads, graphqlArgs, remoteFor } from "./review/github.ts";
+import { linkCredentials } from "./review/profile.ts";
 import { parsePiStream } from "./review/pi-stream.ts";
 import {
   buildReviewPayload,
@@ -48,14 +40,11 @@ import {
   type Review,
 } from "./review/result.ts";
 
-// Tooling configuration: the reviewer CLI and its model.
-const provider = "openai";
-const model = process.env["REVIEW_MODEL"] ?? "gpt-6.1-terra";
-const thinking = process.env["REVIEW_THINKING"] ?? "xhigh";
-const timeoutMs = Number(process.env["REVIEW_TIMEOUT_MS"] ?? 10 * 60_000);
-// Dedicated read-only pi profile, rebuilt from the repo's settings on every run.
-const piDir = process.env["REVIEW_PI_DIR"] ?? join(homedir(), ".pi", "reviewer-pi-improved");
-const piMainDir = process.env["PI_MAIN_DIR"] ?? join(homedir(), ".pi", "agent");
+// Tooling configuration: the reviewer CLI, its model and its pi profile.
+const { provider, model, thinking, timeoutMs, idleMs, piDir, piMainDir } = reviewConfig(
+  process.env,
+  homedir(),
+);
 // Prompt and profile settings come from the PR's base branch when it has them (see main), so a
 // PR cannot rewrite the reviewer that judges it; the local copies are the bootstrap fallback.
 let piSettingsFile = resolve(import.meta.dirname, "review", "pi-settings.json");
@@ -106,31 +95,14 @@ async function sh(cmd: string[], opts: { cwd?: string; stdin?: string } = {}) {
   return result.out;
 }
 
-const usageText = `usage: npm run review -- <pr> [--dry-run] [--force]
+const usageText = `${usageLine}
 
 Reviews a pull request with the local reviewer and posts one review (inline comments,
 summary, confidence 1-5). --dry-run prints the review instead of posting it. A head that already
 has a local review is skipped, and from the fourth round on the run stops unless the last review had
 confidence 4 or more; --force overrides both, and --dry-run ignores both.
-Env: REVIEW_MODEL, REVIEW_THINKING, REVIEW_TIMEOUT_MS, REVIEW_IDLE_MS, REVIEW_PI_DIR, PI_MAIN_DIR. See README.md.`;
-
-function parseArgs(argv: string[]) {
-  if (argv.includes("--help") || argv.includes("-h")) {
-    console.log(usageText);
-    process.exit(0);
-  }
-  const dryRun = argv.includes("--dry-run");
-  const force = argv.includes("--force");
-  const positional = argv.filter((arg) => !arg.startsWith("--"));
-  const pr = Number(positional[0]);
-  const unknown = argv.filter(
-    (arg) => arg.startsWith("--") && arg !== "--dry-run" && arg !== "--force",
-  );
-  if (positional.length !== 1 || !Number.isInteger(pr) || pr < 1 || unknown.length > 0) {
-    throw new Error("usage: npm run review -- <pr> [--dry-run] [--force]");
-  }
-  return { pr, dryRun, force };
-}
+Env: REVIEW_PROVIDER, REVIEW_MODEL, REVIEW_THINKING, REVIEW_TIMEOUT_MS, REVIEW_IDLE_MS, REVIEW_PI_DIR,
+PI_MAIN_DIR (default PI_CODING_AGENT_DIR, then ~/.pi/agent). See README.md.`;
 
 interface Thread {
   id: string;
@@ -152,64 +124,6 @@ interface PrData {
   earlierReviews: string[];
   earlierMarkers: Marker[];
   attempt: { incomplete: boolean; pendingThreadIds: Set<string> };
-}
-
-const threadsQuery = `
-query($owner:String!,$name:String!,$pr:Int!,$after:String){repository(owner:$owner,name:$name){
-pullRequest(number:$pr){reviewThreads(first:100,after:$after){pageInfo{hasNextPage endCursor}nodes{id isResolved path line
-comments(first:50){pageInfo{hasNextPage endCursor}nodes{databaseId createdAt author{login} body}}}}}}}`;
-
-const threadCommentsQuery = `
-query($id:ID!,$after:String){node(id:$id){... on PullRequestReviewThread{
-comments(first:50,after:$after){pageInfo{hasNextPage endCursor}nodes{databaseId createdAt author{login} body}}}}}`;
-
-interface ThreadComment {
-  databaseId: number;
-  createdAt: string;
-  author: { login: string } | null;
-  body: string;
-}
-
-interface ThreadNode {
-  id: string;
-  isResolved: boolean;
-  path: string;
-  line: number | null;
-  comments: Page<ThreadComment>;
-}
-
-async function graphqlPage<T>(query: string, vars: Record<string, string | number>, cursor: string | null) {
-  const args = Object.entries(vars).flatMap(([key, value]) => ["-F", `${key}=${value}`]);
-  if (cursor !== null) args.push("-F", `after=${cursor}`);
-  return JSON.parse(await sh(["gh", "api", "graphql", ...args, "-f", `query=${query}`])) as T;
-}
-
-async function fetchThreads(owner: string, name: string, pr: number): Promise<ThreadNode[]> {
-  const nodes = await collectPages(
-    async (cursor) =>
-      (
-        await graphqlPage<{
-          data: { repository: { pullRequest: { reviewThreads: Page<ThreadNode> } } };
-        }>(threadsQuery, { owner, name, pr }, cursor)
-      ).data.repository.pullRequest.reviewThreads,
-  );
-  // A thread with more than 50 comments loses the rest of them without this.
-  for (const node of nodes) {
-    if (!node.comments.pageInfo.hasNextPage) continue;
-    const rest = await collectPages(
-      async (cursor) =>
-        (
-          await graphqlPage<{ data: { node: { comments: Page<ThreadComment> } } }>(
-            threadCommentsQuery,
-            { id: node.id },
-            cursor,
-          )
-        ).data.node.comments,
-      node.comments,
-    );
-    node.comments.nodes = rest;
-  }
-  return nodes;
 }
 
 async function fetchPr(pr: number): Promise<PrData> {
@@ -235,16 +149,17 @@ async function fetchPr(pr: number): Promise<PrData> {
     baseRefName: string;
     reviews: { body: string; submittedAt: string; author: { login: string } | null }[];
   };
-  const threadNodes = await fetchThreads(owner, name, pr);
+  const graphql = async (query: string, vars: Record<string, string | number>) =>
+    JSON.parse(await sh(["gh", ...graphqlArgs(query, vars)])) as unknown;
+  const threadNodes = await fetchThreads(graphql, owner, name, pr);
   const me = (await sh(["gh", "api", "user", "--jq", ".login"])).trim();
   const myReviews = view.reviews.filter((review) => review.author?.login === me);
-  const issues = [];
-  for (const number of linkedIssues(view.body)) {
-    const issue = JSON.parse(
-      await sh(["gh", "issue", "view", String(number), "-R", repo, "--json", "body"]),
-    ) as { body: string };
-    issues.push({ number, body: issue.body });
-  }
+  const issues = await linkedIssueBodies(
+    view.body,
+    async (number) =>
+      (JSON.parse(await sh(["gh", "issue", "view", String(number), "-R", repo, "--json", "body"])) as { body: string })
+        .body,
+  );
   const sha = view.headRefOid;
   const attempt = pendingAttempt({
     head: sha,
@@ -304,16 +219,16 @@ interface Policy {
   list: (dir: string) => string[];
 }
 
-function basePolicy(base: string): Policy {
+function basePolicy(baseRef: string): Policy {
   const git = (...args: string[]) =>
     spawnSync("git", args, { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
   return {
     read: (path) => {
-      const result = git("show", `origin/${base}:${path}`);
+      const result = git("show", `${baseRef}:${path}`);
       return result.status === 0 ? result.stdout : undefined;
     },
     list: (dir) => {
-      const result = git("ls-tree", "--name-only", `origin/${base}`, `${dir}/`);
+      const result = git("ls-tree", "--name-only", baseRef, `${dir}/`);
       return result.status === 0
         ? result.stdout
             .split("\n")
@@ -378,14 +293,6 @@ function buildContext(
   return sections.join("\n");
 }
 
-function isSymlink(path: string) {
-  try {
-    return lstatSync(path).isSymbolicLink();
-  } catch {
-    return false;
-  }
-}
-
 // Creates or refreshes the reviewer's pi profile from the repo's settings and links the
 // owner's credentials into it. Fails clearly when the provider is not signed in.
 async function ensurePiProfile() {
@@ -393,16 +300,7 @@ async function ensurePiProfile() {
   const settings = readFileSync(piSettingsFile, "utf8");
   const settingsPath = join(piDir, "settings.json");
   if (readIfPresent(piDir, "settings.json") !== settings) writeFileSync(settingsPath, settings);
-  for (const file of ["auth.json", "models-store.json"]) {
-    const source = join(piMainDir, file);
-    const target = join(piDir, file);
-    if (existsSync(target)) continue;
-    if (isSymlink(target)) unlinkSync(target); // dangling: the main profile changed or signed out
-    if (!existsSync(source)) {
-      throw new Error(`${source} is missing: sign pi in to the openai provider first`);
-    }
-    symlinkSync(source, target);
-  }
+  linkCredentials(piMainDir, piDir, provider);
   const check = await run(["pi", "auth", "check", "--provider", provider, "--model", model], { env: piEnv });
   if (check.code !== 0 || !check.out.includes("ready")) {
     throw new Error(
@@ -440,8 +338,6 @@ function localSecrets(clone: string): string[] {
   }
   return values;
 }
-
-const idleMs = Number(process.env["REVIEW_IDLE_MS"] ?? 120_000);
 
 // Runs pi while streaming its JSON events: prints one progress line per turn, and kills the
 // process when no event arrives for idleMs or the total time passes timeoutMs.
@@ -570,7 +466,11 @@ async function reviewWithRetry(
 const resolveMutation = `mutation($thread:ID!){resolveReviewThread(input:{threadId:$thread}){thread{id}}}`;
 
 async function main() {
-  const { pr, dryRun, force } = parseArgs(process.argv.slice(2));
+  const { help, pr, dryRun, force } = parseArgs(process.argv.slice(2));
+  if (help) {
+    console.log(usageText);
+    return;
+  }
   const started = Date.now();
   const data = await fetchPr(pr);
   const gate = reviewGate(data.earlierMarkers, data.sha, force || dryRun, data.attempt.incomplete);
@@ -583,13 +483,15 @@ async function main() {
     await sh(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"])
   ).trim();
   const mainClone = dirname(gitCommon);
+  const remote = remoteFor(data.repo, await sh(["git", "remote", "-v"]));
+  const baseRef = `${remote}/${data.base}`;
   await sh([
     "git",
     "fetch",
     "-q",
-    "origin",
+    remote,
     `pull/${pr}/head`,
-    `+refs/heads/${data.base}:refs/remotes/origin/${data.base}`,
+    `+refs/heads/${data.base}:refs/remotes/${baseRef}`,
   ]);
   const scratch = mkdtempSync(join(tmpdir(), `review-${pr}-`));
   const worktree = join(scratch, "tree");
@@ -598,7 +500,7 @@ async function main() {
   try {
     await run(["git", "worktree", "prune"]);
     await sh(["git", "worktree", "add", "--detach", worktree, data.sha]);
-    const policy = basePolicy(data.base);
+    const policy = basePolicy(baseRef);
     for (const [name, assign] of [
       ["prompt.md", (path: string) => (promptFile = path)],
       ["pi-settings.json", (path: string) => (piSettingsFile = path)],
@@ -611,13 +513,13 @@ async function main() {
     }
     // Changed paths come from the diff: `gh pr view --json files` stops at 100 entries.
     // Built from the captured head, so a push during the run cannot change what is reviewed.
-    const fullDiff = await sh(gitDiffCommand(`origin/${data.base}...${data.sha}`), {
+    const fullDiff = await sh(gitDiffCommand(`${baseRef}...${data.sha}`), {
       cwd: worktree,
     });
     const changed = splitDiffByFile(fullDiff).map((file) => file.path);
     const paths = changed;
     const diff = fullDiff;
-    const commits = await sh(["git", "log", "--format=%h %s", `origin/${data.base}..${data.sha}`], {
+    const commits = await sh(["git", "log", "--format=%h %s", `${baseRef}..${data.sha}`], {
       cwd: worktree,
     });
     // Follow-up rounds judge what changed since the last reviewed commit, unless a rebase or
@@ -626,7 +528,7 @@ async function main() {
       (args) => run(["git", ...args], { cwd: worktree }),
       lastReviewed,
       data.sha,
-      `origin/${data.base}`,
+      baseRef,
     );
     const delta =
       plan.mode === "delta" ? await sh(gitDiffCommand(plan.range), { cwd: worktree }) : undefined;
@@ -637,10 +539,9 @@ async function main() {
       return;
     }
     const contextFile = join(scratch, "context.md");
-    writeFileSync(
-      contextFile,
-      buildContext(policy, data, diff, paths, commits, delta, lastReviewed, fullReason),
-    );
+    const context = buildContext(policy, data, diff, paths, commits, delta, lastReviewed, fullReason);
+    checkContextSize(context);
+    writeFileSync(contextFile, context);
     console.error(
       `reviewing #${pr} at ${data.sha.slice(0, 7)} with ${provider}/${model}:${thinking} (${paths.length} files)...`,
     );
