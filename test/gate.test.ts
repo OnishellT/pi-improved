@@ -347,14 +347,13 @@ test("the stored predating lines follow the latest verify, not the first one", a
   assert.deepEqual((await readTask(t.ctx.cwd))?.predates, ["FAIL test/old.test.ts"]);
 });
 
-test("a new failure line, a baseline that passed or one without failure lines is a normal failure", async () => {
+test("a new line, a baseline that passed or one without lines is a normal failure", async () => {
   const out = "FAIL test/old.test.ts\nError: expected 1 got 2";
   for (const [now, extra] of [
     [`${out}\nError: brand new`, baselineOf(out)],
     [out, { baseline: { ok: true, seconds: 1 } }],
     [out, { baseline: { ok: false, seconds: 1 } }],
     [out, {}],
-    ["something broke", baselineOf("something broke")],
   ] as const) {
     const t = await parallel({}, [], now, extra);
     t.gate.resolve();

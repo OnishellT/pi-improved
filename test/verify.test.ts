@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
+import { writeFile } from "node:fs/promises";
 import { test } from "node:test";
 import { DEFAULT_MAX_REPORT, VERIFY_TIMEOUT, carryOnWhenPredated, failedLines, failureSignature, formatVerify, predates, predatesBaseline, runBaseline, runVerify, sameFailure, stepSignature, validCap } from "../src/verify.ts";
 import { installMessage } from "../src/nix.ts";
 import type { Exec } from "../src/git.ts";
+import { tempProject } from "./helpers.ts";
 
 const failing = (out: string): Exec => async () => ({ stdout: out, stderr: "", code: 1, killed: false });
 
@@ -22,32 +25,33 @@ test("validCap ignores values that are not a sane number", () => {
 const run = (output: string, step = "check") => ({ ok: false, results: [{ step, ok: false, output }] });
 const lines = (output: string, step?: string) => failureSignature(run(output, step))?.lines;
 
-test("failureSignature is the set of the failure lines, with durations, timestamps, hex addresses and whitespace normalized", () => {
-  assert.deepEqual(lines("ok 1 fine\nFAIL  /home/a/src/fee.ts:12\nError: took 1.25s, expected 3 got 4\n  ✗ case 7\npanicked at 'x'\nassertion left == right\nthe end"), [
+test("failureSignature is every output line, sorted, with durations, timestamps, hex addresses and whitespace normalized and empty lines dropped", () => {
+  assert.deepEqual(lines("ok 1 fine\n\nFAIL  /home/a/src/fee.ts:12\nError: took 1.25s, expected 3 got 4\n  \u2717 case 7\nthe end"), [
     "Error: took <duration>, expected 3 got 4",
     "FAIL /home/a/src/fee.ts:12",
-    "assertion left == right",
-    "panicked at 'x'",
-    "✗ case 7",
+    "ok 1 fine",
+    "the end",
+    "\u2717 case 7",
   ]);
   assert.deepEqual(lines("ERROR a\nerror a\nFailed 3 of 4\nFailed 5 of 6"), ["ERROR a", "Failed 3 of 4", "Failed 5 of 6", "error a"]);
   assert.deepEqual(lines("error at 2026-10-29T10:11:12.345Z in 0x7ffd12ab after 350ms\nerror 10:11:12 took 2m"), ["error <time> took <duration>", "error at <time> in <hex> after <duration>"]);
   assert.notDeepEqual(lines("Error: expected 0x01 got 0x02"), lines("Error: expected 0x01 got 0x03"), "short hex values are data, not addresses");
+  assert.deepEqual(lines("duration_ms: 130.31\n# duration_ms 99"), ["# duration_ms <duration>", "duration_ms: <duration>"], "node:test prints durations without a unit");
   assert.notDeepEqual(lines("1 failed"), lines("2 failed"), "a different count is a different failure");
   assert.notDeepEqual(lines("FAIL src/a.ts:12"), lines("FAIL src/a.ts:14"), "a shifted line number reads as new: the gate fails closed");
 });
 
-test("failureSignature keeps every failure line of the tail, not the first few", () => {
+test("failureSignature keeps every line of the tail, not the first few", () => {
   const out = Array.from({ length: 12 }, (_, i) => `FAIL case ${"abcdefghijkl"[i]}`).join("\n");
   assert.equal(lines(out)?.length, 12);
 });
 
-test("failureSignature drops a cut-off first line, and is undefined when nothing failed or no line looks like an error", () => {
-  assert.deepEqual(lines("…ror: half a line\nFAIL one"), ["FAIL one"]);
+test("failureSignature is undefined when nothing failed, nothing was printed, or the output was cut (a tail cannot prove a match)", () => {
+  assert.equal(lines("\u2026ror: half a line\nFAIL one"), undefined);
   assert.equal(failureSignature({ ok: true, results: [{ step: "check", ok: true, output: "" }] }), undefined);
   assert.equal(failureSignature(run("")), undefined);
-  assert.equal(failureSignature(run("  \n 12 \nall good\n")), undefined);
-  assert.equal(failureSignature(run("…ror: only this line")), undefined);
+  assert.equal(failureSignature(run("  \n\n")), undefined);
+  assert.equal(failureSignature(run("\u2026ror: only this line")), undefined);
 });
 
 test("a step killed by its timeout has no signature, so it never matches a baseline", async () => {
@@ -60,7 +64,7 @@ test("a step killed by its timeout has no signature, so it never matches a basel
   assert.equal(predatesBaseline({ ok: false, results: [killed] }, [stepSignature({ ...killed, killed: false })!]), false);
 });
 
-test("predates: the current lines are a subset of the baseline's; sameFailure: equal sets; both need the same step", () => {
+test("predates: every current line is in the baseline at least as often; sameFailure: equal multisets; both need the same step", () => {
   const old = failureSignature(run("FAIL a 1\nFAIL b 2\nerror c"))!;
   const fewer = failureSignature(run("FAIL b 2"))!;
   const more = failureSignature(run("FAIL a 1\nFAIL b 2\nerror c\nTypeError d"))!;
@@ -70,6 +74,8 @@ test("predates: the current lines are a subset of the baseline's; sameFailure: e
   assert.ok(sameFailure(old, same) && !sameFailure(old, fewer) && !sameFailure(old, more));
   const other = failureSignature(run("FAIL b 2", "other step"))!;
   assert.ok(!predates(other, old) && !sameFailure(other, old));
+  const twice = failureSignature(run("FAIL a 1\nFAIL a 2\nFAIL b 2\nerror c"))!;
+  assert.ok(!predates(twice, old) && predates(old, twice) && !sameFailure(twice, old));
   assert.ok(!predates(undefined, old) && !predates(old, undefined) && !sameFailure(undefined, undefined) && !sameFailure(old, undefined));
 });
 
@@ -112,4 +118,27 @@ test("runVerify keeps going after a failure only when carryOn says so; predatesB
   assert.equal(formatVerify(carried).split("\n").at(-1), "Error in b");
   assert.match(formatVerify(carried), /✗ a:\nError in a\n\n✗ b:\nError in b$/);
   assert.deepEqual(failedLines({ ok: false, results: [{ step: "diff -u a b", ok: false, output: "-x\n+y" }, { step: "b", ok: false, output: "Error in b" }] }), ["diff -u a b", "Error in b"]);
+});
+
+test("a second failing test with the same assertion is new, not old (real node --test)", async () => {
+  const failing = (names: string[]) => `import test from "node:test";\nimport assert from "node:assert/strict";\n${names.map((n) => `test("${n}", () => { assert.equal(1, 2); });`).join("\n")}\n`;
+  const root = await tempProject({ "t.test.ts": failing(["old one"]) });
+  const exec: Exec = (cmd, args, o) =>
+    new Promise((resolve) =>
+      execFile(cmd, args, { cwd: o.cwd, env: { ...process.env, NODE_TEST_CONTEXT: undefined } }, (e: any, stdout, stderr) => resolve({ stdout: String(stdout), stderr: String(stderr), code: e ? (typeof e.code === "number" ? e.code : 1) : 0, killed: false })),
+    );
+  const step = "node --test t.test.ts";
+  const baseline = await runBaseline([step], exec, root);
+  assert.equal(baseline?.ok, false);
+  assert.equal(predatesBaseline(await runVerify([step], exec, root), baseline?.failing), true, "the same run is old");
+  await writeFile(`${root}/t.test.ts`, failing(["old one", "NEW regression"]));
+  const now = await runVerify([step], exec, root);
+  assert.match(now.results[0].output, /NEW regression/);
+  assert.equal(predatesBaseline(now, baseline?.failing), false);
+});
+
+test("a step whose output was cut to the report size has no signature, so it never matches a baseline", async () => {
+  const run = await runVerify(["check"], async () => ({ code: 1, stdout: "FAIL a.test.ts\n".repeat(50), stderr: "", killed: false }) as any, "/tmp", undefined, 100);
+  assert.ok(run.results[0].output.startsWith("…"));
+  assert.equal(stepSignature(run.results[0]), undefined);
 });
