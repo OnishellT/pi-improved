@@ -290,3 +290,51 @@ test("a task that holds a whole ticket still gives a one-line PR title, commit s
   assert.ok(branchName(long).length <= "task/".length + 50);
   assert.ok(!branchName(long).includes("body"));
 });
+
+test("verify runs before the commit, and a failing verify means nothing is committed", async () => {
+  const ok = setup({ dirty: " M src/fee.ts\n" });
+  await runPr(ok.exec, await project(), fakeUI([true, false]) as any);
+  const order = ok.calls.map(([c, a]) => `${c} ${a[0]}`);
+  const [verify, commit] = [order.findIndex((c) => c.startsWith("bash")), order.indexOf("git commit")];
+  assert.ok(verify >= 0 && commit > verify, order.join("\n"));
+  const bad = setup({ dirty: " M src/fee.ts\n", verifyCode: 1 });
+  const ui = fakeUI([]);
+  const out = await runPr(bad.exec, await project(), ui as any);
+  assert.equal(out.status, "declined");
+  assert.deepEqual(ui.asked, []);
+  assert.match(out.detail, /out/, "the verify report comes with the refusal");
+  assert.ok(!bad.has("git", "commit") && !bad.has("git", "add"));
+});
+
+test("the commit offer lists what verify wrote, not the tree from before it ran", async () => {
+  const inner = setup();
+  let verified = false;
+  const exec: any = async (cmd: string, args: string[]) => {
+    if (cmd === "bash") verified = true;
+    if (cmd === "git" && args[0] === "status" && verified && !inner.has("git", "commit")) return { code: 0, stdout: " M src/fee.ts\n?? coverage.xml\n", stderr: "", killed: false };
+    return inner.exec(cmd, args);
+  };
+  const ui = fakeUI([false, false]);
+  await runPr(exec, await project(), ui as any);
+  assert.equal(ui.asked[0], "Commit the uncommitted work?");
+  assert.match(ui.messages[0], /coverage\.xml/);
+});
+
+test("a verify that fails only where it failed before the task still lets /pr commit", async () => {
+  const baseline = { ok: false, seconds: 1, failing: [stepSignature({ step: "npm test", ok: false, output: "FAIL old.test.ts" })!] };
+  const root = await project();
+  await fs.writeFile(path.join(root, ".pi/task.json"), JSON.stringify({ ...task, status: "implementing", baseline }));
+  const inner = setup({ dirty: " M src/fee.ts\n" });
+  const exec: any = async (cmd: string, args: string[]) => (cmd === "bash" ? { code: 1, stdout: "FAIL old.test.ts", stderr: "", killed: false } : inner.exec(cmd, args));
+  const ui = fakeUI([true, false]);
+  await runPr(exec, root, ui as any);
+  assert.deepEqual(ui.asked.slice(0, 1), ["Commit the uncommitted work?"]);
+  assert.ok(inner.has("git", "commit"));
+});
+
+test("the commit subject and PR title stay within 72 characters, without a trailing period", () => {
+  const task: any = { title: "Make the importer accept every spreadsheet format the finance team uses today.", ticket: "ABC-123" };
+  const title = prTitle(task, []);
+  assert.ok(title.length <= 72 && title.startsWith("[ABC-123] "), title);
+  assert.equal(prTitle({ title: "Fix the cart total." } as any, []), "Fix the cart total");
+});

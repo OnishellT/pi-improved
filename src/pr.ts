@@ -5,6 +5,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import type { Exec } from "./git.ts";
 import { readManifest } from "./manifest.ts";
 import { isNixFailure, NixError } from "./nix.ts";
+import { commitSubject, mayCommit } from "./quality.ts";
 import { assessRisk } from "./risk.ts";
 import { isLocalState, LOCAL_STATE, oneLine, readTask, type Task } from "./task-state.ts";
 import { agentlintStepOf, carryOnWhenPredated, failedLines, formatVerify, predatesBaseline, runVerify, validCap, verifySteps } from "./verify.ts";
@@ -55,8 +56,9 @@ export function newAdrs(changes: string[], dirty: string[]): string[] {
 }
 
 export function prTitle(task: Task | undefined, commits: string[]): string {
-  const title = oneLine(task?.title ?? commits[0]?.replace(/^\w+\s/, "") ?? "Changes");
-  return scrub(`${task?.ticket ? `[${task.ticket}] ` : ""}${title}`).trim() || "Changes";
+  const title = oneLine(task?.title ?? commits[0]?.replace(/^\w+\s/, "") ?? "Changes", 200);
+  // The title is also the commit subject: at most 72 characters with the ticket prefix, no trailing period.
+  return scrub(commitSubject(title, task?.ticket ? `[${task.ticket}] ` : "")).trim() || "Changes";
 }
 
 export interface BodyInput {
@@ -172,7 +174,20 @@ export async function runPr(exec: Exec, root: string, ui: Pick<ExtensionContext[
     branch = proposed;
   }
 
+  // Verify runs before anything is committed: /pr commits only a tree that passes, or one whose only failures predate the task.
+  let verify: BodyInput["verify"] = "none";
+  if (manifest?.verify.length) {
+    const isAgentlint = agentlintStepOf(manifest);
+    const result = await runVerify(verifySteps(manifest), exec, root, undefined, validCap(manifest.maxReport), undefined, carryOnWhenPredated(task?.baseline?.failing, isAgentlint));
+    verify = { ok: result.ok, text: formatVerify(result) };
+    // Only this run decides: a failure that appeared after the gate's check is not "old".
+    if (task && !result.ok) task = { ...task, predates: predatesBaseline(result, task.baseline?.failing, isAgentlint) ? failedLines(result) : undefined };
+    // Verify can write files (reports, caches): the commit offer lists the tree as it is now.
+    facts = (await gatherFacts(exec, root, facts.base)) ?? facts;
+  }
   // /task leaves its work uncommitted; without this the PR would miss it.
+  if (facts.dirty.length && !mayCommit(verify === "none" ? "none" : verify.ok ? "pass" : task?.predates ? "old" : "fail"))
+    return { status: "declined", detail: `Verify failed, so the uncommitted work was not committed and nothing was pushed. Fix it and run /pr again.\n\n${verify === "none" ? "" : verify.text}` };
   if (facts.dirty.length) {
     if (await ui.confirm("Commit the uncommitted work?", `Commit these to ${branch} so they go in the PR?\n${facts.dirty.join("\n")}`)) {
       // Add then unstage, not exclude pathspecs: git fails on an excluded path that .gitignore already ignores.
@@ -185,15 +200,7 @@ export async function runPr(exec: Exec, root: string, ui: Pick<ExtensionContext[
     }
   }
 
-  let verify: BodyInput["verify"] = "none";
-  if (manifest?.verify.length) {
-    const isAgentlint = agentlintStepOf(manifest);
-    const result = await runVerify(verifySteps(manifest), exec, root, undefined, validCap(manifest.maxReport), undefined, carryOnWhenPredated(task?.baseline?.failing, isAgentlint));
-    verify = { ok: result.ok, text: formatVerify(result) };
-    // Only this run decides: a failure that appeared after the gate's check is not "old".
-    if (task && !result.ok) task = { ...task, predates: predatesBaseline(result, task.baseline?.failing, isAgentlint) ? failedLines(result) : undefined };
-    if (!result.ok && !(await ui.confirm("Verify failed", `${verify.text}\n\nOpen the PR anyway?`))) return { status: "declined", detail: "Verify failed; nothing was pushed." };
-  }
+  if (verify !== "none" && !verify.ok && !(await ui.confirm("Verify failed", `${verify.text}\n\nOpen the PR anyway?`))) return { status: "declined", detail: "Verify failed; nothing was pushed." };
   const risk = manifest ? await assessRisk(exec, root, task, manifest) : undefined;
 
   const title = prTitle(task, facts.commits);
