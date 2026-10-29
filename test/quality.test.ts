@@ -20,7 +20,7 @@ test("qualityVerdict passes extra reasons through, so another rule can add its o
 });
 
 test("mayCommit: every combination", () => {
-  assert.deepEqual((["pass", "fail", "none"] as const).map(mayCommit), [true, false, true]);
+  assert.deepEqual((["pass", "old", "fail", "none"] as const).map(mayCommit), [true, true, false, true]);
 });
 
 test("isFixTask reads the request and the intent, not the plan summary", () => {
