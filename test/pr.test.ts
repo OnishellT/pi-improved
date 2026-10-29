@@ -208,7 +208,7 @@ test("uncommitted work /task left is committed only after a yes, minus the machi
   assert.equal(out.status, "opened");
   const order = accepted.calls.map(([c, a]) => `${c} ${a.join(" ")}`);
   const add = order.indexOf("git add -A -- :/");
-  const reset = order.indexOf("git reset -q -- :/.pi/task.json :/.pi/metrics/ :/.pi/evidence/");
+  const reset = order.indexOf("git reset -q -- :/.pi/task.json :/.pi/contract.json :/.pi/metrics/ :/.pi/evidence/");
   const commit = order.findIndex((c) => c.startsWith("git commit"));
   assert.ok(add >= 0 && add < reset && reset < commit && commit < order.findIndex((c) => c.startsWith("git push")), order.join("\n"));
 });
@@ -261,8 +261,8 @@ test("without Nix /pr shows the install message, not 'not a git repository'", as
   assert.equal((await runPr(notRepo, await project(), fakeUI([]) as any)).detail, "This folder is not a git repository.");
 });
 
-test("versioned .pi/ state is offered for the commit; task, metrics and evidence are not", async () => {
-  const dirty = [" M .pi/workflow.json", "?? .pi/memory/tasks.jsonl", "?? .pi/skills/domain-fee/SKILL.md", "?? .pi/task.json", "?? .pi/metrics/run.jsonl", "?? .pi/evidence/shot.png", " M src/fee.ts"].join("\n");
+test("versioned .pi/ state is offered for the commit; task, legacy contract, metrics and evidence are not", async () => {
+  const dirty = [" M .pi/workflow.json", "?? .pi/memory/tasks.jsonl", "?? .pi/skills/domain-fee/SKILL.md", "?? .pi/task.json", "?? .pi/contract.json", "?? .pi/metrics/run.jsonl", "?? .pi/evidence/shot.png", " M src/fee.ts"].join("\n");
   const t = setup({ dirty });
   const ui = fakeUI([true, false]);
   await runPr(t.exec, await project(), ui as any);
@@ -278,7 +278,7 @@ test("the local-state list is the one /setup ignores, and covers what their owne
   const { LOCAL_STATE, isLocalState, isPiState } = await import("../src/task-state.ts");
   const { IGNORED_STATE } = await import("../src/setup.ts");
   assert.equal(IGNORED_STATE, LOCAL_STATE);
-  for (const f of [".pi/task.json", ".pi/metrics/a.jsonl", ".pi/evidence/x/y.png"]) assert.ok(isLocalState(f), f);
+  for (const f of [".pi/task.json", ".pi/contract.json", ".pi/metrics/a.jsonl", ".pi/evidence/x/y.png"]) assert.ok(isLocalState(f), f);
   for (const f of [".pi/workflow.json", ".pi/memory/tasks.jsonl", ".pi/skills/a/SKILL.md", ".pi/task.json.bak", "src/.pi/task.json"]) assert.ok(!isLocalState(f), f);
   assert.ok(isPiState(".pi/workflow.json"), "reviews and risk still look past all of .pi/");
 });
