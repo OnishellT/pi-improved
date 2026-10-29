@@ -52,6 +52,8 @@ export interface Manifest {
   verify: string[];
   /** agentlint command prefix when the project enforces agentlint rules, e.g. "pnpm agentlint". */
   agentlint?: string;
+  /** The verify step setup itself added for agentlint. Opting out removes this step and nothing else. */
+  agentlintStep?: string;
   connectors: EnabledConnector[];
   /** Working mode. `direct` (default when absent): the agent works from AGENTS.md and skills, /task is optional. `flow`: /task with its gates is the recommended route. */
   mode?: "direct" | "flow";
@@ -61,6 +63,8 @@ export interface Manifest {
   skills?: Partial<Record<Phase, string[]>>;
   /** Bundled skill names per phase listed as an on-request index; a missing phase uses DEFAULT_ON_DEMAND. */
   skillsOnDemand?: Partial<Record<Phase, string[]>>;
+  /** Whether /setup adds agentlint rules: `ask` (default) asks, `always` adds them without asking, `never` neither asks nor enforces them. */
+  useAgentlint?: "ask" | "always" | "never";
   /** Append the unslop skill and two working-style lines to the main session's system prompt (default true; false turns it off). */
   basePrompt?: boolean;
   /** Characters of failing-step output kept in a verify report (default 4000, minimum 200). Smaller is cheaper on every retry. */
