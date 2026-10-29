@@ -50,8 +50,16 @@ export function resolveConfig(overrides: Record<string, unknown> = {}, profile: 
     const value = overrides[name] ?? profile[name] ?? DEFAULTS[name];
     return typeof value === "string" || typeof value === "number" ? value : String(value);
   };
-  const buffer = Number(get("buffer"));
-  if (!Number.isSafeInteger(buffer) || buffer < 0) throw new Error("Buffer must be a non-negative integer");
+  // Written like an absolute threshold ("32k"), or 0.
+  const buffer = (() => {
+    const text = String(get("buffer")).trim();
+    if (/^0+$/.test(text)) return 0;
+    try {
+      const parsed = parseThreshold(text);
+      if (!parsed.percent) return parsed.value;
+    } catch {}
+    throw new Error(`Buffer must be a token count like 32000 or 32k, not ${text}`);
+  })();
   return {
     notice: parseThreshold(get("notice")),
     warning: parseThreshold(get("warning")),

@@ -79,6 +79,7 @@ test("show renders markup at the measured size and keeps the page", async () => 
     assert.equal(await fs.readFile(out, "utf8"), "png");
     assert.match(r.content[0].text, /^Shown to the user \(500x120\): .*\.png \(page: .*\.html\)$/);
     assert.deepEqual((await fs.readdir(path.join(agent, "renders"))).length, 2);
+    assert.equal((await fs.stat(path.join(agent, "renders"))).mode & 0o777, 0o700, "mockups may hold project data");
   });
 });
 

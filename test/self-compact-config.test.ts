@@ -25,6 +25,13 @@ test("resolves defaults and configurable values", () => {
   assert.throws(() => resolveConfig({ buffer: -1 }));
 });
 
+test("the buffer is written like an absolute threshold, or 0", () => {
+  assert.equal(resolveConfig({ buffer: "32k" }).buffer, 32_000);
+  assert.equal(resolveConfig({ buffer: 1500 }).buffer, 1500);
+  assert.equal(resolveConfig({ buffer: "0" }).buffer, 0);
+  for (const bad of ["10%", "-1", "1.5", "lots"]) assert.throws(() => resolveConfig({ buffer: bad }), /Buffer must be a token count like 32000 or 32k/, bad);
+});
+
 test("validates the profile file schema", () => {
   assert.deepEqual(parseProfileFile('{"default":{"notice":"60%"},"models":{"anthropic/claude-sonnet-5-5":{"force":"82%"}}}'), {
     default: { notice: "60%" }, models: { "anthropic/claude-sonnet-5-5": { force: "82%" } },

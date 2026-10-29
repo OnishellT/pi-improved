@@ -338,6 +338,19 @@ test("wantsTern reads subagentPanes from the global file, not from pi's settings
   assert.equal(wantsTern(dir), false);
 });
 
+test("without a child of this session on disk, tmux is not asked", async () => {
+  const agent = await tempDir();
+  await writeRun(path.join(agent, "subagents"), "a1", { parentSessionId: "other", state: "busy", createdAt: "2026-10-27T01" });
+  let asked = 0;
+  const notes: string[] = [];
+  const h = fakePi();
+  registerSubagentView(h.pi, true, { anchor: "7", backend: ternBackend(fakeTern().tern) }, async () => (asked++, new Set(["pi-subagent-a1"])));
+  const ctx = { sessionManager: { getSessionId: () => "s1" }, ui: { notify: (text: string) => void notes.push(text) } };
+  await withEnv({ PI_CODING_AGENT_DIR: agent }, () => h.commands.get("subagent").handler("", ctx));
+  assert.equal(asked, 0);
+  assert.deepEqual(notes, ["No active subagents spawned by this session"]);
+});
+
 test("/subagent opens the picked child's pane in tmux too", async () => {
   const agent = await tempDir();
   await writeRun(path.join(agent, "subagents"), "a1", { parentSessionId: "s1", state: "idle", name: "facts", createdAt: "2026-10-27T01" });
