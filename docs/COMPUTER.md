@@ -4,22 +4,28 @@ Optional second extension (`src/computer/`). It lets the agent drive a browser a
 
 ## Use
 
-`/computer` lists the browsers installed, marks those with remote debugging on, and saves your pick to `computer.json` in the Pi agent dir (`~/.pi/agent`, or `PI_CODING_AGENT_DIR`). User level on purpose: logins belong to you, not to a repo. It applies at once, with no restart.
+`/computer` lists the browsers installed, marks those with remote debugging on, and saves your pick under the `computer` key of `pi-improved.json` in the Pi agent dir (`~/.pi/agent`, or `PI_CODING_AGENT_DIR`), keeping the other keys of that file. User level on purpose: logins belong to you, not to a repo, so a project's `.pi/workflow.json` cannot set it. An old `computer.json` is copied into that key once, at startup, and no longer read. It applies at once, with no restart.
 
 ## Config
 
+The value of the `computer` key:
+
 ```json
-{ "browser": "auto", "desktop": "on" }
+{ "browser": { "mode": "both", "relay": "auto" }, "desktop": "on" }
 ```
 
 | Key | Values |
 |-----|--------|
-| `browser` | `off` (default). `auto`: the first browser with remote debugging on (helium, chrome, chromium, brave, edge, vivaldi). A preset id. `{ "portFile": "/abs/path/DevToolsActivePort", "name": "Mine" }` for any other Chromium browser. `{ "mcp": { "command": "npx", "args": ["@playwright/mcp@latest"] } }` for any MCP server, used as given. |
+| `browser` | `off` (default). `{ "mode": "isolated" }`: a private headless Chromium, no approval. `{ "mode": "relay", "relay": … }`: your own browser. `{ "mode": "both", "relay": … }`: both. `relay` is `auto` (the first browser with remote debugging on: helium, chrome, chromium, brave, edge, vivaldi), a preset id, or `{ "portFile": "/abs/path/DevToolsActivePort", "name": "Mine" }` for any other Chromium browser. The old values `"auto"`, a preset id and `{ "portFile" }` still work and mean relay. `{ "mcp": { "command": "npx", "args": ["@playwright/mcp@latest"] } }` for any MCP server, used as given. |
 | `desktop` | `off` (default), `on` |
 
-The browser is always registered as the MCP server `browser`, the desktop as `desktop`. A server of the same name in the agent dir's `mcp.json` wins, even a disabled one: the extension then registers nothing and warns, so remove that entry to use the bundled one. (Project-level MCP config is not checked.)
+Isolated (and relay mode) is the MCP server `browser`, the desktop is `desktop`. In `both`, the isolated one is `browser` and yours is `my-browser`; its description tells the model to use `my-browser` only when the task needs your logins. `/computer` asks for the mode first, then, for relay and both, which browser. A server of the same name in the agent dir's `mcp.json` wins, even a disabled one: the extension then registers nothing and warns, so remove that entry to use the bundled one. (Project-level MCP config is not checked.)
 
-## Browser
+## Isolated browser
+
+The bundled server launches the headless Chromium (chrome-headless-shell) from Nix on first use, with a persistent profile at `<agent dir>/browser-profile`, so logins you make in it stay for later runs but are never your own browser's. No approval is needed. It needs Nix (`/doctor` checks it); the browser keeps running when the pi session ends, so other sessions reuse it (a session never kills a browser another one is using). Choosing Off in `/computer` (or a mode without the isolated browser) stops it; Chromium itself records its pid in `<profile>/SingletonLock` (it also refuses a second browser on the profile), and that is what /computer reads. Its tools and rules are the same as for the relay browser below.
+
+## Relay browser
 
 The bundled server (Node >= 22, like the rest of the package) attaches to a browser you already use, with its logins, through remote debugging (`chrome://inspect/#remote-debugging`). The first `open` needs your approval in that browser. If you deny it or it times out, later calls fail with "disconnected" instead of asking again; reconnect the MCP server to retry. Several candidates (`auto`) are tried in order; a debugging file left by a browser that is gone is skipped. A browser that is running but refuses the connection is the answer: no other browser is asked.
 
