@@ -2,6 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { limitsOf } from "./config.ts";
 import { diffBase, EMPTY_TREE, git, untrackedFiles, type Exec } from "./git.ts";
+import { BREAK, collectDiffs, isDocs, isFixTask, isGenerated, qualityVerdict, weakenedNotes } from "./quality.ts";
 import { MANIFEST_PATH, type Manifest } from "./manifest.ts";
 import { inFiles, isLocalState, MEMORY_PATH, type Task } from "./task-state.ts";
 import { isManifest, isMigration } from "./triggers.ts";
@@ -94,6 +95,8 @@ export interface RiskAssessment {
   reasons: string[];
   /** Files that existed before the task, look like tests or are named by the verify commands, were changed or deleted and are not in the plan. The person should look at them. */
   touched?: string[];
+  /** What the completion dialog lists next to `touched`: the quality reasons (a bug fix with no test, weakened tests, an oversize change) and which test files lost assertions or gained skip markers. */
+  flagged?: string[];
 }
 
 /**
@@ -110,11 +113,6 @@ export async function assessRisk(exec: Exec, root: string, task: Task | undefine
   // Without a base, nothing tells which files existed before the task: every test and verify file counts.
   const noBase = ref === EMPTY_TREE;
   const touched = nameStatus(await git(exec, root, ["diff", ref, "--name-status", "--no-renames", "-z"]), noBase).filter((f) => (isTestFile(f) || watched.has(f)) && !planned(f));
-  const listed = touched.length ? { touched } : {};
-  // `always` wins over `never`.
-  if (rule?.always) return { review: true, level: "high", reasons: ["review.always"], ...listed };
-  if (rule?.never) return { review: false, level: "none", reasons: ["review.never"], ...listed };
-
   const lines = new Map<string, number>();
   // `-z` keeps odd names intact; `--no-renames` lists a rename as delete + add, so a moved lockfile or migration still shows.
   const numstat = await git(exec, root, ["diff", ref, "--numstat", "--no-renames", "-z"]);
@@ -129,6 +127,23 @@ export async function assessRisk(exec: Exec, root: string, task: Task | undefine
   }
   const files = [...lines.keys()];
   const total = [...lines.values()].reduce((a, b) => a + b, 0);
+  // Quality rules (quality.ts): facts from the diff and the task, one pure verdict. Each reason makes the change high risk, and the dialog lists it, whatever the review policy.
+  const diffs = await collectDiffs(exec, root, ref);
+  const weakened = weakenedNotes(diffs, isTestFile);
+  const quality = qualityVerdict({
+    fix: isFixTask(task),
+    source: diffs.some((d) => !isTestFile(d.file) && !isDocs(d.file)),
+    // A test that only lost lines (deleted, trimmed) does not test the fix.
+    tests: diffs.some((d) => isTestFile(d.file) && d.added.some((l) => l !== BREAK && l.trim() !== "")),
+    weakened: weakened.length > 0,
+    lines: [...lines].reduce((n, [file, count]) => (isGenerated(file) ? n : n + count), 0),
+    cap: limitsOf(manifest).changeCap,
+  });
+  const flagged = [...quality.map((r) => r[0].toUpperCase() + r.slice(1)), ...weakened];
+  const listed = { ...(touched.length && { touched }), ...(flagged.length && { flagged }) };
+  // `always` wins over `never`.
+  if (rule?.always) return { review: true, level: "high", reasons: ["review.always"], ...listed };
+  if (rule?.never) return { review: false, level: "none", reasons: ["review.never"], ...listed };
 
   const reasons: string[] = [];
   let level: RiskLevel = "none";
@@ -148,6 +163,7 @@ export async function assessRisk(exec: Exec, root: string, task: Task | undefine
   if (touched.length) raise("high", `tests or verify setup changed (${touched.slice(0, 3).join(", ")})`);
   if (!task?.plan) raise("low", "no plan");
   else if (task.plan.decisions.some((d) => d.status === "decided")) raise("low", "new user decisions");
+  for (const reason of quality) raise("high", reason);
   const final = level as RiskLevel; // `raise` assigns it in a closure, which narrowing does not see
   const min = minLevelOf(rule);
   const review = min === "low" ? final !== "none" : min === "high" ? final === "high" : false;

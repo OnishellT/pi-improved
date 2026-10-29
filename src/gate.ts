@@ -22,9 +22,10 @@ const PROGRESS_MAX_BASELINE = 30;
 const PROGRESS_TAIL = 1200;
 const PREDATES_SHOWN = 5;
 const TOUCHED_SHOWN = 10;
-/** The dialog lists the tests and verify files the task changed, so the person sees what could have turned verify green before accepting. */
-const touchedNote = (files: string[] = []) =>
-  files.length ? `\n\nTests and verify setup changed (check before accepting):\n${files.slice(0, TOUCHED_SHOWN).map((f) => `- ${f}`).join("\n")}${files.length > TOUCHED_SHOWN ? `\n- and ${files.length - TOUCHED_SHOWN} more` : ""}` : "";
+/** The dialog lists what could have turned verify green or slipped past it, so the person sees it before accepting. */
+const listNote = (title: string, items: string[] = []) =>
+  items.length ? `\n\n${title}:\n${items.slice(0, TOUCHED_SHOWN).map((f) => `- ${f}`).join("\n")}${items.length > TOUCHED_SHOWN ? `\n- and ${items.length - TOUCHED_SHOWN} more` : ""}` : "";
+const dialogNotes = (risk?: { touched?: string[]; flagged?: string[] }) => `${listNote("Tests and verify setup changed (check before accepting)", risk?.touched)}${listNote("Quality check (look before accepting)", risk?.flagged)}`;
 /** Added to the escalation prompt when the same failure came back: the fixes so far share a wrong assumption. */
 const PREMISE = [
   "The same failure came back after a fix, so every fix so far assumed something false. Write that one premise in a sentence.",
@@ -272,7 +273,7 @@ export function registerGate(pi: ExtensionAPI) {
         return { entries: [{ type: "custom_message", customType: "diff-review", content, display: true }], continue: true };
       }
     }
-    if (task?.status === "implementing" && ctx.hasUI && (await ctx.ui.confirm(predated ? "Only old failures remain" : "Verification OK", `Is the task "${oneLine(task.title, 80)}" done?${predated ? `\n\nThese steps still fail, as they did before the task:\n${failing.map((s) => `- ${s}`).join("\n")}` : ""}${touchedNote(risk?.touched)}`))) {
+    if (task?.status === "implementing" && ctx.hasUI && (await ctx.ui.confirm(predated ? "Only old failures remain" : "Verification OK", `Is the task "${oneLine(task.title, 80)}" done?${predated ? `\n\nThese steps still fail, as they did before the task:\n${failing.map((s) => `- ${s}`).join("\n")}` : ""}${dialogNotes(risk)}`))) {
       // Before the task is marked done: telemetry looks up the active task, and a done one is not.
       if (skip && !reviewed.has(task.id)) pi.events.emit(REVIEW_EVENT, skip satisfies ReviewPayload);
       const done = await updateTask(ctx.cwd, (t) => {

@@ -70,7 +70,7 @@ export const isFixTask = (task: Pick<Task, "title" | "body" | "plan"> | undefine
 // --- Rule 5: do not weaken tests ---
 
 const ASSERTION = /\bassert\w*\b|\b(expect|should)\s*[.(]|\b(EXPECT|ASSERT)_\w+|\.(toBe\w*|toEqual|toStrictEqual|toThrow\w*|toMatch\w*|toHaveBeen\w*|toContain|toHaveLength)\(|\bt\.(Errorf?|Fatalf?)\(|\brequire\.\w+\(/;
-const SKIP_MARKER = /\.(skip|only)\b|\bx(it|describe|test)\(|\bf(it|describe)\(|@pytest\.mark\.(skip\w*|xfail)|pytest\.(skip|xfail)\(|@unittest\.(skip\w*|expectedFailure)|@(Disabled|Ignore)\b|\bt\.Skip\w*\(|#\[ignore\]|\bskipIf\b|\bxfail\b|\bretry(Times)?\b|\bretries\b|@flaky|\bflaky\b|\bit\.todo\(/;
+const SKIP_MARKER = /\.(skip|only)\b|\bx(it|describe|test)\(|\bf(it|describe)\(|@pytest\.mark\.(skip\w*|xfail)|pytest\.(skip|xfail)\(|@unittest\.(skip\w*|expectedFailure)|@(Disabled|Ignore)\b|\bt\.Skip\w*\(|#\[ignore\]|\bskipIf\b|\bxfail\b|\bretryTimes\b|@retry\b|\bflaky\b|\bit\.todo\(/;
 
 /** What a test file's diff did to its checks: assertion lines lost for good (removed minus added, so a changed expected value is not a loss) and skip/only/xfail/retry markers added. */
 export function weakening(added: string[], removed: string[]): { lost: number; markers: string[] } {

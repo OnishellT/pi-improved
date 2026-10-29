@@ -134,7 +134,7 @@ test("/models and /skills keep values from the global file out of the repo", asy
 
 test("limits: defaults are today's numbers, valid values are taken, bad ones fall back and are reported", () => {
   assert.deepEqual(resolveLimits(undefined), { limits: DEFAULT_LIMITS, problems: [] });
-  assert.deepEqual(DEFAULT_LIMITS, { interviewQuestions: 12, agentlintRules: 3, verifyRetries: 2, failuresBeforeEscalation: 2, planChecks: 1, retroEvery: 5, verifyEvery: 5, fastPath: { files: 8, interface: 6, decisions: 2 } });
+  assert.deepEqual(DEFAULT_LIMITS, { interviewQuestions: 12, agentlintRules: 3, verifyRetries: 2, failuresBeforeEscalation: 2, planChecks: 1, retroEvery: 5, verifyEvery: 5, changeCap: 500, fastPath: { files: 8, interface: 6, decisions: 2 } });
   assert.deepEqual(resolveLimits({ planChecks: 0, retroEvery: 0, verifyRetries: 0, verifyEvery: 0, fastPath: { files: 0 } }), {
     limits: { ...DEFAULT_LIMITS, planChecks: 0, retroEvery: 0, verifyRetries: 0, verifyEvery: 0, fastPath: { ...DEFAULT_LIMITS.fastPath, files: 0 } },
     problems: [],

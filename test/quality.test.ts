@@ -49,7 +49,7 @@ test("weakening: lost assertions net of added ones, and skip/only/xfail/retry ma
   assert.deepEqual(weakening(["expect(a).toBe(2)"], ["expect(a).toBe(1)"]), { lost: 0, markers: [] });
   assert.equal(weakening([], ["assert x == 1", "self.assertEqual(a, b)"]).lost, 2);
   assert.equal(weakening(["assert x == 1"], ["assert x == 1", "assert y"]).lost, 1);
-  for (const line of ["it.skip('x', () => {})", "@pytest.mark.xfail", "@pytest.mark.skip(reason='x')", "t.Skip(\"later\")", "#[ignore]", "describe.only('x')", "@Disabled", "retries: 3", "xit('x')"]) assert.equal(weakening([line], []).markers.length, 1, line);
+  for (const line of ["it.skip('x', () => {})", "@pytest.mark.xfail", "@pytest.mark.skip(reason='x')", "t.Skip(\"later\")", "#[ignore]", "describe.only('x')", "@Disabled", "jest.retryTimes(3)", "xit('x')"]) assert.equal(weakening([line], []).markers.length, 1, line);
   assert.deepEqual(weakening(["test('adds', () => { expect(add(1, 2)).toBe(3) })", "// we expect nothing odd"], []), { lost: 0, markers: [] });
 });
 
