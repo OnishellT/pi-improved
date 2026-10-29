@@ -8,7 +8,8 @@ import { limitsOf } from "./config.ts";
 import { missingNames, relatesTo } from "./contract.ts";
 import { REVIEW_EVENT, VERIFY_EVENT, type ReviewPayload, type VerifyPayload } from "./events.ts";
 import { relatedTasks } from "./learn.ts";
-import { usePhaseModel } from "./models.ts";
+import { completeTask } from "./gate.ts";
+import { restoreModel, usePhaseModel } from "./models.ts";
 import { gitHead } from "./git.ts";
 import { checkPlan } from "./plan-check.ts";
 import { highRiskReasons, minLevelOf, planRiskReasons } from "./risk.ts";
@@ -20,7 +21,7 @@ import { QUESTION_NUDGE, TASK_NUDGE, planText, taskPrompt } from "./task-prompt.
 
 const MAX_NUDGES = 2; // "call task_plan" / "use ask_user" reminders per user message
 const MAX_TICKET_TEXT = 300_000; // characters of tracker output kept as evidence
-// A ticket key at the start of the request (`PAY-142` or `PAY-142 add fees`); anywhere else it is free text.
+// A request that is only a ticket key (`PAY-142`); `PAY-142 add fees` or `UTF-8 handling` is free text.
 const TICKET = /^[A-Z][A-Z0-9]+-\d+$/;
 const TRACKERS = ["jira", "linear"];
 const PLAN_STATUS = { ok: "plan-ok", fix: "plan-fix", skipped: "skipped" } as const;
@@ -88,7 +89,8 @@ export function registerTask(pi: ExtensionAPI) {
     answers.clear();
     asked.clear();
     ticketText.delete(ctx.cwd);
-    await usePhaseModel(pi, ctx, "implement");
+    const previous = await usePhaseModel(pi, ctx, "implement");
+    if (previous && !task.model) await updateTask(ctx.cwd, (t) => void (t.model = previous));
     pi.sendUserMessage(taskPrompt(task.title, task.ticket, tracker(manifest), await relatedTasks(ctx.cwd, task.body ?? task.title), await skillsBlock(ctx.cwd, "plan"), task.spec, task.body));
     return ctx.waitForIdle();
   };
@@ -164,10 +166,11 @@ export function registerTask(pi: ExtensionAPI) {
   const runPlanCheck = async (ctx: any, root: string, task: Task, plan: Plan, evidence: string, manifest: Manifest, signal?: AbortSignal) => {
     const checker = manifest.models?.review ?? manifest.models?.setup;
     if (!checker || !planCheckWanted(manifest, plan.files) || (task.planChecks ?? 0) >= limitsOf(manifest).planChecks) return;
-    await updateTask(root, (t) => void (t.planChecks = (t.planChecks ?? 0) + 1));
     ctx.ui.setStatus("plan-check", `checking the plan with ${checker}…`);
     const t0 = Date.now();
     const check = await checkPlan(pi.exec.bind(pi), root, task, plan, evidence, checker, signal).finally(() => ctx.ui.setStatus("plan-check", undefined));
+    // A check that did not run (no tmux, a failed child) does not use up the budget.
+    if (check.status !== "skipped") await updateTask(root, (t) => void (t.planChecks = (t.planChecks ?? 0) + 1));
     pi.events.emit(REVIEW_EVENT, { root, status: PLAN_STATUS[check.status], model: checker, seconds: (Date.now() - t0) / 1000, cost: check.cost } satisfies ReviewPayload);
     if (check.status === "skipped") ctx.ui.notify(`Plan check skipped: ${check.report}`, "warning");
     else if (check.status === "fix") {
@@ -183,6 +186,7 @@ export function registerTask(pi: ExtensionAPI) {
       .catch(() => undefined)
       .finally(() => ctx.ui.setStatus("baseline", undefined));
     if (baseline) pi.events?.emit(VERIFY_EVENT, { root, kind: "baseline", ok: baseline.ok, seconds: baseline.seconds } satisfies VerifyPayload);
+    else if (!signal?.aborted) ctx.ui.notify("Verify could not run before the change: failures that already exist will count as the change's.", "warning");
     return baseline;
   };
 
@@ -197,21 +201,36 @@ export function registerTask(pi: ExtensionAPI) {
   };
 
   pi.registerCommand("task", {
-    description: "Start a task: the agent investigates and proposes a plan, you approve it",
+    description: "Start a task: the agent investigates and proposes a plan, you approve it. /task done or /task cancel ends it",
     handler: async (args, ctx) => {
       const root = ctx.cwd;
       const arg = args.trim();
-      const active = await readTask(root);
+      // An unreadable task file must not block the way out of it.
+      let active: Task | undefined;
+      try {
+        active = await readTask(root);
+      } catch (error: any) {
+        if (arg !== "cancel") return ctx.ui.notify(`${error.message}. /task cancel removes it.`, "error");
+        await writeTask(root, undefined);
+        return ctx.ui.notify("Task cancelled.", "info");
+      }
       if (!arg) return ctx.ui.notify(active ? `${oneLine(active.title)} (${active.status})` : "No active task. Use /task <description or ticket>.", "info");
       if (arg === "cancel") {
         if (!active) return ctx.ui.notify("No active task to cancel.", "info");
         await writeTask(root, undefined);
+        await restoreModel(pi, ctx, active.model);
         return ctx.ui.notify("Task cancelled.", "info");
+      }
+      if (arg === "done") {
+        if (active?.status !== "implementing") return ctx.ui.notify(active ? `The task is ${active.status}: only an implementing task can be marked done.` : "No active task.", "info");
+        await completeTask(pi, ctx);
+        return ctx.ui.notify(`Task done: ${oneLine(active.title)}.`, "info");
       }
       const manifest = await readManifest(root);
       if (manifest.setup !== "done") return ctx.ui.notify("Run /setup first.", "error");
 
       if (active && active.status !== "done") {
+        if (!ctx.hasUI) return ctx.ui.notify(`A task is already active: ${oneLine(active.title, 80)}. /task done or /task cancel ends it.`, "error");
         const choice = await ctx.ui.select(`A task is already active: ${oneLine(active.title, 80)}`, ["Continue it", "Replace it", "Cancel"]);
         if (choice === "Continue it") {
           if (active.status === "planning") return start(ctx, manifest, active);
@@ -225,7 +244,9 @@ export function registerTask(pi: ExtensionAPI) {
       // A request that is only a spec file is titled by the file's first line; a long or multi-line one keeps its text in `body`.
       const onlyFile = spec.length === 1 && arg.replace(/^@/, "") === spec[0];
       const title = oneLine(onlyFile ? await readInside(root, spec[0]) : arg) || arg;
-      const task: Task = { id: `t${Date.now()}`, title, ...(!onlyFile && title !== arg && { body: arg }), ticket, status: "planning", allowedExtra: [], startedAt: new Date().toISOString(), ...(spec.length && { spec }) };
+      // A replaced task hands on the model to go back to.
+      const model = active?.status !== "done" ? active?.model : undefined;
+      const task: Task = { id: `t${Date.now()}`, title, ...(!onlyFile && title !== arg && { body: arg }), ticket, status: "planning", allowedExtra: [], startedAt: new Date().toISOString(), ...(spec.length && { spec }), ...(model && { model }) };
       await writeTask(root, task);
       await start(ctx, manifest, task);
     },
@@ -285,9 +306,10 @@ export function registerTask(pi: ExtensionAPI) {
       await runPlanCheck(ctx, root, task, plan, evidence, manifest, signal);
       await approve(ctx, plan, manifest);
 
-      for (const { decision, adr } of pending) decision.source = await writeAdr(root, adr);
       const baseCommit = task.baseCommit ?? (await gitHead(pi.exec.bind(pi), root));
       const baseline = manifest.setup === "done" ? await baselineRun(ctx, root, manifest, signal) : undefined;
+      if (signal?.aborted) throw new Error("Cancelled while verify ran on the unchanged code, so the plan is not approved. Stop and wait for the user.");
+      for (const { decision, adr } of pending) decision.source = await writeAdr(root, adr);
       await updateTask(root, (t) => {
         t.plan = plan;
         t.status = "implementing";
@@ -311,6 +333,12 @@ export function registerTask(pi: ExtensionAPI) {
 
   pi.on("before_agent_start", async (event) => {
     if (event.messageType === "user") nudges = 0;
+  });
+  // A task left open in an earlier session still drives the gates here: say so once.
+  pi.on("session_start", async (event, ctx) => {
+    if (event.reason === "reload") return;
+    const task = await readTask(ctx.cwd).catch(() => undefined);
+    if (task && task.status !== "done") ctx.ui.notify(`Task "${oneLine(task.title, 80)}" is ${task.status}: /task to continue, /task done or /task cancel to end it.`, "info");
   });
   pi.on("tool_result", async (event, ctx) => {
     if (event.toolName !== "ask_user" || (await readTask(ctx.cwd).catch(() => undefined))?.status !== "planning") return;

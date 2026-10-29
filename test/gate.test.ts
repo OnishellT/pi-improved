@@ -803,3 +803,63 @@ test("the done dialog names the task on one line, even when the title holds a wh
   assert.equal(asked.length, 1);
   assert.equal(asked[0][1], 'Is the task "Superconduct shred" done?');
 });
+
+test("without a UI a passing verify marks the task done; only old failures keep it open with a notice", async () => {
+  const t = await setup({ pass: true, task: true });
+  t.ctx.hasUI = false;
+  await t.run();
+  assert.equal(await t.settle(), undefined);
+  assert.equal((await readTask(t.root))?.status, "done");
+  assert.ok(t.emitted.some((e) => e.name === TASK_DONE_EVENT && e.payload.hasUI === false));
+  const out = "FAIL test/old.test.ts\nError: expected 1 got 2";
+  const old = await parallel({}, [], out, baselineOf(out));
+  old.ctx.hasUI = false;
+  old.gate.resolve();
+  assert.equal(await old.settle(), undefined);
+  assert.equal((await readTask(old.ctx.cwd))?.status, "implementing");
+  assert.equal(old.emitted.find((e) => e.name === TASK_DONE_EVENT), undefined);
+  assert.match(old.notes.at(-1)!, /^The task stays open: verify still fails as it did before the task \(check\)\. \/task done closes it\.$/);
+});
+
+test("declining the done dialog says how to close the task later", async () => {
+  const t = await setup({ pass: true, task: true, answers: [false] });
+  await t.run();
+  await t.settle();
+  assert.equal((await readTask(t.root))?.status, "implementing");
+  assert.equal(t.notes.at(-1), "The task stays open. /task done closes it.");
+});
+
+test("a .pi/workflow.json that does not parse is reported, not a silently open gate", async () => {
+  const t = await setup({ pass: true });
+  await fs.writeFile(path.join(t.root, ".pi/workflow.json"), '<<<<<<< HEAD\n{"version": 1}\n');
+  await t.run();
+  assert.equal(await t.settle(), undefined);
+  assert.match(t.notes[0], /^Verify did not run: \.pi\/workflow\.json is not valid JSON/);
+});
+
+test("the same diff is not reviewed twice; a changed one is", async () => {
+  const t = await setup({ pass: true, task: true, review: "VERDICT: APPROVED", answers: [false, false, false] });
+  await t.run();
+  await t.settle();
+  // A later message that rewrites the files to the same content: nothing new to review.
+  await t.run();
+  await t.emit("tool_result", { toolName: "write" }, t.ctx);
+  await t.settle();
+  assert.equal(t.subagent.filter((s) => s === "spawn").length, 1);
+  assert.equal(t.verifies(), 2);
+  await t.run();
+  t.setDiff("changed again");
+  await t.settle();
+  assert.equal(t.subagent.filter((s) => s === "spawn").length, 2);
+});
+
+test("leaving an escalated attempt does not undo a model picked since (/task cancel, /task done, the user)", async () => {
+  const t = await parallel({ escalate: "p/strong" }, [false]);
+  t.gate.resolve();
+  await t.settle();
+  await t.settle();
+  assert.deepEqual(t.set, ["p/strong"]);
+  t.ctx.model = { provider: "p", id: "mine" };
+  await t.emit("before_agent_start", { messageType: "user" }, t.ctx);
+  assert.deepEqual(t.set, ["p/strong"]);
+});

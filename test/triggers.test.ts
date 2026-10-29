@@ -224,3 +224,8 @@ test("a planned symlink stays in scope; an approved dependency edit still meets 
   assert.equal(r.block, true);
   assert.match(s.ui.asked.at(-1)!, /Schema change or migration: db\/migrate\/1\.json/);
 });
+
+test("planning edits nothing: write and edit are blocked until the plan is approved", async () => {
+  const s = await setup({}, [], task({ status: "planning" }));
+  for (const tool of ["write", "edit"]) assert.match((await s.run(tool, { path: "src/a.ts", content: "" }))?.reason ?? "", /Planning edits nothing/);
+});

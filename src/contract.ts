@@ -37,8 +37,11 @@ export function missingNames(entry: InterfaceEntry, evidence: string, newFile: b
   return missing;
 }
 
-/** True when the document shares a word of 4+ letters with the question: cheap proof that a cited source is about it. */
-export const relatesTo = (question: string, text: string) => (question.match(/[A-Za-z0-9]{4,}/g) ?? []).some((w) => word(w, "i").test(text));
+/** Question words of 4+ letters that nearly every document contains: they prove nothing about the topic. */
+const COMMON = new Set(["should", "which", "what", "when", "where", "does", "would", "could", "about", "with", "this", "that", "there", "have", "from", "into", "will", "they", "them", "their", "than", "then", "also", "more", "only", "each", "other", "some", "make", "need", "like", "just", "your"]);
+
+/** True when the document shares a topic word (4+ letters, not a common question word) with the question: cheap proof that a cited source is about it. */
+export const relatesTo = (question: string, text: string) => (question.match(/[A-Za-z0-9]{4,}/g) ?? []).some((w) => !COMMON.has(w.toLowerCase()) && word(w, "i").test(text));
 
 /** Interface names the working copy does not expose yet: each export must appear as a word in its file (a qualified name: each segment). */
 export async function checkContract(root: string, plan: Plan): Promise<string[]> {
