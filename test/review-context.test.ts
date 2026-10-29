@@ -1,6 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { contextDocs, linkedIssues, reviewablePaths, skipsMarkdownOnly } from "../scripts/review/context.ts";
+import {
+  checkContextSize,
+  contextDocs,
+  linkedIssueBodies,
+  linkedIssues,
+  maxContextChars,
+  reviewablePaths,
+  skipsMarkdownOnly,
+} from "../scripts/review/context.ts";
 
 test("context documents: root files first, then docs/*.md sorted", () => {
   assert.deepEqual(contextDocs(["WORKFLOW.md", "notes.txt", "COMPUTER.md"]), [
@@ -30,4 +38,17 @@ test("a Markdown-only diff is skipped unless an earlier review needs a follow-up
   assert.equal(skipsMarkdownOnly(["a.md"], true, ["a.md", "src/x.ts"]), false);
   assert.equal(skipsMarkdownOnly(["a.md"], true, undefined), false);
   assert.equal(skipsMarkdownOnly(["a.md"], true, ["a.md"]), true);
+});
+
+test("an unreadable linked issue is skipped, not fatal", async () => {
+  const issues = await linkedIssueBodies("Fixes #1. Fixes #99999.", async (number) => {
+    if (number === 99999) throw new Error("Could not resolve to an issue");
+    return `body ${number}`;
+  });
+  assert.deepEqual(issues, [{ number: 1, body: "body 1" }]);
+});
+
+test("an oversized review context fails before the reviewer runs", () => {
+  checkContextSize("x".repeat(maxContextChars));
+  assert.throws(() => checkContextSize("x".repeat(maxContextChars + 1)), /split the pull request/);
 });
