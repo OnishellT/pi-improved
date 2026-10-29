@@ -6,7 +6,6 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { resolveBin } from "./bin.ts";
 import { globalPath } from "./config.ts";
 import { readManifest } from "./manifest.ts";
-import { agentlintStepOf } from "./verify.ts";
 
 /** agentlint commands that open a browser UI and wait for a person: the `review` subcommand right after the binary (optionally after `--`), or the UI flags anywhere. */
 const INTERACTIVE_AGENTLINT = /\bagentlint(?:\s+--)?\s+review\b|\bagentlint\b[^;&|\n]*\s--(?:review|wizard)\b/;
@@ -62,9 +61,7 @@ export function registerGuards(pi: ExtensionAPI) {
         const manifest = await readManifest(ctx.cwd).catch(() => undefined);
         // The configured command is shell text already; only the fallback path is quoted.
         const agentlint = manifest?.agentlint ?? shellQuote(resolveBin("agentlint"));
-        // propose only records the proposal: the verify gate's agentlint step (run once setup is done) is what asks the user.
-        const asked = manifest?.setup === "done" && manifest.verify.some(agentlintStepOf(manifest)) ? "the verify gate asks the user to approve it" : "then ask the user to review and approve that proposal, since no agentlint verify step will ask them";
-        return { block: true, reason: `${file} holds the exceptions the user approved. Do not edit it; run \`${agentlint} propose <selector> --summary '<why>'\` (selector from \`${agentlint} next --format json\`); ${asked}.` };
+        return { block: true, reason: `${file} holds the exceptions the user approved. Do not edit it; run \`${agentlint} propose <selector> --summary '<why>'\` (selector from \`${agentlint} next --format json\`); propose only records it, so then ask the user to review and approve the proposal.` };
       }
       return;
     }

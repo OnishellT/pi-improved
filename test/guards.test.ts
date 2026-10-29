@@ -36,11 +36,8 @@ test("an edit of the acceptances file points the agent at propose, not accept", 
   const root = await tempProject({ ".pi/workflow.json": JSON.stringify({ version: 1, setup: "done", agentlint: "pnpm agentlint" }) });
   const configured = await emit("tool_call", { toolName: "write", input: { path: ".agentlint/acceptances.jsonl" } }, { cwd: root });
   assert.match(configured.reason, /`pnpm agentlint propose <selector>.*`pnpm agentlint next --format json`/);
-  assert.match(configured.reason, /the verify gate asks the user/);
-  assert.match(r.reason, /ask the user to review and approve that proposal/, "propose alone prompts nobody");
-  const unfinished = await tempProject({ ".pi/workflow.json": JSON.stringify({ version: 1, setup: "running", agentlint: "pnpm agentlint", verify: ["pnpm agentlint check --all"] }) });
-  const pending = await emit("tool_call", { toolName: "write", input: { path: ".agentlint/acceptances.jsonl" } }, { cwd: unfinished });
-  assert.match(pending.reason, /ask the user to review and approve/, "the gate does not run before setup is done");
+  assert.match(configured.reason, /ask the user to review and approve the proposal/, "propose alone prompts nobody, whatever the gate does");
+  assert.match(r.reason, /ask the user to review and approve the proposal/);
 });
 
 test("the fallback agentlint path is shell-quoted only when it needs it", async () => {
