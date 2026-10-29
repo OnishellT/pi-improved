@@ -117,7 +117,7 @@ const oneLine = (text: string) => {
 /** Compact index of the given on-demand skills with their folders; empty when there is nothing to list. */
 async function onDemandIndex(names: string[]): Promise<string> {
   if (!names.length) return "";
-  const lines = ["## Skills on request", "", "Read a skill's SKILL.md (in its folder) only if the task needs it; do not read them otherwise. Paths a skill mentions, like references/x.md, are relative to its folder."];
+  const lines = ["## Skills on request", "", "Read a skill's SKILL.md only if the task needs it. Paths it mentions are relative to its folder."];
   for (const name of names) {
     lines.push(`- ${name}: ${oneLine((await loadSkill(name)).description)} (folder: ${path.join(skillsDir(), name)})`);
   }

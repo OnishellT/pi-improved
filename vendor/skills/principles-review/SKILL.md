@@ -1,11 +1,17 @@
 ---
 name: principles-review
-description: Working principles while reviewing: verify against the real artifact, validate at boundaries, flag needless layers.
+description: Reviewer checklist: errors, tests, purpose, boundaries, abstraction, public behaviour, comments, evidence.
 ---
 
-# Review principles
+# Review checklist
 
-- Verify claims against the real artifact (run it, read the output), not the description.
-- Validate at system boundaries; trust internal types and do not re-check them.
-- Flag unnecessary layers, wrappers and abstractions that only pass through.
-- Flag dead code and speculative generality.
+Block only on real defects. The brief's warnings are fuzzy scans: judge each.
+
+- Swallowed errors (empty, log-only, catch-all)?
+- Tests weakened, skipped or deleted? A bug fix without a test that fails without it?
+- Refactor, formatting or moved code mixed with logic?
+- Input checked at the edge, internal data not re-checked?
+- A layer with one use? A clone edited in one copy?
+- Public behaviour or API changed without docs or a deprecation path?
+- Comments say why; no commented-out or dead code.
+- Do the brief's verify commands cover the claim?

@@ -9,8 +9,8 @@ const CAPS: Record<string, number> = {
   "code-review": 2048,
   "codebase-design": 1024,
   "writing-for-agents": 3072,
-  "principles-implement": 500,
-  "principles-review": 500,
+  "principles-implement": 600,
+  "principles-review": 800,
   "principles-diagnose": 500,
 };
 
