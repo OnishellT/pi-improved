@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 import { Image, resetCapabilitiesCache, setCapabilities, Text } from "@earendil-works/pi-tui";
-import { findBrowser, pageFor, pruneRenders, registerShow, screenshot, type Run } from "../src/show.ts";
+import { pageFor, pruneRenders, registerShow, screenshot, type Run } from "../src/show.ts";
 import { fakePi, tempDir, withEnv } from "./helpers.ts";
 
 const theme = { fg: (_c: string, s: string) => s } as any;
@@ -35,14 +35,6 @@ async function setup(exec: Run, browser: () => string | undefined = () => "chrom
   const call = (params: object) => tool.execute("call/1", params, undefined, undefined, { cwd: root });
   return { tool, root, call };
 }
-
-test("findBrowser looks up Chromium or Chrome on the PATH", async () => {
-  const dir = await tempDir();
-  await fs.writeFile(path.join(dir, "google-chrome"), "", { mode: 0o755 });
-  assert.equal(findBrowser(dir), path.join(dir, "google-chrome"));
-  // Only the names given are looked up, so a Chrome app installed on a Mac cannot make this fail.
-  assert.equal(findBrowser(await tempDir(), ["chromium", "google-chrome"]), undefined);
-});
 
 test("pageFor wraps a fragment, keeps a document, and points a file's page at its folder", async () => {
   assert.match(pageFor({ html: "<table></table>" }), /^<!doctype html><meta charset="utf-8"><body><table><\/table><\/body><script>/);
@@ -142,7 +134,7 @@ test("show renders an HTML file without leaving its page behind, and fails clear
     assert.doesNotMatch(r.content[0].text, /page:/);
 
     await assert.rejects((await setup(fakeBrowser("").exec)).call({ html: "<p>" }), /did not finish loading/);
-    await assert.rejects((await setup(exec, () => undefined)).call({ html: "<p>" }), /No Chromium or Chrome/);
+    await assert.rejects((await setup(exec, () => undefined)).call({ html: "<p>" }), /No browser available/);
     assert.deepEqual(await fs.readdir(path.join(agent, "renders")), [path.basename(r.details.file)], "a failed render leaves no page");
   });
 });

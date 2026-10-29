@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
+import { execFile, execFileSync } from "node:child_process";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
 import { test } from "node:test";
 import { branchName, buildBody, gatherFacts, newAdrs, prTitle, runPr, scrub, type PrFacts } from "../src/pr.ts";
+import { installMessage } from "../src/nix.ts";
 import { fakeUI, tempProject } from "./helpers.ts";
 
 const plan = { summary: "Add the thing", steps: ["step one"], files: [], decisions: [] as any[], interface: [], seams: [{ name: "parser", testFile: "t", catches: "bad input", misses: "io" }] };
@@ -53,7 +58,7 @@ test("body: template kept, evidence note, no verify steps", () => {
 });
 
 type Call = [string, string[]];
-function setup(opts: { branch?: string; gh?: boolean; verifyCode?: number } = {}) {
+function setup(opts: { branch?: string; gh?: boolean; verifyCode?: number; dirty?: string } = {}) {
   const calls: Call[] = [];
   const exec: any = async (cmd: string, args: string[]) => {
     calls.push([cmd, args]);
@@ -65,6 +70,7 @@ function setup(opts: { branch?: string; gh?: boolean; verifyCode?: number } = {}
     if (args[0] === "rev-parse" && args.includes("origin/HEAD")) return { code: 1, stdout: "", stderr: "", killed: false };
     if (args[0] === "log") return ok("abc1234 add it\n");
     if (args[0] === "remote") return ok("git@x:y.git\n");
+    if (args[0] === "status") return ok(calls.some(([, a]) => a[0] === "commit") ? "" : opts.dirty ?? "");
     return ok();
   };
   return { exec, calls, has: (cmd: string, first: string) => calls.some(([c, a]) => c === cmd && a[0] === first) };
@@ -99,6 +105,14 @@ test("failing verify asks before going on; declining stops", async () => {
   assert.ok(!has("git", "push"));
 });
 
+test("a failing git status stops /pr instead of passing for a clean tree", async () => {
+  const inner = setup().exec;
+  const exec: any = async (cmd: string, args: string[]) => (cmd === "git" && args[0] === "status" ? { code: 128, stdout: "", stderr: "fatal: bad index", killed: false } : inner(cmd, args));
+  const out = await runPr(exec, await project(), fakeUI([]) as any);
+  assert.equal(out.status, "not-ready");
+  assert.match(out.detail ?? "", /git status failed/);
+});
+
 test("on the base branch: needs a confirmed task branch first", async () => {
   const refused = setup({ branch: "main" });
   assert.equal((await runPr(refused.exec, await project(), fakeUI([false]) as any)).status, "not-ready");
@@ -127,4 +141,90 @@ test("origin/HEAD is resolved to the branch it points to", async () => {
   };
   const facts = await gatherFacts(exec, "/tmp");
   assert.equal(facts?.base, "origin/main");
+});
+
+test("uncommitted work /task left is committed only after a yes, minus the machine-local .pi/ files", async () => {
+  const declined = setup({ dirty: " M src/fee.ts\n?? docs/adr/0002-fee.md\n" });
+  const ui = fakeUI([false, false]);
+  await runPr(declined.exec, await project(), ui as any);
+  assert.deepEqual(ui.asked, ["Commit the uncommitted work?", "Open the PR?"]);
+  assert.ok(!declined.has("git", "commit"));
+  const accepted = setup({ dirty: " M src/fee.ts\n" });
+  const out = await runPr(accepted.exec, await project(), fakeUI([true, true]) as any);
+  assert.equal(out.status, "opened");
+  const order = accepted.calls.map(([c, a]) => `${c} ${a.join(" ")}`);
+  const add = order.indexOf("git add -A -- :/");
+  const reset = order.indexOf("git reset -q -- :/.pi/task.json :/.pi/contract.json :/.pi/metrics/ :/.pi/evidence/");
+  const commit = order.findIndex((c) => c.startsWith("git commit"));
+  assert.ok(add >= 0 && add < reset && reset < commit && commit < order.findIndex((c) => c.startsWith("git push")), order.join("\n"));
+});
+
+test("pi started in a subfolder commits the uncommitted work it offered from the whole repository", async () => {
+  const repo = await fs.mkdtemp(path.join(os.tmpdir(), "pi-pr-sub-"));
+  const git = (...args: string[]) => execFileSync("git", args, { cwd: repo, encoding: "utf8" });
+  git("init", "-q", "-b", "main");
+  git("config", "user.email", "t@example.com");
+  git("config", "user.name", "t");
+  await fs.mkdir(path.join(repo, "app"));
+  await fs.writeFile(path.join(repo, "app", "a.ts"), "a\n");
+  await fs.mkdir(path.join(repo, ".pi"));
+  await fs.writeFile(path.join(repo, ".pi", "task.json"), "{}\n");
+  git("add", "-A");
+  git("commit", "-qm", "init");
+  git("switch", "-qc", "task/1");
+  await fs.mkdir(path.join(repo, "lib"));
+  await fs.writeFile(path.join(repo, "lib", "x.ts"), "x\n");
+  await fs.writeFile(path.join(repo, ".pi", "task.json"), '{"local":true}\n');
+  const exec: any = (cmd: string, args: string[], options: { cwd: string }) =>
+    cmd === "git"
+      ? new Promise((resolve) => execFile(cmd, args, { cwd: options.cwd }, (err: any, stdout, stderr) => resolve({ code: err ? 1 : 0, stdout, stderr, killed: false })))
+      : Promise.resolve({ code: 1, stdout: "", stderr: "", killed: false });
+  const ui = fakeUI([true]);
+  const out = await runPr(exec, path.join(repo, "app"), ui as any, "main");
+  assert.equal(out.status, "shown", out.detail);
+  assert.match(ui.asked[0], /Commit the uncommitted work/);
+  assert.equal(git("status", "--porcelain"), " M .pi/task.json\n", "the root's machine-local state stays out of the commit");
+  assert.equal(git("show", "--name-only", "--format=", "HEAD"), "lib/x.ts\n");
+  await fs.rm(repo, { recursive: true, force: true });
+});
+
+const noNix: any = async () => ({ code: 127, stdout: "", stderr: installMessage(), killed: false });
+
+test("a failed Nix build stops /pr the same way as missing Nix, with Nix's own message", async () => {
+  const msg = "Nix could not build git: no network. Check your network and disk space, then run /doctor.";
+  const broken: any = async () => ({ code: 127, stdout: "", stderr: msg, killed: false });
+  const out = await runPr(broken, await project(), fakeUI([]) as any);
+  assert.equal(out.status, "not-ready");
+  assert.equal(out.detail, msg);
+});
+
+test("without Nix /pr shows the install message, not 'not a git repository'", async () => {
+  const out = await runPr(noNix, await project(), fakeUI([]) as any);
+  assert.equal(out.status, "not-ready");
+  assert.equal(out.detail, installMessage());
+  await assert.rejects(gatherFacts(noNix, "/tmp"), (e: any) => e.message === installMessage());
+  const notRepo: any = async () => ({ code: 128, stdout: "", stderr: "fatal: not a git repository", killed: false });
+  assert.equal((await runPr(notRepo, await project(), fakeUI([]) as any)).detail, "This folder is not a git repository.");
+});
+
+test("versioned .pi/ state is offered for the commit; task, contract, metrics and evidence are not", async () => {
+  const dirty = [" M .pi/workflow.json", "?? .pi/memory/tasks.jsonl", "?? .pi/skills/domain-fee/SKILL.md", "?? .pi/task.json", "?? .pi/contract.json", "?? .pi/metrics/run.jsonl", "?? .pi/evidence/shot.png", " M src/fee.ts"].join("\n");
+  const t = setup({ dirty });
+  const ui = fakeUI([true, false]);
+  await runPr(t.exec, await project(), ui as any);
+  assert.match(ui.asked[0], /Commit/);
+  const fresh = setup({ dirty });
+  const facts = await gatherFacts(fresh.exec, await project());
+  assert.deepEqual(facts?.dirty.map((l) => l.slice(3)), [".pi/workflow.json", ".pi/memory/tasks.jsonl", ".pi/skills/domain-fee/SKILL.md", "src/fee.ts"]);
+  assert.ok(fresh.calls.some(([c, a]) => c === "git" && a[0] === "status" && a.includes("--untracked-files=all")), "folders are listed file by file");
+  assert.ok(t.has("git", "add"));
+});
+
+test("the local-state list is the one /setup ignores, and covers what their owners write", async () => {
+  const { LOCAL_STATE, isLocalState, isPiState } = await import("../src/task-state.ts");
+  const { IGNORED_STATE } = await import("../src/setup.ts");
+  assert.equal(IGNORED_STATE, LOCAL_STATE);
+  for (const f of [".pi/task.json", ".pi/contract.json", ".pi/metrics/a.jsonl", ".pi/evidence/x/y.png"]) assert.ok(isLocalState(f), f);
+  for (const f of [".pi/workflow.json", ".pi/memory/tasks.jsonl", ".pi/skills/a/SKILL.md", ".pi/task.json.bak", "src/.pi/task.json"]) assert.ok(!isLocalState(f), f);
+  assert.ok(isPiState(".pi/workflow.json"), "reviews and risk still look past all of .pi/");
 });

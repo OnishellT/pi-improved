@@ -6,21 +6,13 @@ import { pathToFileURL } from "node:url";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Box, Container, Image, Spacer, Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
-import { which } from "./computer/which.ts";
+import { chromeEnv, chromeHeadless } from "./nix.ts";
 import { agentDir } from "./subagent-ext.ts";
 
 /** Runs a program and resolves with its stdout; rejects when it fails or times out. */
 export type Run = (bin: string, args: string[]) => Promise<string>;
 
 const IMAGES: Record<string, string> = { ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp" };
-const BROWSERS = [
-  "chromium",
-  "chromium-browser",
-  "google-chrome",
-  "google-chrome-stable",
-  "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-  "/Applications/Chromium.app/Contents/MacOS/Chromium",
-];
 const MIN_WIDTH = 500; // headless Chromium lays pages out at least this wide
 const MAX_WIDTH = 2400;
 const MAX_HEIGHT = 4000;
@@ -37,16 +29,11 @@ const MEASURE = `<script>addEventListener("load", () => setTimeout(() => {
   document.title = "size:" + Math.ceil(edge("right") + gap("Right")) + "x" + Math.ceil(edge("bottom") + gap("Bottom"));
 }))</script>`;
 
-const run: Run = (bin, args) =>
-  new Promise((resolve, reject) => execFile(bin, args, { timeout: 30_000, maxBuffer: 50e6 }, (err, stdout) => (err ? reject(err) : resolve(stdout))));
-
-export function findBrowser(pathEnv = process.env.PATH ?? "", candidates = BROWSERS): string | undefined {
-  for (const b of candidates) {
-    const found = path.isAbsolute(b) ? (fs.existsSync(b) ? b : undefined) : which(b, pathEnv);
-    if (found) return found;
-  }
-  return undefined;
-}
+// The Nix headless shell finds its fonts through the env (see chromeEnv), so the default runner passes it.
+const run: Run = async (bin, args) => {
+  const env = { ...process.env, ...(await chromeEnv().catch(() => ({}))) };
+  return new Promise((resolve, reject) => execFile(bin, args, { timeout: 30_000, maxBuffer: 50e6, env }, (err, stdout) => (err ? reject(err) : resolve(stdout))));
+};
 
 /** Deletes the files in dir last modified more than maxAgeMs before now; best effort, an entry at a time. */
 export function pruneRenders(dir: string, maxAgeMs: number, now = Date.now()) {
@@ -109,7 +96,7 @@ export function pageFor(source: { html?: string; file?: string }): string {
 
 // Pictures in the chat (Kitty or iTerm2 image protocol: Tern, Kitty, Ghostty, WezTerm, iTerm2). The model gets the
 // path only, so a picture costs no image tokens. pi already draws ```mermaid blocks as text, so diagrams go there.
-export function registerShow(pi: ExtensionAPI, exec: Run = run, browser = findBrowser) {
+export function registerShow(pi: ExtensionAPI, exec: Run = run, browser: () => Promise<string | undefined> | string | undefined = () => chromeHeadless()) {
   pi.registerTool({
     name: "show",
     label: "Show",
@@ -131,8 +118,9 @@ export function registerShow(pi: ExtensionAPI, exec: Run = run, browser = findBr
         return { content: [{ type: "text", text: `Shown to the user: ${abs}` }], details: { file: abs, mimeType: IMAGES[ext] } };
       }
       if (ext !== ".html" && ext !== ".htm" && ext !== ".svg") throw new Error(`Cannot show ${ext} files: use PNG, JPEG, GIF, WebP, SVG or HTML.`);
-      const bin = browser();
-      if (!bin) throw new Error("No Chromium or Chrome found for HTML and SVG: install one, or show a PNG instead.");
+      // Throws with the install command when Nix is missing, or the build error: no 30 s timeout hides it.
+      const bin = await browser();
+      if (!bin) throw new Error("No browser available for HTML and SVG: show a PNG instead.");
       const dir = path.join(agentDir(), "renders");
       fs.mkdirSync(dir, { recursive: true });
       pruneRenders(dir, 7 * 24 * 3600e3);
