@@ -52,6 +52,24 @@ test("readManifest: the project wins over the global file, plain objects merge d
   });
 });
 
+test("readManifest: an old setup with agentlint only inside a script gets the standard step added, recorded and saved once", async () => {
+  await withGlobal(undefined, async () => {
+    const old = { version: 1, setup: "done", verify: ["npm run lint"], connectors: [], agentlint: "npm exec agentlint --" };
+    const root = await tempProject({ ".pi/workflow.json": JSON.stringify(old), "package.json": JSON.stringify({ scripts: { lint: "eslint . && npm exec agentlint -- check --all" } }) });
+    const m = await readManifest(root);
+    assert.deepEqual(m.verify, ["npm run lint", "npm exec agentlint -- check --all"]);
+    assert.equal(m.agentlintStep, "npm exec agentlint -- check --all");
+    const saved = await readProjectManifest(root);
+    assert.deepEqual([saved.verify, saved.agentlintStep], [m.verify, m.agentlintStep]);
+    assert.deepEqual((await readManifest(root)).verify, m.verify, "a second read adds nothing");
+    // Opted out, without agentlint, or setup not finished: nothing changes.
+    for (const other of [{ ...old, useAgentlint: "never" }, { ...old, agentlint: undefined }, { ...old, setup: "running" }]) {
+      const r = await tempProject({ ".pi/workflow.json": JSON.stringify(other) });
+      assert.deepEqual([(await readManifest(r)).agentlintStep, (await readProjectManifest(r)).verify], [undefined, ["npm run lint"]]);
+    }
+  });
+});
+
 test("state keys are project-only: the global file cannot set them", async () => {
   await withGlobal({ setup: "done", verify: ["rm -rf /"], connectors: [{ id: "github" }], language: "English", agentlint: "x", mode: "flow" }, async () => {
     const m = await readManifest(await tempProject({}));

@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { ComputerConfig } from "./computer/config.ts";
+import { agentlintCheck } from "./discover.ts";
 import { globalPath, globalPreferences, merge, readGlobal, withValidLimits, writeFileAtomicAsync, type Limits } from "./config.ts";
 import type { ProfileFile } from "./self-compact/config.ts";
 
@@ -126,7 +127,19 @@ export async function readManifest(root: string): Promise<Manifest> {
   try {
     global = globalPreferences(readGlobal());
   } catch {}
-  return merge(withValidLimits(global), withValidLimits(project));
+  const manifest: Manifest = merge(withValidLimits(global), withValidLimits(project));
+  // A setup from before the agentlint step was recorded may only run agentlint inside a script of the user's: add and record the
+  // standard step once, as setup_finish does now, so agentlint findings keep their per-finding approval.
+  if (manifest.setup === "done" && manifest.agentlint && manifest.useAgentlint !== "never" && !manifest.agentlintStep) {
+    const step = agentlintCheck(manifest.agentlint);
+    if (!manifest.verify.includes(step)) manifest.verify = [...manifest.verify, step];
+    manifest.agentlintStep = step;
+    await updateManifest(root, (m) => {
+      if (!m.verify.includes(step)) m.verify = [...m.verify, step];
+      m.agentlintStep = step;
+    }).catch(() => {});
+  }
+  return manifest;
 }
 
 /** One map (models, skills, skillsOnDemand) of the global file alone; undefined when it has none or the file cannot be read. */

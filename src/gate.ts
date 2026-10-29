@@ -4,7 +4,7 @@ import { ESCALATE_EVENT, REVIEW_EVENT, TASK_DONE_EVENT, VERIFY_EVENT, type Escal
 import { checkContract, formatContract } from "./contract.ts";
 import { limitsOf } from "./config.ts";
 import { git } from "./git.ts";
-import { readManifest } from "./manifest.ts";
+import { readManifest, type Manifest } from "./manifest.ts";
 import { restoreModel, switchModel } from "./models.ts";
 import { assessRisk } from "./risk.ts";
 import { checkAcceptances } from "./guards.ts";
@@ -12,7 +12,7 @@ import { resolvePolicyFailure } from "./policy.ts";
 import { reviewDiff } from "./review.ts";
 import { skillsBlock } from "./skills.ts";
 import { oneLine, readTask, updateTask } from "./task-state.ts";
-import { type Signature, carryOnWhenPredated, failedLines, failureSignature, formatVerify, infraFailure, isPolicyFailure, predatesBaseline, runVerify, sameFailure, validCap } from "./verify.ts";
+import { type Signature, carryOnWhenPredated, failedLines, failureSignature, agentlintStepOf, verifySteps, formatVerify, infraFailure, isPolicyFailure, predatesBaseline, runVerify, sameFailure, validCap } from "./verify.ts";
 
 const UNREADABLE = "unreadable";
 const MAX_REVIEWS = 1;
@@ -63,10 +63,11 @@ export function registerGate(pi: ExtensionAPI) {
     // HEAD is part of it: a change committed through bash leaves the tree clean, and that is still a change.
     return createHash("sha1").update(parts.join("\n--\n")).digest("hex");
   };
-  const verify = async (steps: string[], cwd: string, maxReport: unknown, before: Signature[] | undefined) => {
+  const verify = async (manifest: Manifest, cwd: string, before: Signature[] | undefined) => {
     const t0 = Date.now();
-    const result = await runVerify(steps, pi.exec.bind(pi), cwd, undefined, validCap(maxReport), undefined, carryOnWhenPredated(before));
-    return { ok: result.ok, report: formatVerify(result), infra: infraFailure(result), policy: !result.ok && isPolicyFailure(result), signature: failureSignature(result), predated: predatesBaseline(result, before), lines: failedLines(result), seconds: (Date.now() - t0) / 1000 };
+    const isAgentlint = agentlintStepOf(manifest);
+    const result = await runVerify(verifySteps(manifest), pi.exec.bind(pi), cwd, undefined, validCap(manifest.maxReport), undefined, carryOnWhenPredated(before, isAgentlint));
+    return { ok: result.ok, report: formatVerify(result), infra: infraFailure(result), policy: !result.ok && isPolicyFailure(result, isAgentlint), signature: failureSignature(result), predated: predatesBaseline(result, before, isAgentlint), lines: failedLines(result), seconds: (Date.now() - t0) / 1000 };
   };
   const emitVerify = (payload: Omit<VerifyPayload, "kind"> & { kind?: VerifyPayload["kind"] }) => void pi.events?.emit(VERIFY_EVENT, { kind: "gate", ...payload } satisfies VerifyPayload);
   /** Every `limits.verifyEvery` writes while implementing: the first verify command's result, to append to that tool result. Off when it was slow at baseline. */
@@ -90,7 +91,7 @@ export function registerGate(pi: ExtensionAPI) {
     if (infraFailure(result)) return;
     emitVerify({ root: cwd, kind: "progress", ok: result.ok, seconds: (Date.now() - t0) / 1000 });
     if (result.ok) return `Progress check: \`${step}\` passes.`;
-    const old = predatesBaseline(result, task.baseline?.failing) ? " (it already failed before the change)" : "";
+    const old = predatesBaseline(result, task.baseline?.failing, agentlintStepOf(manifest)) ? " (it already failed before the change)" : "";
     return `Progress check: \`${step}\` fails${old}. This is not the final gate, and a failure can be expected mid-change (a test for code you have not written yet). Fix it only if it is not.\n${result.results[0].output.slice(-PROGRESS_TAIL)}`;
   };
   const review = async (cwd: string, task: NonNullable<Awaited<ReturnType<typeof readTask>>>, model: string, signal: AbortSignal) => {
@@ -179,7 +180,7 @@ export function registerGate(pi: ExtensionAPI) {
     const reviewing = wanted && task && reviewModel ? review(ctx.cwd, task, reviewModel, abort.signal) : undefined;
     if (reviewing) ctx.ui.setStatus("review", `reviewing the diff with ${reviewModel}…`);
     const clearStatus = () => ctx.ui.setStatus("review", undefined);
-    const { ok, report, policy, infra, signature, predated: onlyOld, lines, seconds } = await verify(manifest.verify, ctx.cwd, manifest.maxReport, task?.baseline?.failing);
+    const { ok, report, policy, infra, signature, predated: onlyOld, lines, seconds } = await verify(manifest, ctx.cwd, task?.baseline?.failing);
     const emit = (extra: Pick<VerifyPayload, "predates" | "premise"> = {}) => emitVerify({ root: ctx.cwd, ok, seconds, ...extra });
     if (infra) {
       // Not a verify failure: the code cannot be at fault, so the model hears nothing and no retry is spent.
@@ -275,9 +276,9 @@ export function registerGate(pi: ExtensionAPI) {
   pi.registerCommand("verify", {
     description: "Run the project's verification steps",
     handler: async (_args, ctx) => {
-      const { verify: steps, maxReport } = await readManifest(ctx.cwd);
-      if (!steps.length) return ctx.ui.notify("No verification steps configured.", "warning");
-      const { ok, report } = await verify(steps, ctx.cwd, maxReport, undefined);
+      const manifest = await readManifest(ctx.cwd);
+      if (!manifest.verify.length) return ctx.ui.notify("No verification steps configured.", "warning");
+      const { ok, report } = await verify(manifest, ctx.cwd, undefined);
       ctx.ui.notify(report, ok ? "info" : "error");
     },
   });

@@ -436,7 +436,17 @@ test("a later step that failed at the baseline with the same lines predates too;
 
 test("a failing agentlint rule never counts as predating", async () => {
   const out = "agentlint: unresolved findings\nerror x";
-  const t = await parallel({}, [], out, baselineOf(out));
+  const lint = "agentlint check --all";
+  const t = await parallel({}, [], out, { baseline: { ok: false, seconds: 1, failing: [sigOf(out, lint)] } }, [lint]);
+  t.gate.resolve();
+  assert.match((await t.settle()).entries[0].content, /This is an agentlint rule/);
+});
+
+test("the agentlint step setup recorded is an agentlint rule whatever its command, never predating", async () => {
+  const out = "agentlint: unresolved findings\nerror x";
+  const step = "pnpm agentlint check --all";
+  const t = await parallel({}, [], out, { baseline: { ok: false, seconds: 1, failing: [sigOf(out, step)] } }, [step]);
+  await updateManifest(t.ctx.cwd, (m) => void (m.agentlintStep = step));
   t.gate.resolve();
   assert.match((await t.settle()).entries[0].content, /This is an agentlint rule/);
 });
@@ -556,8 +566,16 @@ test("no escalation without a configured model", async () => {
   assert.equal(t.emitted.some((e) => e.name === ESCALATE_EVENT), false);
 });
 
+test("a failing test that merely mentions agentlint is an ordinary failure: counted, then diagnosed", async () => {
+  const t = await parallel({ escalate: "p/strong" }, [], "FAIL test/agentlint-config.test.ts: expected 2, got 3");
+  t.gate.resolve();
+  const first = await t.settle();
+  assert.doesNotMatch(first.entries[0].content, /agentlint rule/);
+  assert.equal((await t.settle()).entries[0].customType, "verify-diagnose");
+});
+
 test("an agentlint failure never escalates and tells the model how to record an exception", async () => {
-  const t = await parallel({ escalate: "p/strong" }, ["Make the model fix it", "Make the model fix it"], "facturas/tax-review src/invoice.js:11\n2 unresolved findings — gate closed");
+  const t = await parallel({ escalate: "p/strong" }, ["Make the model fix it", "Make the model fix it"], "facturas/tax-review src/invoice.js:11\n2 unresolved findings — gate closed", {}, ["agentlint check --all"]);
   t.gate.resolve();
   let last: any;
   for (let i = 0; i < 2; i++) last = await t.settle();
@@ -570,7 +588,7 @@ test("a repeated agentlint failure asks the user; approval records the exception
   const report = "facturas/money-review src/invoice.js:11\n1 unresolved findings — gate closed";
   const calls: string[] = [];
   const root = await tempProject({
-    ".pi/workflow.json": JSON.stringify({ version: 1, setup: "done", verify: ["check"], connectors: [], agentlint: "npm exec agentlint --" }),
+    ".pi/workflow.json": JSON.stringify({ version: 1, setup: "done", verify: ["npm exec agentlint -- check --all"], connectors: [], agentlint: "npm exec agentlint --" }),
     ".pi/task.json": JSON.stringify(task),
   });
   let remaining = 1;

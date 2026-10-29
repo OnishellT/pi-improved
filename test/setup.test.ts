@@ -331,7 +331,7 @@ test("an agentlint config with zero rules does not block setup", async () => {
   assert.match(await fs.readFile(path.join(root, ".gitignore"), "utf8"), /\.pi\/task\.json/);
 });
 
-test("setup_finish does not add agentlint twice when a package script already runs it", async () => {
+test("setup_finish adds and records its own agentlint step even when a package script already runs agentlint", async () => {
   const root = await tempProject({
     "AGENTS.md": "# App\n",
     "GLOSSARY.md": "# G\n",
@@ -344,10 +344,15 @@ test("setup_finish does not add agentlint twice when a package script already ru
     m.setup = "running";
     m.agentlint = "npm exec agentlint --";
   });
-  const { pi, tools } = fakePi();
+  const ran: string[] = [];
+  const { pi, tools } = fakePi((cmd, args) => (cmd === "bash" && ran.push(args[1]), { code: 0 }));
   registerSetup(pi);
   await tools.get("setup_finish").execute("1", { verify: ["npm run verify"], summary: "s" }, undefined, undefined, { cwd: root, hasUI: true, ui: fakeUI([true]) });
-  assert.deepEqual((await readManifest(root)).verify, ["npm run verify"]);
+  const manifest = await readManifest(root);
+  assert.deepEqual(manifest.verify, ["npm run verify", "npm exec agentlint -- check --all"]);
+  assert.equal(manifest.agentlintStep, "npm exec agentlint -- check --all");
+  // Its own step runs first, so a failing script that also runs agentlint cannot stop verify before the per-finding approval.
+  assert.deepEqual(ran.filter((c) => manifest.verify.includes(c)), ["npm exec agentlint -- check --all", "npm run verify"]);
 });
 
 test("setup_finish refuses outside setup", async () => {
