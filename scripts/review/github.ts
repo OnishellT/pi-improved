@@ -1,16 +1,23 @@
 // GitHub and git plumbing of the reviewer that can be tested without the network.
 import { collectPages, type Page } from "./pages.ts";
 
-// The local remote of the PR's repository (`gh repo view` may resolve to an upstream while
-// `origin` is a fork). `remotes` is `git remote -v` output.
-export function remoteFor(repo: string, remotes: string): string {
-  const wanted = repo.toLowerCase();
+// `host/owner/name` of an https, ssh or scp-style git URL.
+const hostAndPath = (url: string) =>
+  /^(?:[\w+]+:\/\/)?(?:[^@/]+@)?([^/:]+)(?::\d+)?[:/](.+?)(?:\.git)?\/?$/
+    .exec(url)
+    ?.slice(1, 3)
+    .join("/")
+    .toLowerCase();
+
+// The local remote that fetches the PR's repository (`gh repo view` may resolve to an upstream
+// while `origin` is a fork). `repoUrl` is its web URL; `remotes` is `git remote -v` output.
+export function remoteFor(repoUrl: string, remotes: string): string {
+  const wanted = hostAndPath(repoUrl);
   for (const line of remotes.split("\n").filter((entry) => entry.endsWith("(fetch)"))) {
     const [name, url = ""] = line.split(/\s+/);
-    const path = /[:/]([^:/]+\/[^/]+?)(?:\.git)?\/?$/.exec(url)?.[1]?.toLowerCase();
-    if (name && path === wanted) return name;
+    if (name && hostAndPath(url) === wanted) return name;
   }
-  throw new Error(`no git remote points at ${repo}: add one (git remote add upstream <url>)`);
+  throw new Error(`no git remote fetches ${repoUrl}: add one (git remote add upstream <url>)`);
 }
 
 // `gh api graphql` arguments. -F would type-convert strings (`123`, `true`, `@file`), so only
