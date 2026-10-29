@@ -62,9 +62,26 @@ test("/doctor validates mode: absent and valid pass, anything else fails", async
     const t = await setup(() => ({ code: 0 }), true, mode);
     await t.commands.get("doctor").handler("", t.ctx);
     const msg = t.notes[0].msg;
-    assert.equal(/✗ Mode:/.test(msg), !ok, String(mode));
+    assert.equal(/✗ mode:/.test(msg), !ok, String(mode));
     if (mode === "turbo") assert.match(msg, /"direct" or "flow"/);
   }
+});
+
+test("/doctor flags option values the code would read as another value, and unknown skills", async () => {
+  const t = await setup(() => ({ code: 0 }), true, undefined, { review: { minLevel: "medium" }, useAgentlint: "Never", useBend: "never", skills: { plan: ["no-such-skill"], review: "pstack-review" } });
+  await t.commands.get("doctor").handler("", t.ctx);
+  const msg = t.notes[0].msg;
+  assert.match(msg, /✗ review\.minLevel: "medium" is not valid: use "off", "low" or "high"/);
+  assert.match(msg, /✗ useAgentlint: "Never" is not valid/);
+  assert.match(msg, /✓ useBend: never/);
+  assert.match(msg, /✗ Skills: skills\.plan: unknown skill "no-such-skill"; skills\.review is not a list/);
+});
+
+test("the agentlint check runs the project's own command", async () => {
+  const ran: string[] = [];
+  const t = await setup((cmd, args) => (ran.push([cmd, ...args].join(" ")), { code: 0 }), true, undefined, { agentlint: "pnpm agentlint" });
+  await t.commands.get("doctor").handler("", t.ctx);
+  assert.ok(ran.includes("bash -lc pnpm agentlint --help"), ran.join("\n"));
 });
 
 test("/doctor reports a corrupt workflow.json as a problem instead of throwing", async () => {
@@ -105,10 +122,14 @@ test("/doctor says gh is the one login when the configured helper is not availab
   assert.match(broken.notes[0].msg, /✓ git credentials: the configured helper \(libsecret\) is not available to the Nix git, so pi-improved uses your gh login/);
   const loggedOut = await setup((cmd, args) => ({ code: cmd === "gh" && args[0] === "auth" ? 1 : 0 }), true, undefined, {}, nix(async () => ({ configured: [], missing: [], ok: false })));
   await loggedOut.commands.get("doctor").handler("", loggedOut.ctx);
-  assert.match(loggedOut.notes[0].msg, /✗ git credentials: no credential helper is configured\. Run `gh auth login`: it is the one login/);
+  assert.match(loggedOut.notes[0].msg, /✗ git credentials: no credential helper is configured\. Run `gh auth login` \(no gh on your PATH: `nix [^`]*run github:NixOS\/nixpkgs\/[0-9a-f]{40}#gh -- auth login`\): it is the one login/);
+  assert.doesNotMatch(loggedOut.notes[0].msg, /gh login/);
+  const helperNoGh = await setup((cmd, args) => ({ code: cmd === "gh" && args[0] === "auth" ? 1 : 0 }), true, undefined, {}, nix(async () => ({ configured: ["store"], missing: [], ok: true })));
+  await helperNoGh.commands.get("doctor").handler("", helperNoGh.ctx);
+  assert.match(helperNoGh.notes[0].msg, /✓ git credentials: helper: store[\s\S]*✗ gh login: not logged in, and \/pr needs it/);
   const fine = await setup(() => ({ code: 0 }), true, undefined, {}, nix(async () => ({ configured: ["store"], missing: [], ok: true })));
   await fine.commands.get("doctor").handler("", fine.ctx);
-  assert.match(fine.notes[0].msg, /✓ git credentials: helper: store/);
+  assert.match(fine.notes[0].msg, /✓ git credentials: helper: store[\s\S]*✓ gh login: ok/);
 });
 
 test("the desktop is checked only while it is on, and names what it needs", async () => {
@@ -127,6 +148,6 @@ test("the desktop is checked only while it is on, and names what it needs", asyn
 });
 
 test("a missing subagent extension says how to get it back", () => {
-  assert.match(extensionDetail(undefined), /node scripts\/postinstall\.mjs/);
+  assert.match(extensionDetail(undefined), /Run `npm install` in the package folder/);
   assert.equal(extensionDetail("bundled"), "bundled");
 });

@@ -82,3 +82,20 @@ test("a session saved with the phase tools inactive gets them back once", async 
   await emit("session_start", { reason: "reload" }, { cwd: "/" });
   assert.deepEqual(sets, [["read", "setup_finish", "task_plan"]]);
 });
+
+test("a bundled pi-subagent that fails to load is reported at session start, not swallowed", async () => {
+  const { pi, emit } = fakePi();
+  const on = pi.on;
+  pi.on = (event: string, handler: any) => (event === "resources_discover" ? assert.fail("pi API changed") : on(event, handler));
+  const agent = await tempProject({}); // no global subagent, so the bundled one is loaded
+  await withEnv({ PI_SUBAGENT_RUN_DIR: undefined, PI_CODING_AGENT_DIR: agent }, () => extension(pi));
+  const errors: string[] = [];
+  const log = console.error;
+  console.error = (text: string) => void errors.push(text);
+  try {
+    await emit("session_start", { reason: "startup" }, { cwd: agent, hasUI: false });
+  } finally {
+    console.error = log;
+  }
+  assert.match(errors.join("\n"), /bundled pi-subagent did not load \(pi API changed\)[\s\S]*npm install/);
+});

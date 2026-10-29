@@ -55,7 +55,7 @@ export const isNixFailure = (r: { code: number; stderr: string }) => r.code === 
 
 const cache = new Map<string, Promise<string>>();
 let credentials: Promise<CredentialStatus> | undefined;
-export const clearNixCache = () => (cache.clear(), (credentials = undefined));
+export const clearNixCache = () => (cache.clear(), (credentials = undefined), (pruned = false));
 
 /** Builds (or finds) a pinned nixpkgs attribute and returns the output that has `bin/`, else the first. Cached for the process. */
 export function nixPackage(attr: string, run: Spawn = spawn, platform = process.platform, arch = process.arch): Promise<string> {
@@ -68,10 +68,20 @@ export function nixPackage(attr: string, run: Spawn = spawn, platform = process.
   return hit;
 }
 
+let pruned = false;
+/** The roots of other pins, once per process: each flake.lock bump would otherwise keep hundreds of MB alive on every PC. */
+function pruneOldPins() {
+  if (pruned) return;
+  pruned = true;
+  const roots = path.join(agentDir(), "nix-roots");
+  for (const rev of fs.existsSync(roots) ? fs.readdirSync(roots) : []) if (rev !== REV) fs.rmSync(path.join(roots, rev), { recursive: true, force: true });
+}
+
 async function build(attr: string, run: Spawn, platform: string, arch: string): Promise<string> {
   // Flags on the command line: it works without the user enabling flakes. The out-link is a GC root: a garbage
-  // collection during a session cannot delete a path it caches or put on PATH. One folder per pin, so a session on a
-  // newer pin does not replace the root an older one still uses (delete nix-roots/ to free them all).
+  // collection during a session cannot delete a path it caches or put on PATH. One folder per pin; the first build of
+  // a process drops the folders of other pins (a session still on an older pin keeps its paths until the next collection).
+  pruneOldPins();
   const args = ["--extra-experimental-features", "nix-command flakes", "build", "--out-link", path.join(agentDir(), "nix-roots", REV, attr), "--print-out-paths", `${NIXPKGS}#${attr}`];
   let result;
   for (const nix of ["nix", NIX_PROFILE_BIN]) {

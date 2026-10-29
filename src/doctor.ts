@@ -6,8 +6,9 @@ import { desktopMissing } from "./computer/desktop.ts";
 import { which } from "./computer/which.ts";
 import { bundledExtension, hasGlobalSubagent } from "./subagent-ext.ts";
 import { checkLimits, PREFERENCE_KEYS, readGlobal } from "./config.ts";
-import { configFiles, readManifest, readProjectManifest } from "./manifest.ts";
-import { chromeHeadless, credentialStatus, hasNix, installMessage, nixPackage, type CredentialStatus } from "./nix.ts";
+import { configFiles, readManifest, readProjectManifest, type Manifest } from "./manifest.ts";
+import { listSkills } from "./skills.ts";
+import { chromeHeadless, credentialStatus, hasNix, installMessage, NIXPKGS, nixPackage, type CredentialStatus } from "./nix.ts";
 
 const MIN_NODE = [22, 18];
 
@@ -32,6 +33,8 @@ export interface NixProbe {
   /** The git credential helpers for github.com and whether Nix git can run them. */
   credentials?: () => Promise<CredentialStatus>;
 }
+/** gh comes from Nix, so a PC may have none on the shell's PATH. */
+const GH_LOGIN = `\`gh auth login\` (no gh on your PATH: \`nix --extra-experimental-features 'nix-command flakes' run ${NIXPKGS}#gh -- auth login\`)`;
 const realNix: NixProbe = { has: hasNix, resolve: nixPackage, credentials: () => credentialStatus() };
 
 /** Nix itself, then (when `resolve` is given) each package it provides. A failure says what to do, not "timed out". */
@@ -57,14 +60,16 @@ async function nixChecks(nix: NixProbe, loggedIn: () => Promise<boolean>): Promi
     checks.push({
       name: "git credentials",
       ok: ok || gh,
-      detail: ok ? `helper: ${configured.join(", ")}` : gh ? `${why ? `${why}, so ` : ""}pi-improved uses your gh login for github.com` : `${why ? `${why}. ` : ""}Run \`gh auth login\`: it is the one login, for git over https and for /pr`,
+      detail: ok ? `helper: ${configured.join(", ")}` : gh ? `${why ? `${why}, so ` : ""}pi-improved uses your gh login for github.com` : `${why ? `${why}. ` : ""}Run ${GH_LOGIN}: it is the one login, for git over https and for /pr`,
     });
+    // A working git helper does not log gh in, and /pr needs gh after it has pushed.
+    if (ok) checks.push({ name: "gh login", ok: gh, detail: gh ? "ok" : `not logged in, and /pr needs it: run ${GH_LOGIN}` });
   }
   return checks;
 }
 
 /** The `.bundled/` folder is made by the package's postinstall, which a package manager may skip. */
-export const extensionDetail = (ext: string | undefined) => ext ?? "missing: without it the review never finishes. Run `node scripts/postinstall.mjs` in the package folder to fetch it";
+export const extensionDetail = (ext: string | undefined) => ext ?? "missing: without it the review never finishes. Run `npm install` in the package folder";
 
 /** Environment checks. Never throws. `nix.resolve` is left out at session start: the first build downloads hundreds of MB, so nothing that needs Nix runs then. */
 export async function runDoctor(pi: ExtensionAPI, ctx: ExtensionContext, version = process.versions.node, nix: NixProbe = realNix): Promise<Check[]> {
@@ -80,12 +85,12 @@ export async function runDoctor(pi: ExtensionAPI, ctx: ExtensionContext, version
   const subagentOk = nix.resolve ? await probe(subagent, ["list"]) : fs.existsSync(subagent) || Boolean(which(subagent));
   const checks: Check[] = [];
   checks.push({ name: "Node", ok: nodeOk(version), detail: nodeOk(version) ? version : `${version}: needs >= ${MIN_NODE.join(".")}` });
-  checks.push({ name: "subagent", ok: subagentOk, detail: subagentOk ? subagent : "not found or not running (reinstall with `pi install git:github.com/OnishellT/pi-improved`)" });
+  checks.push({ name: "subagent", ok: subagentOk, detail: subagentOk ? subagent : "not found or not running (run `npm install` in the package folder, or reinstall with `pi install git:github.com/OnishellT/pi-improved`)" });
   const ext = hasGlobalSubagent() ? "global" : fs.existsSync(bundledExtension()) ? "bundled" : undefined;
   checks.push({ name: "subagent extension", ok: Boolean(ext), detail: extensionDetail(ext) });
   checks.push(...(await nixChecks(nix, () => probe("gh", ["auth", "status"]))));
 
-  let manifest;
+  let manifest: Manifest | undefined;
   try {
     manifest = await readManifest(ctx.cwd);
   } catch (error: any) {
@@ -119,8 +124,9 @@ export async function runDoctor(pi: ExtensionAPI, ctx: ExtensionContext, version
   if (problems.length) checks.push({ name: "Limits", ok: false, detail: problems.join("; ") });
   // agentlint matters only to a project whose verify or policy runs it.
   if (manifest?.agentlint || manifest?.verify?.some((c) => c.includes("agentlint"))) {
-    const agentlint = resolveBin("agentlint");
-    const ok = await probe(agentlint, ["--help"]);
+    // The project's own command, as verify and the policy run it; pi-improved's copy only when the project names none.
+    const agentlint = manifest?.agentlint ?? resolveBin("agentlint");
+    const ok = await probe("bash", ["-lc", `${agentlint} --help`]);
     checks.push({ name: "agentlint", ok, detail: ok ? agentlint : "not found or not running" });
   }
   // Bend matters only to a project that keeps laws.
@@ -133,11 +139,26 @@ export async function runDoctor(pi: ExtensionAPI, ctx: ExtensionContext, version
     const missing = desktopMissing();
     checks.push({ name: "Desktop", ok: !missing.length, detail: missing.length ? `on, but needs: ${missing.join(", ")}` : "on" });
   }
-  const mode = manifest?.mode;
-  if (mode !== undefined) {
-    const modeOk = mode === "direct" || mode === "flow";
-    checks.push({ name: "Mode", ok: modeOk, detail: modeOk ? mode : `"${String(mode)}" is not valid in .pi/workflow.json: use "direct" or "flow"` });
+  // The code compares these with fixed values, so anything else acts as one of them without a word.
+  const choices: [string, unknown, string[]][] = [
+    ["mode", manifest?.mode, ["direct", "flow"]],
+    ["review.minLevel", manifest?.review?.minLevel, ["off", "low", "high"]],
+    ["useAgentlint", manifest?.useAgentlint, ["ask", "always", "never"]],
+    ["useBend", manifest?.useBend, ["ask", "always", "never"]],
+  ];
+  for (const [name, value, allowed] of choices) {
+    if (value === undefined) continue;
+    const ok = allowed.includes(value as string);
+    checks.push({ name, ok, detail: ok ? String(value) : `${JSON.stringify(value)} is not valid: use ${allowed.map((a) => `"${a}"`).join(", ").replace(/, ([^,]*)$/, " or $1")}` });
   }
+  // Skill lists drop unknown names silently: name them here.
+  const known = await listSkills();
+  const skillProblems = (["skills", "skillsOnDemand"] as const).flatMap((key) =>
+    Object.entries(manifest?.[key] ?? {}).flatMap(([phase, names]) =>
+      !Array.isArray(names) ? [`${key}.${phase} is not a list`] : names.filter((n) => !known.includes(n)).map((n) => `${key}.${phase}: unknown skill "${n}"`),
+    ),
+  );
+  if (skillProblems.length) checks.push({ name: "Skills", ok: false, detail: skillProblems.join("; ") });
 
   const wanted = Object.values(manifest?.models ?? {}).filter((m): m is string => Boolean(m));
   if (wanted.length && ctx.modelRegistry) {
