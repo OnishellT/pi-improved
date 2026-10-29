@@ -23,16 +23,19 @@ function isGlobalConfig(file: string, cwd: string) {
 }
 
 /** The file the write and edit tools would touch: pi turns a file URL into its path, strips a leading @, turns Unicode spaces into plain ones and expands ~, then resolves against the cwd. Symlinks are followed. */
-function toolPath(file: string, cwd: string) {
+export const toolPath = (file: string, cwd: string) => canonical(givenPath(file, cwd));
+
+/** The path the tool is given, resolved as in `toolPath` but with symlinks kept. */
+export function givenPath(file: string, cwd: string) {
   const unspaced = file.replace(/[\u00A0\u2000-\u200A\u202F\u205F\u3000]/g, " ").replace(/^@/, "");
   // A file URL names the same file as its path.
   const plain = unspaced.startsWith("file://") ? (() => { try { return fileURLToPath(unspaced); } catch { return unspaced; } })() : unspaced;
   const expanded = plain === "~" || plain.startsWith("~/") ? path.join(homedir(), plain.slice(1)) : plain;
-  return canonical(path.resolve(cwd, expanded));
+  return path.resolve(cwd, expanded);
 }
 
 /** The path with symlinks resolved, also when the file does not exist yet (a dangling link is followed; else its nearest existing parent is resolved). */
-function canonical(file: string): string {
+export function canonical(file: string): string {
   try {
     return fs.realpathSync(file);
   } catch {
