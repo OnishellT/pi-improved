@@ -23,7 +23,6 @@ Tests verify behavior through public interfaces, not implementation details. A g
 ## Guardrails
 
 - Confirm each new test fails for the reason you intend, not a typo or missing import.
-- Never edit or weaken an existing assertion to fit your code; if one is wrong, say so in your final message.
 - Once per task, break the code on purpose, see the test catch it, undo.
 
 Examples and mocking guidance: `references/tests.md`, `references/mocking.md` (not injected; read only if needed).

@@ -1,12 +1,13 @@
 ---
 name: principles-implement
-description: Working principles while implementing: prove it works, smallest change, fix root causes, delete before adding.
+description: Working rules while implementing: one purpose, no swallowed errors, tests never weakened, evidence before done.
 ---
 
-# Implement principles
+# Implement rules
 
-- Prove it works against the real artifact (run the code, the build, the UI) before declaring done.
-- Make the smallest change that solves the problem. Prefer deleting code.
-- Fix root causes, not symptoms.
-- Remove dead code before adding new code.
-- After a rename, grep for the old name and fix what is left.
+- One purpose, plan files only, no refactors.
+- Match neighbours; validate only at the boundary.
+- Never swallow errors (empty, log-only, catch-all).
+- Bug fix: add a test that fails without it. Never weaken, skip or delete a test; if one is wrong, say so.
+- No abstraction before a second use, no commented-out code.
+- No unplanned dependency. Show real verify output before done.
