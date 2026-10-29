@@ -4,13 +4,13 @@ Automatic project setup for Pi, so cheap models work with good context. The chea
 
 ## Install
 
-Requirements: Linux or macOS, Node >= 22.18 and **[Nix](https://nixos.org/download/)**. Nix is mandatory: tmux (the review and plan-check subagents run in tmux sessions), git, gh, bash and the headless Chromium for `show` and the isolated browser come from one pinned nixpkgs (the rev in `flake.lock`), downloaded on first use and cached by Nix, so nothing else has to be installed or kept in step. On Linux and WSL (needs systemd): `curl --proto '=https' --tlsv1.2 -L https://nixos.org/nix/install | sh -s -- --daemon`. On macOS: `curl --proto '=https' --tlsv1.2 -L https://nixos.org/nix/install | sh`. Intel Macs have no headless Chromium in nixpkgs, so `show` on HTML and the isolated browser are unavailable there. Without Nix, those features say so with the command for your OS, and `/doctor` reports it. Your own ssh stays the system's, `tern` and the desktop tools are not packaged, and the browser `/computer` can drive in relay mode is the one you installed. The rest ships with the package, including the [pi-subagent](https://github.com/badlogic/pi-subagent) CLI and [agentlint](https://github.com/aurelienbobenrieth/agentlint). A pi-subagent installed in pi itself wins over the bundled one and keeps its own widget and `/subagent`.
+Requirements: Linux or macOS, Node >= 22.18 and **[Nix](https://nixos.org/download/)**. `pi install` itself runs git and npm, so both must be on your PATH (the flake's pi below has them). Nix is mandatory: tmux (the review and plan-check subagents run in tmux sessions), git, gh, bash and the headless Chromium for `show` and the isolated browser come from one pinned nixpkgs (the rev in `flake.lock`), downloaded on first use and cached by Nix, so nothing else has to be installed or kept in step. On Linux and WSL (needs systemd): `curl --proto '=https' --tlsv1.2 -L https://nixos.org/nix/install | sh -s -- --daemon`. On macOS: `curl --proto '=https' --tlsv1.2 -L https://nixos.org/nix/install | sh`. Intel Macs have no headless Chromium in nixpkgs, so `show` on HTML and the isolated browser are unavailable there. Without Nix, those features say so with the command for your OS, and `/doctor` reports it. Your own ssh stays the system's, `tern` and the desktop tools are not packaged, and the browser `/computer` can drive in relay mode is the one you installed. The rest ships with the package, including the [pi-subagent](https://github.com/OnishellT/pi-subagent) CLI (a fork that passes `PI_CODING_AGENT_DIR` to its children) and [agentlint](https://github.com/aurelienbobenrieth/agentlint). A pi-subagent installed in pi itself wins over the bundled one and keeps its own widget and `/subagent`.
 
 ```sh
 pi install git:github.com/OnishellT/pi-improved
 ```
 
-git over https uses one login, `gh auth login`: when your git has no helper Nix git can run for github.com (a helper given by name such as `libsecret` or `osxkeychain` is not found by it), pi-improved passes gh's helper on that one call and writes nothing to your git config.
+git over https uses one login, `gh auth login` (gh comes from Nix: without gh on your PATH, run `nix --extra-experimental-features 'nix-command flakes' run nixpkgs#gh -- auth login`): when your git has no helper Nix git can run for github.com (a helper given by name such as `libsecret` or `osxkeychain` is not found by it), pi-improved passes gh's helper on that one call and writes nothing to your git config.
 
 To get pi itself, pinned and with its tools, from this repo's flake (nixpkgs `pi-coding-agent` with Node 22, git, tmux and gh on its PATH; x86_64-linux, aarch64-linux, aarch64-darwin):
 
@@ -21,7 +21,7 @@ pi install git:github.com/OnishellT/pi-improved
 
 Both ways work: the flake is for a stable pi, and pi's own latest release does too.
 
-To try without installing: `npm install`, then `pi -e ~/projects/pi-improved`.
+To try without installing: `npm install` in your clone, then `pi -e <path to your clone>`. pi does not install a local path's dependencies, so run `npm install` there again after every pull.
 
 ## Use
 
@@ -30,7 +30,7 @@ In your project:
 1. `/setup`: scan the repo, ask the minimum, then have the model write `AGENTS.md`, domain skills, ADRs and a verification skill. Pi offers it when you open a project without setup.
 2. `/models`: pick a model per phase (`setup`, `implement`, `review`, `escalate`). Saved in `.pi/workflow.json`.
 3. `/task <description or PAY-142>`: plan, approve once (small, low-risk plans skip the dialog but pass the same gates), implement. Code gates the end on `verify`, then a read-only review runs if the diff is high risk (set `models.review`; `review.minLevel` changes the level). `/task done` closes the task by hand, `/task cancel` drops it.
-4. `/doctor`: show which config files are in effect, report limits and keys that were not read, check Node, subagent, Nix and the packages it provides (tmux, git, gh, bash, the headless browser; the first run downloads them), the git login for github.com, agentlint when the project uses it, and that each configured model is listed for a provider you are logged in to (if one is missing, run `/login <provider>`). It does not call the models, so one your account cannot use only fails on its first call.
+4. `/doctor`: show which config files are in effect, report limits and keys that were not read, check Node, subagent, Nix and the packages it provides (tmux, git, gh, bash, the headless browser; the first run downloads them), the git and gh logins for github.com, agentlint when the project uses it, Bend when the project keeps `LAWS.bend`, option values and skill names, and that each configured model is listed for a provider you are logged in to (if one is missing, run `/login <provider>`). It does not call the models, so one your account cannot use only fails on its first call.
 
 `/pr [base]` prepares the branch and the PR with the static check results. `/cost` shows the active task's spend and `/metrics` the finished tasks'. `/verify` runs verification by hand. `/skills` picks the skills injected per phase. `/computer` picks the browser and desktop the agent can drive, off until you choose ([docs/COMPUTER.md](docs/COMPUTER.md)). The agent can show pictures in the chat: images, charts it plots, and HTML or SVG mockups (those use the headless Chromium from Nix).
 
@@ -65,6 +65,7 @@ Every key the code reads. Setup and `/models` write most of them; the rest you e
 | `startedAt`, `completedAt` | ISO date | set by `/setup` | When setup started and finished. |
 | `verify` | string[] | `[]` | Shell commands run in order at the end of a task and by `/verify`. No commands, no gate. |
 | `agentlint` | string | none | agentlint command prefix when the project enforces its rules, e.g. `pnpm agentlint`. |
+| `agentlintStep` | string | set by `/setup` | The verify step that runs agentlint; its findings get per-finding approval. |
 | `connectors` | `{ id, mcp?: { url } }[]` | `[]` | Ticket trackers enabled in setup. |
 | `mode` | `direct` \| `flow` | `direct` | `direct`: `/task` is optional, recommended for risky changes. `flow`: `/task` is the main route. |
 | `models` | `{ setup, implement, review, escalate }` | session model | `provider/model` per phase, set with `/models`. `escalate` falls back to `review`, then `setup`. A model review needs `models.review`. |
@@ -143,4 +144,4 @@ override with `REVIEW_PROVIDER`, `REVIEW_MODEL` and `REVIEW_THINKING`. A run is 
 else `~/.pi/agent`. A context over 1,000,000 characters stops the run before the model is called. The prompt and
 settings are read from the PR's base branch, so a PR cannot change the reviewer that judges it.
 
-pi-subagent is pinned to a commit in `package.json`; bump the sha deliberately. `package-lock.json` is gitignored on purpose. Module map: [docs/WORKFLOW.md](docs/WORKFLOW.md#internals).
+pi-subagent is pinned to a commit in `package.json`; bump the sha deliberately. `package-lock.json` pins the rest; CI runs `npm ci`, the type check and the tests. Module map: [docs/WORKFLOW.md](docs/WORKFLOW.md#internals).
