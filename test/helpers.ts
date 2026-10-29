@@ -10,6 +10,9 @@ after(async () => {
   await Promise.all(created.map((dir) => fs.rm(dir, { recursive: true, force: true })));
 });
 
+// Run from a git hook or `git rebase -x`, git exports these and every test repo's git call would hit the checkout's own repo.
+for (const key of ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY"]) delete process.env[key];
+
 // Tests must never touch the real ~/.pi/agent (trust.json, subagent runs): point it at a temp dir for this test file.
 process.env.PI_CODING_AGENT_DIR = mkdtempSync(path.join(os.tmpdir(), "pi-improved-agent-"));
 created.push(process.env.PI_CODING_AGENT_DIR);
