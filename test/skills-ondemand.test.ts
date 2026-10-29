@@ -11,16 +11,18 @@ const escape = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 test("no on-demand skills: no index, output unchanged", async () => {
   const root = await tempProject({});
+  assert.match(await skillsBlock(root, "review"), /Skills on request/);
+  await updateManifest(root, onDemand("review", []));
   const block = await skillsBlock(root, "review");
   assert.doesNotMatch(block, /Skills on request/);
   assert.ok(block.startsWith("## Skill: code-review"));
-  await updateManifest(root, onDemand("review", []));
-  assert.equal(await skillsBlock(root, "review"), block);
 });
 
 test("DEFAULT_ON_DEMAND lists the per-phase on-request skills and OPT_IN the opt-in ones", () => {
   assert.deepEqual(DEFAULT_ON_DEMAND, {
-    setup: ["research"], plan: ["how", "architect", "codebase-design"], implement: ["handoff"], diagnose: ["why"], review: [], learn: [],
+    setup: ["research"], plan: ["how", "architect", "codebase-design"], implement: ["handoff"],
+    diagnose: ["why", "benchmark-checklist", "principle-explain-the-number"], review: ["benchmark-checklist", "principle-explain-the-number"],
+    learn: ["pstack-maintain-verification-skill"],
   });
   assert.deepEqual(OPT_IN, ["interrogate", "reflect"]);
 });

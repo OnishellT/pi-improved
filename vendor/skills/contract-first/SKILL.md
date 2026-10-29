@@ -9,7 +9,7 @@ Hidden tests fail on wrong names, argument shapes and unchecked input far more t
 
 ## 1. Before editing
 
-Fix every name, signature and return shape in `task_plan`'s `interface` field, spelled letter for letter as the ticket does; with no ticket detail, copy the sibling files' conventions and record each guess as an assumption in `notes`.
+Write the caller's usage first: for each `interface` entry, the call a test would make, in the ticket's words, goes in its `usage` line (code checks the names it calls exist). Then fix every name, signature and return shape in `task_plan`'s `interface` field, spelled letter for letter as the ticket does; with no ticket detail, copy the sibling files' conventions and record each guess as an assumption in `notes`.
 
 Save it as `.pi/contract.json` (plain JSON, any language):
 

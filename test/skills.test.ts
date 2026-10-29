@@ -8,9 +8,9 @@ import { fakePi, fakeUI, tempProject } from "./helpers.ts";
 
 test("listSkills finds the bundled skills", async () => {
   assert.deepEqual(await listSkills(), [
-    "architect", "code-review", "codebase-design", "contract-first", "correct", "diagnosing-bugs", "domain-modeling", "grilling", "handoff", "how",
-    "interrogate", "principles-diagnose", "principles-implement", "principles-review", "pstack-blast-radius", "pstack-create-verification-skill",
-    "pstack-maintain-verification-skill", "pstack-technical-writing", "reflect", "research", "retro", "tdd", "unslop", "why", "writing-for-agents",
+    "architect", "benchmark-checklist", "code-review", "codebase-design", "contract-first", "correct", "diagnosing-bugs", "domain-modeling", "grilling", "handoff", "how",
+    "interrogate", "principle-explain-the-number", "principles-diagnose", "principles-implement", "principles-review", "pstack-blast-radius",
+    "pstack-create-verification-skill", "pstack-maintain-verification-skill", "pstack-technical-writing", "reflect", "research", "retro", "tdd", "unslop", "why", "writing-for-agents",
   ]);
 });
 
@@ -35,7 +35,7 @@ test("skillsBlock strips Skill tool lines, rewrites Claude and is deterministic"
   assert.doesNotMatch(block, /Skill tool/);
   assert.equal(block, await skillsBlock(root, "plan"));
   const learn = await skillsBlock(root, "learn");
-  assert.doesNotMatch(learn, /Skill tool|\/pstack-|\bClaude\b/);
+  assert.doesNotMatch(learn.replace(/\(folder: [^)]*\)/g, ""), /Skill tool|\/pstack-|\bClaude\b/);
 });
 
 test("skillsBlock drops the pstack boilerplate section and keeps the skill body", async () => {
@@ -43,7 +43,7 @@ test("skillsBlock drops the pstack boilerplate section and keeps the skill body"
   for (const phase of ["setup", "review", "learn"] as const) {
     assert.doesNotMatch(await skillsBlock(root, phase), /Agent integration boundary|not an enforcement layer/);
   }
-  await updateManifest(root, (m) => void (m.skills = { review: ["pstack-blast-radius"] }));
+  await updateManifest(root, (m) => void (m.skills = { review: ["pstack-blast-radius"] }, m.skillsOnDemand = { review: [] }));
   assert.match(await skillsBlock(root, "review"), /Reply[^\n]*\n*$/);
 });
 
@@ -114,4 +114,14 @@ test("skillsBlock leaves skipped skills out of the injected block", async () => 
 test("clean ignores a ## line inside a code fence when looking for the boilerplate section", () => {
   const text = ["# Skill", "", "## Agent integration boundary", "", "```md", "## not a heading", "```", "", "Still boilerplate.", "", "## Next", "Kept."].join("\n");
   assert.equal(clean(text, []), ["# Skill", "", "## Next", "Kept."].join("\n"));
+});
+test("interrogate starts each adversary in its own copy, not the real tree", async () => {
+  const { body } = await loadSkill("interrogate");
+  assert.match(body, /subagent spawn [^`]*--cwd <copy>/);
+  assert.match(body, /git worktree add <copy>/);
+  assert.match(body, /Rerun each finding's command yourself, in an adversary's copy/);
+});
+
+test("benchmark-checklist flips the run order so neither side always runs second", async () => {
+  assert.match((await loadSkill("benchmark-checklist")).body, /\(A, B, B, A, …\)/);
 });

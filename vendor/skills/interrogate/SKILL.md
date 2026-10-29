@@ -1,96 +1,30 @@
 ---
 name: interrogate
-description: Adversarial multi-reviewer challenge of a change from independent angles: stress test, find blind spots, tear it apart.
+description: "Adversarial review of a change or design: adversaries try to break it, and only findings reproduced with a command and its output survive. Use for \"interrogate\", \"challenge this\", \"stress test this code\", \"tear this apart\"."
 ---
 
 # Interrogate
 
-Spawn one reviewer per configured model to adversarially review code changes. Each model gets the same prompt and rubric. The adversarial signal comes from model diversity, not assigned personas.
+Adversaries try to break a change or a design. A finding survives only when a command and its output prove it. Report findings; do not apply fixes.
 
-The deliverable is a synthesized verdict. Do NOT auto-apply changes.
+## Frame
 
-## Step 1, Determine Scope
+The scope is what the user names, else the branch diff from its merge base through the working tree. Restate the intent in one paragraph from the user's message, the commits and the PR description. Ask the user when the intent is unclear.
 
-Identify what to review from context:
+## Fan out
 
-- If the user points at specific files or a diff, use that
-- If on a feature branch, run `git diff main...HEAD` (or the appropriate base branch) for the full changeset
-- If the user's message references recent work, gather the relevant files
+Spawn two adversaries through the pi `subagent` CLI: `subagent spawn --name <role> --cwd <copy> --prompt "<prompt>" --file <brief.md>` prints a handle; spawn both first, then `subagent wait <handle>` for each (its output is the result) and `subagent stop <handle>`. Do not pass `--provider` or `--model`. Give them the default tools, since they must run things. If no subagent is available, do both passes yourself in sequence.
 
-Package the diff (or file contents) plus any surrounding context files the reviewers need to understand the code.
+Before spawning, make each adversary its own copy (`git worktree add <copy> HEAD`, then the scope's uncommitted changes applied) and start it there with `--cwd <copy>`, so repros never touch the real tree. Remove the copies when done. The brief is the scope, the intent and:
 
-## Step 2, State the Intent
+> Break this change. Prove each finding against the real code: a failing test, a repro script, or command output that shows the wrong behavior. For a design or plan, probe the current tree. Report each finding as a title, the exact command, the output it printed and the output the intent requires. Leave out anything you did not run: style, naming, structure, risks that need a future change to matter. No findings is a valid result.
 
-Before spawning reviewers, state the intent explicitly. Derive this from:
+## Verify
 
-- The user's message
-- Commit messages
-- PR description if one exists
-- The code itself
+Rerun each finding's command yourself, in an adversary's copy. Keep it when the output shows the failure and the failure breaks the intent. Drop the rest, and merge findings that share a root cause. Adversaries find different failures, so keep every verified finding, not one adversary's list.
 
-Write one clear paragraph. If you're unsure about the intent, ask the user before proceeding.
+## Output
 
-## Step 3, Spawn Reviewers
-
-Launch two reviewers (A and B) in parallel, read-only (`--tools read,grep,find,ls`). Subagents run through the pi `subagent` CLI: `subagent spawn --name <role> --prompt "<prompt>" [--file <brief.md>] [--tools read,grep,find,ls]` prints a handle; spawn every parallel one first, then `subagent wait <handle>` for each (its output is the result) and `subagent stop <handle>`. Do not pass `--provider` or `--model`. If no subagent is available, do each pass yourself in sequence.
-
-Read `references/reviewer-prompt.md` and fill in the template with:
-1. The stated intent
-2. The diff or file contents
-3. The review rubric from `references/rubric.md`
-4. The code-quality lens from `references/code-quality-review.md`
-
-The same filled template goes to all reviewers, so every model applies the code-quality lens.
-
-## Step 4, Synthesize
-
-As results come back, build a unified picture:
-
-1. **Parse all findings** from the reviewers
-2. **Identify consensus**. Findings raised by 2+ models independently are highest signal.
-3. **Identify lone-model findings**. Still worth reading, but weight accordingly.
-4. **Deduplicate**. Different models may describe the same issue differently. Merge these and note which models raised it.
-5. **Note disagreements**. If one model flags something and another explicitly says the opposite, that's useful context for the verdict.
-
-## Step 5, Lead Judgment
-
-You are the lead reviewer, a pragmatic senior engineer, not a neutral aggregator.
-
-Read `references/lead-judgment.md` for the full framework.
-
-Categorize every finding using these buckets:
-
-- **Act on**. Real issues affecting correctness, security, or maintainability given the actual goals. These would block a real PR.
-- **Consider**. Legitimate points, but you're not sure they outweigh the cost of addressing them right now. Worth the user's attention.
-- **Noted**. Technically valid but not actionable. Context-dependent, premature optimization, or low-impact given the current stage.
-- **Dismissed**. Wrong, nitpicky, or missing context. Brief explanation why.
-
-For each finding, include:
-- Which model(s) raised it
-- The category (act on / consider / noted / dismissed)
-- A one-line rationale for the categorization
-
-## Output Format
-
-Present the verdict in this structure:
-
-### Intent
-> [The stated intent paragraph from Step 2]
-
-### Reviewers
-- Reviewer [label]: [model name], [N findings] (one bullet per reviewer)
-
-### Act On
-[Findings that should be addressed. For each: description, which models raised it, why it matters.]
-
-### Consider
-[Findings worth thinking about. For each: description, which models raised it, tradeoff involved.]
-
-### Noted
-[Valid but low-priority. Brief list.]
-
-### Dismissed
-[Rejected findings with brief rationale.]
-
-### Agreement Map
-[Where did models agree, where did they diverge, and what does the pattern of agreement/disagreement tell us?]
+- **Intent**: the restatement.
+- **Findings**: for each, the command, its output, how it breaks the intent and who found it. "No verified findings" when none survive.
+- **Dropped**: per adversary, how many findings were dropped and why (not reproduced, not breaking the intent).

@@ -9,3 +9,4 @@ description: Working principles while implementing: prove it works, smallest cha
 - Make the smallest change that solves the problem. Prefer deleting code.
 - Fix root causes, not symptoms.
 - Remove dead code before adding new code.
+- After a rename, grep for the old name and fix what is left.

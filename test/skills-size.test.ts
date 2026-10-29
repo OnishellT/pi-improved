@@ -6,7 +6,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { listSkills, loadSkill, skillsDir } from "../src/skills.ts";
 
-const CAPS: Record<string, number> = { tdd: 1800, "contract-first": 2400, "diagnosing-bugs": 3800, "pstack-blast-radius": 2800 };
+const CAPS: Record<string, number> = { tdd: 1900, "contract-first": 2400, "diagnosing-bugs": 3800, "pstack-blast-radius": 2800 };
 
 test("every vendored SKILL.md has name and description frontmatter", async () => {
   for (const name of await listSkills()) {

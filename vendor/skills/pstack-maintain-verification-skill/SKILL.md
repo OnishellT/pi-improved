@@ -1,7 +1,7 @@
 ---
 name: pstack-maintain-verification-skill
 disable-model-invocation: true
-description: "Periodic pass that keeps a project's verification skill and feature map honest: separate read-only source passes per feature, one live session driving every feature, one proposed local patch of proven corrections. Use for /pstack-maintain-verification-skill or \"audit the verify skill\"."
+description: "Periodic pass that keeps a project's verification skill and feature map honest: separate read-only source passes per feature, one live session driving every feature, one proposed local patch of proven corrections. Use for \"audit the verify skill\" or when a retro finds covered code changed."
 ---
 
 # Maintain a verification skill
@@ -34,7 +34,9 @@ Only edit the verification skill's own directory (its SKILL.md, features/, and a
 
 5. **Triage.** Wrong or missing user-POV description → doc drift, fix it. Working behavior the harness can't drive → harness gap, fix it; a harness fix follows the same helpers rule as generation (scripts executable, invocation documented in the skill body). App behavior that's actually broken → product gap; record it for the user, keep it out of the maintenance patch.
 
-6. **Ship or stop.** For changed: one proposed local patch of proven corrections; publish a PR only with explicit authorization, re-read every changed file first. For clean or blocked: no PR, report the outcome and the coverage honestly.
+6. **Record the sync.** After a `clean` or `changed` pass, set `sync` in `features/coverage.json` to the current `git rev-parse HEAD` and add to `paths` any code a new feature file covers.
+
+7. **Ship or stop.** For changed: one proposed local patch of proven corrections; publish a PR only with explicit authorization, re-read every changed file first. For clean or blocked: no PR, report the outcome and the coverage honestly.
 
 Keep concise run notes (features covered, unreachable prerequisites, confirmed drift, outcome) in a scratch location; don't commit them.
 

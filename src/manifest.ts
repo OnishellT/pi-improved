@@ -17,7 +17,7 @@ export const DEFAULT_SKILLS: Record<Phase, string[]> = {
   implement: ["principles-implement"],
   diagnose: ["diagnosing-bugs", "principles-diagnose"],
   review: ["code-review", "pstack-blast-radius", "principles-review"],
-  learn: ["retro", "correct", "pstack-maintain-verification-skill"],
+  learn: ["retro", "correct"],
 };
 
 /** Bundled skills offered per phase as a one-line index (name, description, path) instead of being injected; the agent reads one only if the task needs it. */
@@ -25,9 +25,9 @@ export const DEFAULT_ON_DEMAND: Record<Phase, string[]> = {
   setup: ["research"],
   plan: ["how", "architect", "codebase-design"],
   implement: ["handoff"],
-  diagnose: ["why"],
-  review: [],
-  learn: [],
+  diagnose: ["why", "benchmark-checklist", "principle-explain-the-number"],
+  review: ["benchmark-checklist", "principle-explain-the-number"],
+  learn: ["pstack-maintain-verification-skill"],
 };
 
 /** Skills that are never in a default list: they only run when the user selects them explicitly (/skills). */
