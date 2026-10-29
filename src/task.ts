@@ -17,7 +17,7 @@ import { phaseSkills, skillsBlock } from "./skills.ts";
 import { readManifest, type Manifest } from "./manifest.ts";
 import { inFiles, oneLine, readTask, resolveInside, updateTask, writeTask, type Decision, type Plan, type Task } from "./task-state.ts";
 import { runBaseline } from "./verify.ts";
-import { QUESTION_NUDGE, TASK_NUDGE, planText, taskPrompt } from "./task-prompt.ts";
+import { QUESTION_NUDGE, TASK_NUDGE, assistantText, endsOnQuestion, planText, taskPrompt } from "./task-prompt.ts";
 
 const MAX_NUDGES = 2; // "call task_plan" / "use ask_user" reminders per user message
 const MAX_TICKET_TEXT = 300_000; // characters of tracker output kept as evidence
@@ -368,19 +368,14 @@ export function registerTask(pi: ExtensionAPI) {
     if (current.length < MAX_TICKET_TEXT) ticketText.set(ctx.cwd, `${current}\n${text}`.slice(0, MAX_TICKET_TEXT));
   });
   let lastText = "";
-  pi.on("message_end", async (event) => {
-    const message: any = event.message;
-    if (message?.role !== "assistant") return;
-    const content = message.content;
-    lastText = typeof content === "string" ? content : (content ?? []).filter((c: any) => c.type === "text").map((c: any) => c.text).join("\n");
-  });
+  pi.on("message_end", async (event) => void (lastText = assistantText(event.message) ?? lastText));
   pi.on("agent_before_settle", async (event, ctx) => {
     if (event.outcome !== "completed" || nudges >= MAX_NUDGES) return;
     const [task, manifest] = await Promise.all([readTask(ctx.cwd).catch(() => undefined), readManifest(ctx.cwd).catch(() => undefined)]);
     if (manifest?.setup === "running") return;
     // A run that ends on a plain-text question (last line, last 400 chars) has nobody to answer it in RPC/print/json: route it to ask_user.
     // In the TUI the person reads it and answers (`hasUI` is true in RPC too, so it is the mode that tells).
-    const asking = task?.status === "implementing" && ctx.mode !== "tui" && /\?\s*$/.test(lastText.trim().slice(-400).split("\n").filter(Boolean).at(-1) ?? "");
+    const asking = task?.status === "implementing" && ctx.mode !== "tui" && endsOnQuestion(lastText);
     if (task?.status !== "planning" && !asking) return;
     nudges++;
     const content = asking ? QUESTION_NUDGE : TASK_NUDGE;

@@ -1,5 +1,12 @@
 import type { Plan } from "./task-state.ts";
 
+/** A run that ends on a plain-text question: its last line (within the last 400 chars) ends with "?". */
+export const endsOnQuestion = (text: string) => /\?\s*$/.test(text.trim().slice(-400).split("\n").filter(Boolean).at(-1) ?? "");
+
+/** The text of an assistant message, or undefined for any other message. */
+export const assistantText = (message: any): string | undefined =>
+  message?.role !== "assistant" ? undefined : typeof message.content === "string" ? message.content : (message.content ?? []).filter((c: any) => c.type === "text").map((c: any) => c.text).join("\n");
+
 export const TASK_NUDGE = "Call task_plan with your plan.";
 export const QUESTION_NUDGE = "The user does not read plain-text questions here. If you need a decision, call ask_user. Otherwise make the reasonable choice that fits the plan, AGENTS.md and the ADRs, and keep implementing.";
 
