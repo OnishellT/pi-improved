@@ -50,9 +50,9 @@ export async function metricsReport(root: string): Promise<string> {
   const rows = records.slice(-10).map((r) => {
     const phases = Object.values<any>(r.metrics.phases ?? {});
     const sum = (k: string) => phases.reduce((s, p) => s + (p[k] ?? 0), 0);
-    // Plan checks are not diff reviews: the avoided/paid totals leave them out, and so does this column.
-    const reviews: any[] = (r.metrics.reviews ?? []).filter((x: any) => !String(x.status).startsWith("plan-"));
-    const verdicts = reviews.map((x) => (x.status === "skipped-low-risk" || x.status === "not-requested" ? "·" : x.discarded ? `(${x.status})` : x.status)).join(",") || "-";
+    const reviews: any[] = r.metrics.reviews ?? [];
+    // Plan checks are not diff reviews: the verdict column leaves them out; their cost still counts.
+    const verdicts = reviews.filter((x) => !String(x.status).startsWith("plan-")).map((x) => (x.status === "skipped-low-risk" || x.status === "not-requested" ? "·" : x.discarded ? `(${x.status})` : x.status)).join(",") || "-";
     const reviewCost = reviews.reduce((s, x) => s + (x.cost ?? 0), 0);
     return { id: String(r.ticket ?? r.id), cost: sum("cost") + reviewCost, tokens: sum("input") + sum("output"), seconds: sum("seconds"), fails: r.metrics.verifyFailures ?? 0, verdicts };
   });

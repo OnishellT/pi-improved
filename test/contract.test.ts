@@ -71,4 +71,5 @@ test("a qualified name counts as present when each segment is a word, whatever t
 test("relatesTo: a shared question word (should, which, about) is not a shared topic", () => {
   assert.equal(relatesTo("Should we use Redis or Memcached for sessions?", "the build should be fast"), false);
   assert.equal(relatesTo("Which store holds sessions?", "# Sessions\nkept in Redis"), true);
+  assert.equal(relatesTo("Should we use Make?", "Make is the build tool."), true);
 });
