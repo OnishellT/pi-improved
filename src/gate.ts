@@ -46,6 +46,8 @@ export function registerGate(pi: ExtensionAPI) {
   let retries = 0;
   let contractRetries = 0;
   let reviews = 0;
+  // Tasks a review already ran for: `reviews` resets every turn, and a task can stay open across turns.
+  const reviewed = new Set<string>();
   let failures = 0;
   let escalatedFrom: string | undefined;
   let verified: string | undefined;
@@ -54,6 +56,7 @@ export function registerGate(pi: ExtensionAPI) {
   let repeats = 0;
   let sinceCheck = 0;
   let slowNoted: string | undefined;
+  let skip: ReviewPayload | undefined;
   let warnedNoReviewModel = false;
 
   const snapshot = async (cwd: string) => {
@@ -161,18 +164,19 @@ export function registerGate(pi: ExtensionAPI) {
     }
     const reviewModel = manifest.models?.review;
     const abort = new AbortController();
+    skip = undefined;
     let wanted = task?.status === "implementing" && !!reviewModel && reviews < MAX_REVIEWS;
     // The level is measured and reported (except under review.always/never, which short-circuit); whether it asks for a model review is the manifest's policy.
     const risk = task?.status === "implementing" ? await assessRisk(pi.exec.bind(pi), ctx.cwd, task, manifest) : undefined;
     if (wanted && reviewModel && risk) {
       if (!risk.review) {
         wanted = false;
-        reviews++;
         const why = risk.reasons.join("; ") || "small diff outside sensitive areas";
         // Off by policy is not the same as too small to need one: only the second counts as a saving.
         const off = !!manifest.review?.never || minLevelOf(manifest.review) === "off";
         ctx.ui.notify(off ? `Review not requested (risk ${risk.level}): ${why}.${manifest.review?.never ? "" : ' Set review.minLevel to "high" or "low" in .pi/workflow.json to have the diff reviewed.'}` : `Review skipped (risk ${risk.level}): ${why}`, "info");
-        pi.events.emit(REVIEW_EVENT, { root: ctx.cwd, status: off ? "not-requested" : "skipped-low-risk", model: reviewModel, seconds: 0, cost: 0 } satisfies ReviewPayload);
+        // Counted when the task completes without a review (below), not here: a settle that fails verify, or a diff that grows, has not skipped anything yet.
+        skip = { root: ctx.cwd, status: off ? "not-requested" : "skipped-low-risk", model: reviewModel, seconds: 0, cost: 0 };
       }
     }
     // A review the policy asks for cannot run without a model: say so once instead of skipping silently.
@@ -260,6 +264,7 @@ export function registerGate(pi: ExtensionAPI) {
       if (review.status === "skipped") ctx.ui.notify(`Review skipped: ${review.report}`, "warning");
       else ctx.ui.notify(review.status === "approved" ? "Diff review: approved." : "Diff review: changes requested. The agent fixes them.", review.status === "approved" ? "info" : "warning");
       reviews++;
+      if (task) reviewed.add(task.id);
       // One round: the fixes are checked by verify, not by another paid review.
       if (review.status === "changes") {
         verified = undefined;
@@ -268,6 +273,8 @@ export function registerGate(pi: ExtensionAPI) {
       }
     }
     if (task?.status === "implementing" && ctx.hasUI && (await ctx.ui.confirm(predated ? "Only old failures remain" : "Verification OK", `Is the task "${oneLine(task.title, 80)}" done?${predated ? `\n\nThese steps still fail, as they did before the task:\n${failing.map((s) => `- ${s}`).join("\n")}` : ""}${touchedNote(risk?.touched)}`))) {
+      // Before the task is marked done: telemetry looks up the active task, and a done one is not.
+      if (skip && !reviewed.has(task.id)) pi.events.emit(REVIEW_EVENT, skip satisfies ReviewPayload);
       const done = await updateTask(ctx.cwd, (t) => {
         t.status = "done";
         t.completedAt = new Date().toISOString();

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { test } from "node:test";
@@ -35,7 +36,7 @@ async function setup(opts: { setup?: string; task?: boolean; pass?: boolean; ans
     return opts.pass ? { code: 0 } : { code: 1, stdout: "Error: boom" };
   });
   const emitted: any[] = [];
-  h.pi.events = { emit: (name: string, payload: any) => emitted.push({ name, payload }) };
+  h.pi.events = { emit: (name: string, payload: any) => emitted.push({ name, payload, taskStatus: (() => { try { return JSON.parse(readFileSync(path.join(root, ".pi/task.json"), "utf8")).status; } catch {} })() }) };
   registerGate(h.pi);
   const ui = fakeUI(opts.answers ?? []);
   const notes: string[] = [];
@@ -46,7 +47,7 @@ async function setup(opts: { setup?: string; task?: boolean; pass?: boolean; ans
     diff = "changed";
   };
   const settle = () => h.emit("agent_before_settle", { outcome: "completed" }, ctx);
-  return { ...h, root, ctx, ui, notes, emitted, run, settle, verifies: () => verifies, subagent };
+  return { ...h, root, ctx, ui, notes, emitted, run, settle, verifies: () => verifies, subagent, setDiff: (d: string) => void (diff = d) };
 }
 
 test("an exception the user never saw is undone before the gate verifies", async () => {
@@ -560,6 +561,37 @@ test("low-risk diff skips the paid review, notifies and emits skipped-low-risk",
   assert.equal((await readTask(t.root))?.status, "done");
 });
 
+test("the low-risk skip counts when the task completes without a review, not before verify or on a failed settle", async () => {
+  const skips = (t: any) => t.emitted.filter((e: any) => e.name === REVIEW_EVENT && e.payload.status === "skipped-low-risk").length;
+  const small = { ...task, plan: { summary: "s", steps: [], files: [], decisions: [], interface: [], seams: [] } };
+  const failing = await setup({ pass: false, task: true, review: "VERDICT: OK", answers: [] });
+  await fs.writeFile(path.join(failing.root, ".pi/task.json"), JSON.stringify(small));
+  await failing.run();
+  await failing.settle();
+  assert.equal(skips(failing), 0, "verify failed: the task is not done");
+  const passing = await setup({ pass: true, task: true, review: "VERDICT: OK", answers: [true] });
+  await fs.writeFile(path.join(passing.root, ".pi/task.json"), JSON.stringify(small));
+  await passing.run();
+  await passing.settle();
+  assert.equal(skips(passing), 1);
+  assert.equal(passing.emitted.find((e: any) => e.payload?.status === "skipped-low-risk").taskStatus, "implementing", "emitted while the task is still active, before it is marked done");
+  assert.equal((await readTask(passing.root))?.status, "done");
+});
+
+test("a task already reviewed in an earlier turn is not counted as a low-risk skip", async () => {
+  const t = await setup({ pass: true, task: true, review: "VERDICT: OK", answers: [false, true] });
+  await t.run();
+  await t.settle();
+  assert.equal(t.subagent.filter((a) => a === "spawn").length, 1, "no plan: low risk, reviewed");
+  // Next turn: the task got a plan, so the diff is now below the policy.
+  await fs.writeFile(path.join(t.root, ".pi/task.json"), JSON.stringify({ ...task, plan: { summary: "s", steps: [], files: [], decisions: [], interface: [], seams: [] } }));
+  await t.run();
+  t.setDiff("changed again");
+  await t.settle();
+  assert.equal((await readTask(t.root))?.status, "done");
+  assert.equal(t.emitted.filter((e: any) => e.name === REVIEW_EVENT && e.payload.status === "skipped-low-risk").length, 0);
+});
+
 test("no escalation without a configured model", async () => {
   const t = await parallel({});
   t.gate.resolve();
@@ -709,6 +741,36 @@ async function highRisk(review?: object, models: object = { review: "p/m" }) {
   await h.emit("agent_before_settle", { outcome: "completed" }, ctx);
   return { notes, spawned, status: emitted.find((e) => e.name === REVIEW_EVENT)?.payload.status };
 }
+
+test("a review skipped as low risk on one settle does not use up the review a later, riskier diff needs", async () => {
+  const root = await tempProject({
+    ".pi/workflow.json": JSON.stringify({ version: 1, setup: "done", verify: ["check"], connectors: [], models: { review: "p/m" } }),
+    ".pi/task.json": JSON.stringify({ ...task, plan: { summary: "s", steps: [], files: [], decisions: [], interface: [], seams: [] } }),
+  });
+  let stat = "1\t0\tsrc/a.ts\0";
+  let state = "";
+  let checks = 0;
+  const spawned: string[] = [];
+  const h = fakePi((cmd, args) => {
+    if (cmd === "git") return { code: 0, stdout: args.includes("--numstat") ? stat : state };
+    if (isSubagent(cmd)) {
+      spawned.push(args[0]);
+      return args[0] === "wait" ? { code: 0, stdout: "abc123 finished\n\nVERDICT: APPROVED" } : { code: 0, stdout: "Spawned review (abc123)" };
+    }
+    return checks++ ? { code: 0 } : { code: 1, stderr: "Error: boom" };
+  });
+  h.pi.events = { emit: () => {} };
+  registerGate(h.pi);
+  const ctx: any = { cwd: root, hasUI: true, ui: fakeUI([true]) };
+  await h.emit("before_agent_start", { messageType: "user" }, ctx);
+  state = "changed";
+  await h.emit("agent_before_settle", { outcome: "completed" }, ctx);
+  assert.equal(spawned.length, 0);
+  stat = "3\t0\tpackage.json\0";
+  state = "changed again";
+  await h.emit("agent_before_settle", { outcome: "completed" }, ctx);
+  assert.ok(spawned.includes("spawn"));
+});
 
 test("review.minLevel is high by default: a high-risk diff gets a review when models.review is set", async () => {
   const r = await highRisk();
