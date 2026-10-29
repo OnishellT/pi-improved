@@ -1,6 +1,7 @@
 import * as os from "node:os";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { resolveBin } from "./bin.ts";
+import { trustAcceptances, watchAcceptances } from "./guards.ts";
 import type { Manifest } from "./manifest.ts";
 
 export const APPROVE = "Review each finding and accept it with a reason";
@@ -26,6 +27,8 @@ export const describeFinding = (f: any) =>
  * answering in the UI, so we declare them (pi.exec has no TTY and may run inside another agent, which agentlint would otherwise detect).
  */
 export async function resolvePolicyFailure(pi: ExtensionAPI, ctx: ExtensionContext, manifest: Manifest, report: string): Promise<"approved" | "fix" | "stop" | "failed"> {
+  // Before the first approval: the records already in the file stay the user's, never new to them.
+  await watchAcceptances(ctx.cwd);
   const findings = policyFindings(report);
   ctx.ui.notify(`agentlint blocks the finish:\n${findings.join("\n") || report.slice(-300)}`, "warning"); // a dialog title is one line, or the options scroll off screen
   const choice = await ctx.ui.select("agentlint blocks the finish. What now?", [APPROVE, FIX, STOP]);
@@ -70,5 +73,7 @@ export async function resolvePolicyFailure(pi: ExtensionAPI, ctx: ExtensionConte
     if (!reason) return "fix";
     const accept = await run("approve", "--reason", reason, open.selector);
     if (accept.code !== 0) return "failed";
+    // Only the record the user just approved is trusted; anything else that appeared meanwhile is still checked.
+    await trustAcceptances(ctx.cwd, (r) => r?.reason === reason && r?.actor === `human:${user}`);
   }
 }

@@ -7,6 +7,7 @@ import { git } from "./git.ts";
 import { readManifest } from "./manifest.ts";
 import { restoreModel, switchModel } from "./models.ts";
 import { assessRisk } from "./risk.ts";
+import { checkAcceptances } from "./guards.ts";
 import { resolvePolicyFailure } from "./policy.ts";
 import { reviewDiff } from "./review.ts";
 import { skillsBlock } from "./skills.ts";
@@ -126,6 +127,8 @@ export function registerGate(pi: ExtensionAPI) {
   });
 
   pi.on("agent_before_settle", async (event, ctx) => {
+    // An exception the user never saw must not open the gate, even one a background process wrote after the last command.
+    await checkAcceptances(ctx);
     const manifest = await readManifest(ctx.cwd).catch(() => undefined);
     if (!manifest || manifest.setup !== "done" || !manifest.verify.length || event.outcome !== "completed") return;
     const { verifyRetries, failuresBeforeEscalation } = limitsOf(manifest);

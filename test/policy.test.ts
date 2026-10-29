@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
+import { checkAcceptances } from "../src/guards.ts";
 import { APPROVE, resolvePolicyFailure } from "../src/policy.ts";
-import { fakeUI } from "./helpers.ts";
+import { fakeUI, tempProject } from "./helpers.ts";
 
 function setup(opts: { remaining: () => boolean; reason?: string }) {
   const calls: string[][] = [];
@@ -72,4 +76,25 @@ test("each finding is shown and gets its own reason; an empty reason hands the r
   assert.equal(await resolvePolicyFailure(t.pi, t.ctx, { agentlint: "lint" } as any, "report"), "fix");
   assert.match(t.ctx.ui.asked[1], /Money review\nsrc\/a\.js:5: check it/);
   assert.deepEqual(t.calls.filter((a) => a[4] === "approve").map((a) => a[6]), ["first reason"]);
+});
+
+test("only the exception the user approves in this dialog is trusted, not another written meanwhile", async () => {
+  let left = 1;
+  const t = setup({ remaining: () => left > 0 });
+  // Approved before, and no bash call yet this session: it must survive.
+  const earlier = JSON.stringify({ reason: "earlier", actor: "human:x" });
+  t.ctx.cwd = await tempProject({ ".agentlint/acceptances.jsonl": `${earlier}\n` });
+  const file = path.join(t.ctx.cwd, ".agentlint", "acceptances.jsonl");
+  const mine = JSON.stringify({ reason: "because", actor: `human:${os.userInfo().username}` });
+  const other = JSON.stringify({ reason: "because", actor: "agent" });
+  t.pi.exec = ((orig) => async (c: string, a: string[]) => {
+    if (a[4] === "approve") {
+      left = 0;
+      await fs.writeFile(file, `${earlier}\n${mine}\n${other}\n`);
+    }
+    return orig(c, a);
+  })(t.pi.exec);
+  assert.equal(await resolvePolicyFailure(t.pi, t.ctx, { agentlint: "lint" } as any, "report"), "approved");
+  assert.match((await checkAcceptances({ cwd: t.ctx.cwd, hasUI: false } as any)) ?? "", /restored/);
+  assert.equal(await fs.readFile(file, "utf8"), `${earlier}\n${mine}\n`);
 });

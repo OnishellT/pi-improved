@@ -94,7 +94,7 @@ The agent cannot close the task while `verify` is red. It gets 2 automatic retri
 
 agentlint has no warning mode: a configured rule always blocks. So setup picks the lifecycle by what the rule judges: `change` for rules about changes (only the diff against the merge base is judged, existing code is never flagged), `state` for rules about the current code. Findings a `state` rule has in existing code are narrowed by the agent or shown to the person by `setup_finish`, one by one, the same way.
 
-Guards: `agentlint accept` and `approve` always ask the person, even when the rule lets the agent decide. Commands that open the interactive UI (`review`, `--review`, `--wizard`) are blocked, because they would wait for someone.
+Guards: an agentlint exception always needs the person, even when the rule lets the agent decide. After every bash command and before the gate verifies, lines in `.agentlint/acceptances.jsonl` the person has not seen are shown for approval; declined, or with no one to ask, the file is restored. The model cannot write or edit that file. Commands that open the interactive UI (`review`, `--review`, `--wizard`) are blocked, because they would wait for someone.
 
 ## 6. Error correction
 
