@@ -3,7 +3,7 @@ import * as path from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { extensionDetail, nodeOk, registerDoctor, runDoctor, type NixProbe } from "../src/doctor.ts";
-import { fakePi, tempProject } from "./helpers.ts";
+import { fakePi, tempProject, withEnv } from "./helpers.ts";
 
 const models = [{ provider: "anthropic", id: "opus" }];
 const setup = async (exec: (cmd: string, args: string[]) => any, hasUI = true, mode?: string, extra = {}, nix: NixProbe = { has: async () => true, resolve: async (attr) => `/nix/store/x-${attr}` }) => {
@@ -109,6 +109,21 @@ test("/doctor says gh is the one login when the configured helper is not availab
   const fine = await setup(() => ({ code: 0 }), true, undefined, {}, nix(async () => ({ configured: ["store"], missing: [], ok: true })));
   await fine.commands.get("doctor").handler("", fine.ctx);
   assert.match(fine.notes[0].msg, /✓ git credentials: helper: store/);
+});
+
+test("the desktop is checked only while it is on, and names what it needs", async () => {
+  const empty = await tempProject({});
+  const run = (computer: object) =>
+    withEnv({ PATH: empty, HOME: empty, PI_CODING_AGENT_DIR: path.join(empty, "agent") }, async () => {
+      await fs.mkdir(path.join(empty, "agent"), { recursive: true });
+      await fs.writeFile(path.join(empty, "agent", "pi-improved.json"), JSON.stringify({ computer }));
+      const t = await setup(() => ({ code: 0 }));
+      return (await runDoctor(t.pi, t.ctx, undefined, { has: async () => true })).find((c) => c.name === "Desktop");
+    });
+  assert.equal(await run({ desktop: "off" }), undefined);
+  const on = await run({ desktop: "on" });
+  assert.equal(on?.ok, false);
+  assert.match(on!.detail, /needs: .*hyprctl \(Hyprland\).*hypruse \(uv tool install hypruse\)/);
 });
 
 test("a missing subagent extension says how to get it back", () => {

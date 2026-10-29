@@ -8,7 +8,8 @@ import stat
 import subprocess
 import time
 
-BASE = Path('/run/user') / str(os.getuid())
+# Where hyprctl looks too; logind sets it to /run/user/<uid>.
+BASE = Path(os.environ.get('XDG_RUNTIME_DIR') or f'/run/user/{os.getuid()}')
 CONFIG = Path(__file__).with_name('hyprland.lua')
 CLEAR = ('DISPLAY', 'XAUTHORITY', 'WAYLAND_SOCKET', 'HYPRLAND_INSTANCE_SIGNATURE',
          'DBUS_SESSION_BUS_ADDRESS', 'DBUS_STARTER_ADDRESS', 'DBUS_STARTER_BUS_TYPE',
@@ -62,7 +63,7 @@ def desktop_environment():
             if host is None:
                 raise RuntimeError('No parent Wayland session; the agent desktop was not started')
             env['WAYLAND_DISPLAY'] = str(BASE / host['wl_socket'])
-            with (runtime / 'startup.log').open('a') as log:
+            with (runtime / 'startup.log').open('w') as log:  # this start's log only: it never grows
                 process = subprocess.Popen(['dbus-run-session', '--', 'Hyprland', '--config', str(CONFIG)],
                     env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
                     start_new_session=True, cwd=Path.home())
