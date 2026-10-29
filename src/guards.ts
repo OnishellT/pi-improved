@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { globalPath } from "./config.ts";
+import { readManifest } from "./manifest.ts";
 
 /** agentlint commands that open a browser UI and wait for a person: the `review` subcommand right after the binary (optionally after `--`), or the UI flags anywhere. */
 const INTERACTIVE_AGENTLINT = /\bagentlint(?:\s+--)?\s+review\b|\bagentlint\b[^;&|\n]*\s--(?:review|wizard)\b/;
@@ -53,7 +54,10 @@ export function registerGuards(pi: ExtensionAPI) {
       const file = String((event.input as { path?: unknown }).path ?? "");
       if (OWNED.test(path.posix.normalize(file)) || (file && OWNED.test(toolPath(file, ctx.cwd).split(path.sep).join("/")))) return { block: true, reason: `${file} is workflow state managed by the extension. Do not edit it; ask the user (/models, /setup) if it needs to change.` };
       if (file && isGlobalConfig(file, ctx.cwd)) return { block: true, reason: `${file} is the user's own configuration (limits, review policy, self-compact). Do not edit it; ask the user to change it.` };
-      if (file && toolPath(file, ctx.cwd) === canonical(path.resolve(ctx.cwd, ACCEPTANCES))) return { block: true, reason: `${file} holds the exceptions the user approved. Do not edit it; run \`agentlint propose <selector> --summary '<why>'\` (selector from \`agentlint next --format json\`) and the user is asked to approve it.` };
+      if (file && toolPath(file, ctx.cwd) === canonical(path.resolve(ctx.cwd, ACCEPTANCES))) {
+        const agentlint = (await readManifest(ctx.cwd).catch(() => undefined))?.agentlint ?? "agentlint";
+        return { block: true, reason: `${file} holds the exceptions the user approved. Do not edit it; run \`${agentlint} propose <selector> --summary '<why>'\` (selector from \`${agentlint} next --format json\`) and the user is asked to approve it.` };
+      }
       return;
     }
     if (event.toolName !== "bash") return;
