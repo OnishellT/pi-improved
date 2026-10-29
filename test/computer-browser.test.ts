@@ -42,7 +42,7 @@ async function until(check: () => boolean | Promise<boolean>, what: string) {
 }
 
 /** A CDP endpoint that answers like a browser: records every call, hands out one owned target. */
-async function fakeChrome(calls: any[], hold?: Promise<void>) {
+async function fakeChrome(calls: any[], hold?: Promise<void>, attachError?: { message: string }) {
   const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
   await once(server, "listening");
   let created = false; // a window lives as long as this browser, across connections
@@ -53,6 +53,7 @@ async function fakeChrome(calls: any[], hold?: Promise<void>) {
       if (call.method === "Target.createTarget") await hold; // a slow window: the server may exit meanwhile
       let result: any = {};
       if (call.method === "Target.createTarget") result = ((created = true), { targetId: "owned" });
+      else if (call.method === "Target.attachToTarget" && attachError?.message) return socket.send(JSON.stringify({ id: call.id, error: attachError }));
       else if (call.method === "Target.attachToTarget" && !created) return socket.send(JSON.stringify({ id: call.id, error: { message: "No target with given id found" } }));
       else if (call.method === "Target.attachToTarget") result = { sessionId: "owned-session" };
       else if (call.method === "Target.closeTarget") result = { success: true };
@@ -377,6 +378,56 @@ test("after only the connection to the isolated browser drops, open reuses its w
     for (const socket of chrome.clients) socket.terminate();
     await until(async () => value(await main.callTool({ name: "status", arguments: {} })).connected === false, "the connection to drop");
     assert.equal(value(await main.callTool({ name: "open", arguments: {} })).ownedTarget, "owned");
+    assert.equal(calls.filter((c) => c.method === "Target.createTarget").length, 1, "no second window");
+  } finally {
+    await main?.close();
+    await stop(chrome);
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("after the connection drops, exit reconnects to close the isolated window", async () => {
+  const dir = await scratch();
+  const profile = path.join(dir, "profile");
+  const file = path.join(profile, "DevToolsActivePort");
+  const calls: any[] = [];
+  const chrome = await fakeChrome(calls);
+  await fs.mkdir(profile);
+  await fs.writeFile(file, `${(chrome.address() as any).port}\n/devtools/browser\n`);
+  let main: any;
+  try {
+    main = await client([{ id: "isolated", name: "Headless Chromium", portFile: file, launch: { profile } }]);
+    await main.callTool({ name: "open", arguments: {} });
+    for (const socket of chrome.clients) socket.terminate();
+    await until(async () => value(await main.callTool({ name: "status", arguments: {} })).connected === false, "the connection to drop");
+    await main.close();
+    await until(() => calls.some((c) => c.method === "Target.closeTarget" && c.params.targetId === "owned"), "the window to close on exit");
+  } finally {
+    await main?.close();
+    await stop(chrome);
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("an attach that fails for another reason than a missing window does not make a second one", async () => {
+  const dir = await scratch();
+  const profile = path.join(dir, "profile");
+  const file = path.join(profile, "DevToolsActivePort");
+  const calls: any[] = [];
+  const attachError = { message: "" };
+  const chrome = await fakeChrome(calls, undefined, attachError);
+  await fs.mkdir(profile);
+  await fs.writeFile(file, `${(chrome.address() as any).port}\n/devtools/browser\n`);
+  let main: any;
+  try {
+    main = await client([{ id: "isolated", name: "Headless Chromium", portFile: file, launch: { profile } }]);
+    await main.callTool({ name: "open", arguments: {} });
+    for (const socket of chrome.clients) socket.terminate();
+    await until(async () => value(await main.callTool({ name: "status", arguments: {} })).connected === false, "the connection to drop");
+    attachError.message = "Internal error";
+    const failed: any = await main.callTool({ name: "open", arguments: {} });
+    assert.equal(failed.isError, true);
+    assert.match(failed.content[0].text, /Internal error/);
     assert.equal(calls.filter((c) => c.method === "Target.createTarget").length, 1, "no second window");
   } finally {
     await main?.close();
