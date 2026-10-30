@@ -234,6 +234,7 @@ test("without a UI, setup_finish finishes with verify pending after the last fai
   const last = headless([]);
   const result = await finish(last.ctx);
   assert.equal(result.terminate, true);
+  assert.match(result.content[0].text, /not approved: no UI to ask[\s\S]*verify still fails/);
   assert.deepEqual(last.ui.asked, []);
   const manifest = await readManifest(root);
   assert.deepEqual([manifest.setup, manifest.verify], ["done", ["npm test"]]);
