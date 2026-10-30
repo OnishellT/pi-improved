@@ -50,8 +50,8 @@ export interface Task {
   baseCommit?: string;
   /** The model in use before /task switched to the implement one: put back when the task ends. */
   model?: string;
-  /** "asked": the gate sent the understanding check, and `understanding_done` completes the task. */
-  understanding?: "asked";
+  /** Set when the gate sent the understanding check: `tree` is the snapshot verify last passed on, the only one `understanding_done` may close. */
+  understanding?: { tree: string };
   startedAt: string;
   completedAt?: string;
 }

@@ -45,6 +45,21 @@ async function advice(cwd: string, report: string, kind: "policy" | "diagnose" |
 }
 // `limits.verifyRetries` and `limits.failuresBeforeEscalation` (config.ts) set the retries and when the failed verify diagnoses the bug and hands the attempt to the stronger model.
 
+/** A hash of the working tree and HEAD; UNREADABLE when git could not take it. */
+export async function treeSnapshot(pi: ExtensionAPI, cwd: string) {
+  const exec = pi.exec.bind(pi);
+  // `git diff` leaves out untracked files: their contents count too, or editing one would look like no change.
+  const untracked = (await git(exec, cwd, ["ls-files", "--others", "--exclude-standard", "-z"]))?.split("\0").filter(Boolean);
+  // lstat's ctime: any write or chmod moves it and no tool can set it back; nothing is read (a large file costs nothing, a dangling link is fine).
+  const contents = await Promise.all((untracked ?? []).map((f) => fs.lstat(path.join(cwd, f)).then((st) => `${f} ${st.mode} ${st.size} ${st.ctimeMs}`)))
+    .then((h) => (untracked ? h.join("\n") : undefined), () => undefined);
+  const parts = [await git(exec, cwd, ["status", "--porcelain"]), await git(exec, cwd, ["diff", "HEAD"]), await git(exec, cwd, ["rev-parse", "HEAD"]), contents];
+  // A snapshot git could not take (no Nix, no repository) is never equal to another: the work counts as changed, and verify says what is wrong.
+  if (parts.some((p) => p === undefined)) return UNREADABLE;
+  // HEAD is part of it: a change committed through bash leaves the tree clean, and that is still a change.
+  return createHash("sha1").update(parts.join("\n--\n")).digest("hex");
+}
+
 /** Marks the active task done: learn records it, and the model /task switched away from comes back. */
 export async function completeTask(pi: ExtensionAPI, ctx: any): Promise<Task> {
   const done = await updateTask(ctx.cwd, (t) => {
@@ -79,19 +94,7 @@ export function registerGate(pi: ExtensionAPI) {
   let deferred = false;
   pi.on("message_end", async (event) => void (lastText = assistantText(event.message) ?? lastText));
 
-  const snapshot = async (cwd: string) => {
-    const exec = pi.exec.bind(pi);
-    // `git diff` leaves out untracked files: their contents count too, or editing one would look like no change.
-    const untracked = (await git(exec, cwd, ["ls-files", "--others", "--exclude-standard", "-z"]))?.split("\0").filter(Boolean);
-    // lstat's ctime: any write or chmod moves it and no tool can set it back; nothing is read (a large file costs nothing, a dangling link is fine).
-    const contents = await Promise.all((untracked ?? []).map((f) => fs.lstat(path.join(cwd, f)).then((st) => `${f} ${st.mode} ${st.size} ${st.ctimeMs}`)))
-      .then((h) => (untracked ? h.join("\n") : undefined), () => undefined);
-    const parts = [await git(exec, cwd, ["status", "--porcelain"]), await git(exec, cwd, ["diff", "HEAD"]), await git(exec, cwd, ["rev-parse", "HEAD"]), contents];
-    // A snapshot git could not take (no Nix, no repository) is never equal to another: the work counts as changed, and verify says what is wrong.
-    if (parts.some((p) => p === undefined)) return UNREADABLE;
-    // HEAD is part of it: a change committed through bash leaves the tree clean, and that is still a change.
-    return createHash("sha1").update(parts.join("\n--\n")).digest("hex");
-  };
+  const snapshot = (cwd: string) => treeSnapshot(pi, cwd);
   const verify = async (manifest: Manifest, cwd: string) => {
     const t0 = Date.now();
     const isAgentlint = agentlintStepOf(manifest);
@@ -310,7 +313,13 @@ export function registerGate(pi: ExtensionAPI) {
     }
     if (task?.status !== "implementing") return;
     // Already confirmed, with the understanding check sent: understanding_done (or /task done) closes the task.
-    if (task.understanding === "asked") return;
+    if (task.understanding) {
+      if (task.understanding.tree === now) return;
+      // Changed during the check and verified again: this tree is the one understanding_done may close.
+      await updateTask(ctx.cwd, (t) => void (t.understanding = { tree: now }));
+      const content = "The changed code went through the gate again. Finish the understanding check with understanding_done.";
+      return { entries: [{ type: "custom_message", customType: "understanding-check", content, display: true }], continue: true };
+    }
     // Headless, a pass is the answer; with no verify steps nothing passed, so only a person can call it done.
     const title = unverified ? "No verify steps: nothing checked this change" : "Verification OK";
     const done = ctx.hasUI ? await ctx.ui.confirm(title, `Is the task "${oneLine(task.title, 80)}" done?${dialogNotes(risk)}`) : !unverified;
@@ -323,7 +332,7 @@ export function registerGate(pi: ExtensionAPI) {
     const understanding = understandingOf(manifest);
     // The teach-back runs once, on the final code (after any review fixes); understanding_done completes the task.
     if (understanding !== "off" && ctx.hasUI) {
-      await updateTask(ctx.cwd, (t) => void (t.understanding = "asked"));
+      await updateTask(ctx.cwd, (t) => void (t.understanding = { tree: now }));
       const content = understandingCheck(path.join(skillsDir(), "understanding-check", "SKILL.md"));
       return { entries: [{ type: "custom_message", customType: "understanding-check", content, display: true }], continue: true };
     }
