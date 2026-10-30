@@ -222,7 +222,7 @@ test("setup_finish sends verify failures back to the model, then completes after
   assert.deepEqual(manifest.verify, ["npm test"]);
 });
 
-test("without a UI, setup_finish finishes with verify pending after the last failure instead of pausing setup", async () => {
+test("without a UI, setup_finish finishes with verify pending after the last failure, without any dialog", async () => {
   const root = await tempProject(documented);
   await updateManifest(root, (m) => void (m.setup = "running"));
   const { pi, tools } = fakePi((cmd) => (cmd === "bash" ? { code: 1, stderr: "redis: connection refused" } : { code: 0 }));
@@ -231,11 +231,10 @@ test("without a UI, setup_finish finishes with verify pending after the last fai
   const headless = (answers: unknown[]) => fakeCtx(root, answers, { hasUI: false });
   await assert.rejects(finish(headless([]).ctx), /verify FAILED/);
   await assert.rejects(finish(headless([]).ctx), /verify FAILED/);
-  const last = headless([true]);
+  const last = headless([]);
   const result = await finish(last.ctx);
   assert.equal(result.terminate, true);
-  assert.deepEqual(last.ui.asked, ["Approve the setup?"]);
-  assert.match(last.ui.messages[0], /verify still fails/);
+  assert.deepEqual(last.ui.asked, []);
   const manifest = await readManifest(root);
   assert.deepEqual([manifest.setup, manifest.verify], ["done", ["npm test"]]);
 });
