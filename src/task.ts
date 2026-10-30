@@ -14,7 +14,7 @@ import { gitHead } from "./git.ts";
 import { checkPlan } from "./plan-check.ts";
 import { highRiskReasons, minLevelOf, planRiskReasons } from "./risk.ts";
 import { phaseSkills, skillsBlock } from "./skills.ts";
-import { readManifest, type Manifest } from "./manifest.ts";
+import { readManifest, understandingOf, type Manifest } from "./manifest.ts";
 import { inFiles, oneLine, readTask, resolveInside, updateTask, writeTask, type Decision, type Plan, type Task } from "./task-state.ts";
 import { QUESTION_NUDGE, TASK_NUDGE, assistantText, endsOnQuestion, planText, taskPrompt } from "./task-prompt.ts";
 
@@ -91,7 +91,7 @@ export function registerTask(pi: ExtensionAPI) {
     ticketText.delete(ctx.cwd);
     const previous = await usePhaseModel(pi, ctx, "implement");
     if (previous && !task.model) await updateTask(ctx.cwd, (t) => void (t.model = previous));
-    pi.sendUserMessage(taskPrompt(task.title, task.ticket, tracker(manifest), await relatedTasks(ctx.cwd, task.body ?? task.title), await skillsBlock(ctx.cwd, "plan"), task.spec, task.body));
+    pi.sendUserMessage(taskPrompt(task.title, task.ticket, tracker(manifest), await relatedTasks(ctx.cwd, task.body ?? task.title), await skillsBlock(ctx.cwd, "plan"), task.spec, task.body, understandingOf(manifest) === "plan+end"));
     return ctx.waitForIdle();
   };
 
@@ -327,16 +327,20 @@ export function registerTask(pi: ExtensionAPI) {
   });
   pi.on("tool_result", async (event, ctx) => {
     if (event.toolName !== "ask_user" || (await readTask(ctx.cwd).catch(() => undefined))?.status !== "planning") return;
-    const questions = (event.input.questions ?? []) as { question: string; options: string[] }[];
+    const questions = (event.input.questions ?? []) as { question: string; options?: string[] }[];
     const given = ((event as any).details?.answers ?? []) as { question: string; answer: string }[];
     // Answers come back in question order; a cancel drops the rest.
+    let recorded = 0;
     for (const [i, a] of given.entries()) {
-      const options = questions[i]?.options ?? [];
+      // An open question asks for the user's reasoning (their approach), not a choice: the plan builds on it, no ADR records it.
+      const options = questions[i]?.options;
+      if (!options) continue;
+      recorded++;
       asked.set(a.question, { question: a.question, options, answer: a.answer });
       answers.set(JSON.stringify([a.question, options]), a.answer);
     }
     // A cheap planner otherwise lists the same topics again, reworded, as task_plan decisions.
-    if (given.length) return { content: [...event.content, { type: "text" as const, text: "These answers are already recorded as plan decisions. Do not list these topics again in task_plan decisions." }] };
+    if (recorded) return { content: [...event.content, { type: "text" as const, text: "These answers are already recorded as plan decisions. Do not list these topics again in task_plan decisions." }] };
   });
   pi.on("tool_result", async (event, ctx) => {
     if (!event.toolName.startsWith("mcp__")) return;

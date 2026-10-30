@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { updateManifest } from "../src/manifest.ts";
 import { readTask, writeTask } from "../src/task-state.ts";
 import { planCheckWanted, registerTask, specFiles } from "../src/task.ts";
-import { planText } from "../src/task-prompt.ts";
+import { APPROACH_FIRST, planText } from "../src/task-prompt.ts";
 import { TASK_DONE_EVENT, VERIFY_EVENT } from "../src/events.ts";
 import { fakeCtx, fakePi, fakeUI, isSubagent, tempProject } from "./helpers.ts";
 
@@ -109,6 +109,27 @@ test("ask_user answers given while planning become decisions with ADRs and are n
   const decisions = (await readTask(root))!.plan!.decisions;
   assert.deepEqual(decisions.map((d) => [d.question, d.answer]), [["Rounding?", "half-up"], ["Negative amounts?", "throw"]]);
   assert.match(await fs.readFile(path.join(root, decisions[1].source!), "utf8"), /throw/);
+});
+
+test("open ask_user answers while planning are the user's approach, not decisions with ADRs", async () => {
+  const { commands, tools, ctxFor, emit, root } = await setup();
+  await commands.get("task").handler("Add fee", ctxFor([]).ctx);
+  const input = { questions: [{ question: "How would you store the fee?" }, { question: "Rounding?", options: ["half-up", "banker"] }] };
+  const details = { answers: [{ question: "How would you store the fee?", answer: "In cents" }, { question: "Rounding?", answer: "half-up" }] };
+  await emit("tool_result", { toolName: "ask_user", input, details, content: [] }, ctxFor([]).ctx);
+  const open = { questions: [input.questions[0]] };
+  assert.equal(await emit("tool_result", { toolName: "ask_user", input: open, details: { answers: [details.answers[0]] }, content: [] }, ctxFor([]).ctx), undefined);
+  await tools.get("task_plan").execute("1", plan(), undefined, undefined, ctxFor([true]).ctx);
+  assert.deepEqual((await readTask(root))!.plan!.decisions.map((d) => d.question), ["Rounding?"]);
+});
+
+test("the planning prompt asks for the user's approach first only with understanding plan+end (the default)", async () => {
+  for (const [understanding, asks] of [[undefined, true], ["plan+end", true], ["end", false], ["off", false]] as const) {
+    const { commands, sent, ctxFor, root } = await setup();
+    if (understanding) await updateManifest(root, (m) => void (m.understanding = understanding));
+    await commands.get("task").handler("Add fee", ctxFor([]).ctx);
+    assert.equal(sent[0].includes(APPROACH_FIRST), asks, String(understanding));
+  }
 });
 
 test("ask_user answers outside planning are not plan decisions", async () => {

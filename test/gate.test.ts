@@ -7,19 +7,20 @@ import { registerGate } from "../src/gate.ts";
 import { registerGuards } from "../src/guards.ts";
 import { APPROVE } from "../src/policy.ts";
 import { TASK_DONE_EVENT } from "../src/events.ts";
-import { ESCALATE_EVENT, REVIEW_EVENT, VERIFY_EVENT } from "../src/events.ts";
+import { ESCALATE_EVENT, REVIEW_EVENT, UNDERSTANDING_EVENT, VERIFY_EVENT } from "../src/events.ts";
 import { NIX_BUILD_FAILED, installMessage } from "../src/nix.ts";
 import { readTask } from "../src/task-state.ts";
 import { updateManifest } from "../src/manifest.ts";
 import { failureSignature } from "../src/verify.ts";
 import { fakePi, fakeUI, isSubagent, tempProject } from "./helpers.ts";
 
-const manifest = (setup: string) => JSON.stringify({ version: 1, setup, verify: ["check"], connectors: [] });
+// These tests are about verify and review: the understanding check after them is off unless a test turns it on.
+const manifest = (setup: string, understanding = "off") => JSON.stringify({ version: 1, setup, verify: ["check"], connectors: [], understanding });
 const task = { id: "t1", title: "Do it", status: "implementing", allowedExtra: [], startedAt: "2026-10-01T00:00:00.000Z" };
 
-async function setup(opts: { setup?: string; task?: boolean; pass?: boolean; answers?: unknown[]; review?: string; nix?: boolean | string; status?: string } = {}) {
-  const files: Record<string, string> = { ".pi/workflow.json": manifest(opts.setup ?? "done") };
-  if (opts.review) files[".pi/workflow.json"] = JSON.stringify({ version: 1, setup: "done", verify: ["check"], connectors: [], models: { review: "p/m" }, review: { minLevel: "low" } });
+async function setup(opts: { setup?: string; task?: boolean; pass?: boolean; answers?: unknown[]; review?: string; nix?: boolean | string; status?: string; understanding?: string } = {}) {
+  const files: Record<string, string> = { ".pi/workflow.json": manifest(opts.setup ?? "done", opts.understanding) };
+  if (opts.review) files[".pi/workflow.json"] = JSON.stringify({ version: 1, setup: "done", verify: ["check"], connectors: [], models: { review: "p/m" }, review: { minLevel: "low" }, understanding: opts.understanding ?? "off" });
   if (opts.task) files[".pi/task.json"] = JSON.stringify(task);
   const root = await tempProject(files);
   let diff = "";
@@ -177,6 +178,42 @@ test("pass confirms the task, marks it done and emits the event; same state is n
   assert.equal(doneEvent.payload.root, t.root);
   await t.settle();
   assert.equal(t.verifies(), 1);
+});
+
+test("understanding on: a confirmed task gets the check message once and stays open until understanding_done", async () => {
+  const t = await setup({ pass: true, task: true, answers: [true], understanding: "end" });
+  await t.run();
+  const r = await t.settle();
+  assert.equal(r.continue, true);
+  assert.equal(r.entries[0].customType, "understanding-check");
+  assert.match(r.entries[0].content, /understanding-check\/SKILL\.md[\s\S]*understanding_done/);
+  const open = await readTask(t.root);
+  assert.deepEqual([open?.status, open?.understanding], ["implementing", "asked"]);
+  assert.ok(!t.emitted.some((e) => e.name === TASK_DONE_EVENT || e.name === UNDERSTANDING_EVENT));
+  // A later change is verified again, but neither the dialog nor the check comes back (no answers are scripted).
+  t.setDiff("changed again");
+  assert.equal(await t.settle(), undefined);
+  assert.equal((await readTask(t.root))?.status, "implementing");
+});
+
+test("review changes come first: the check follows the fixed code", async () => {
+  const t = await setup({ pass: true, task: true, review: "VERDICT: CHANGES\n1. bug", answers: [true], understanding: "plan+end" });
+  await t.run();
+  assert.equal((await t.settle()).entries[0].customType, "diff-review");
+  assert.equal((await t.settle()).entries[0].customType, "understanding-check");
+});
+
+test("without a UI, or with understanding off, the task completes and the reason is recorded first", async () => {
+  for (const [understanding, hasUI, outcome] of [["plan+end", false, "no-ui"], ["off", true, "off"]] as const) {
+    const t = await setup({ pass: true, task: true, answers: hasUI ? [true] : [], understanding });
+    t.ctx.hasUI = hasUI;
+    await t.run();
+    assert.equal(await t.settle(), undefined);
+    assert.equal((await readTask(t.root))?.status, "done");
+    const recorded = t.emitted.find((e) => e.name === UNDERSTANDING_EVENT);
+    assert.deepEqual(recorded.payload, { root: t.root, outcome, gaps: 0 });
+    assert.equal(recorded.taskStatus, "implementing", "recorded before the task is marked done");
+  }
 });
 
 test("/verify reports even without changes", async () => {

@@ -2,18 +2,18 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { ESCALATE_EVENT, REVIEW_EVENT, TASK_DONE_EVENT, VERIFY_EVENT, type EscalatePayload, type ReviewPayload, type TaskDonePayload, type VerifyPayload } from "./events.ts";
+import { ESCALATE_EVENT, REVIEW_EVENT, TASK_DONE_EVENT, UNDERSTANDING_EVENT, VERIFY_EVENT, type EscalatePayload, type ReviewPayload, type TaskDonePayload, type UnderstandingPayload, type VerifyPayload } from "./events.ts";
 import { checkContract, formatContract } from "./contract.ts";
 import { limitsOf } from "./config.ts";
 import { git } from "./git.ts";
-import { readManifest, type Manifest } from "./manifest.ts";
+import { readManifest, understandingOf, type Manifest } from "./manifest.ts";
 import { restoreModel, switchModel } from "./models.ts";
 import { assessRisk, minLevelOf } from "./risk.ts";
 import { checkAcceptances } from "./guards.ts";
 import { resolvePolicyFailure } from "./policy.ts";
 import { reviewDiff } from "./review.ts";
-import { skillsBlock } from "./skills.ts";
-import { assistantText, endsOnQuestion } from "./task-prompt.ts";
+import { skillsBlock, skillsDir } from "./skills.ts";
+import { assistantText, endsOnQuestion, understandingCheck } from "./task-prompt.ts";
 import { oneLine, readTask, updateTask, type Task } from "./task-state.ts";
 import { type Signature, failureSignature, agentlintStepOf, verifySteps, formatVerify, infraFailure, isPolicyFailure, runVerify, sameFailure, validCap } from "./verify.ts";
 
@@ -309,6 +309,8 @@ export function registerGate(pi: ExtensionAPI) {
       }
     }
     if (task?.status !== "implementing") return;
+    // Already confirmed, with the understanding check sent: understanding_done (or /task done) closes the task.
+    if (task.understanding === "asked") return;
     // Headless, a pass is the answer; with no verify steps nothing passed, so only a person can call it done.
     const title = unverified ? "No verify steps: nothing checked this change" : "Verification OK";
     const done = ctx.hasUI ? await ctx.ui.confirm(title, `Is the task "${oneLine(task.title, 80)}" done?${dialogNotes(risk)}`) : !unverified;
@@ -318,6 +320,14 @@ export function registerGate(pi: ExtensionAPI) {
     }
     // Before the task is marked done: telemetry looks up the active task, and a done one is not.
     if (skip && !reviewed.has(task.id)) pi.events.emit(REVIEW_EVENT, skip satisfies ReviewPayload);
+    const understanding = understandingOf(manifest);
+    // The teach-back runs once, on the final code (after any review fixes); understanding_done completes the task.
+    if (understanding !== "off" && ctx.hasUI) {
+      await updateTask(ctx.cwd, (t) => void (t.understanding = "asked"));
+      const content = understandingCheck(path.join(skillsDir(), "understanding-check", "SKILL.md"));
+      return { entries: [{ type: "custom_message", customType: "understanding-check", content, display: true }], continue: true };
+    }
+    pi.events.emit(UNDERSTANDING_EVENT, { root: ctx.cwd, outcome: understanding === "off" ? "off" : "no-ui", gaps: 0 } satisfies UnderstandingPayload);
     await completeTask(pi, ctx);
   });
 
