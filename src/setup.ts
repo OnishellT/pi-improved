@@ -270,7 +270,9 @@ export function registerSetup(pi: ExtensionAPI) {
         if (manifest.mode === undefined) m.mode = "direct";
         m.completedAt = new Date().toISOString();
       });
-      return { content: [{ type: "text", text: "Setup complete and approved. Stop here." }], details: { verify }, terminate: true };
+      // Headless, nobody approved: say so, with the verify result, so the summary reports it.
+      const text = ctx.hasUI ? "Setup complete and approved. Stop here." : `Setup complete, not approved: no UI to ask; the files are uncommitted for review with git diff.${verifyNote} Report this, then stop.`;
+      return { content: [{ type: "text", text }], details: { verify }, terminate: true };
     },
   });
 
