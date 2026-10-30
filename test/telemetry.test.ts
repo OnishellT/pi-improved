@@ -129,6 +129,20 @@ test("/metrics leaves plan checks out of the review column, not out of the cost"
   assert.match(await metricsReport(root), /^A\s+\$  0\.500 .*review: approved$/m);
 });
 
+test("a review and the understanding outcome recorded at once, after a restart, both reach the task's metrics", async () => {
+  const snapshot = JSON.stringify({ phases: {}, verifyRuns: 1, verifyFailures: 0, premises: 0, progress: { runs: 0, failures: 0 }, reviews: [], escalations: 0 });
+  const root = await tempProject({ ".pi/task.json": taskJson("COLD-1", "implementing"), ".pi/metrics/COLD-1.json": snapshot });
+  const s = setup();
+  // As in the gate: the review listener starts, unawaited, then the outcome is awaited.
+  const review = s.fire(REVIEW_EVENT, { root, status: "skipped", model: "m", seconds: 0 });
+  await recordUnderstanding(root, "no-ui", 0);
+  await review;
+  const m = taskMetrics("COLD-1")!;
+  assert.deepEqual([m.verifyRuns, m.reviews.length, m.understanding], [1, 1, { outcome: "no-ui", gaps: 0 }]);
+  const disk = JSON.parse(await fs.readFile(path.join(root, ".pi/metrics/COLD-1.json"), "utf8"));
+  assert.deepEqual([disk.reviews.length, disk.understanding], [1, { outcome: "no-ui", gaps: 0 }]);
+});
+
 test("the understanding outcome and its gap count are kept per task, and /metrics shows the rates", async () => {
   const root = await tempProject({ ".pi/task.json": taskJson("U-1", "implementing") });
   await recordUnderstanding(root, "done", 2);
