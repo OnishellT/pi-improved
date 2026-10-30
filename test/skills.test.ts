@@ -10,7 +10,7 @@ test("listSkills finds the bundled skills", async () => {
   assert.deepEqual(await listSkills(), [
     "architect", "benchmark-checklist", "bend-laws", "code-review", "codebase-design", "contract-first", "correct", "diagnosing-bugs", "domain-modeling", "grilling", "handoff", "how",
     "interrogate", "principle-explain-the-number", "principles-diagnose", "principles-implement", "principles-review", "pstack-blast-radius",
-    "pstack-create-verification-skill", "pstack-maintain-verification-skill", "pstack-technical-writing", "reflect", "research", "retro", "tdd", "unslop", "why", "writing-for-agents",
+    "pstack-create-verification-skill", "pstack-maintain-verification-skill", "pstack-technical-writing", "reflect", "research", "retro", "tdd", "understanding-check", "unslop", "why", "writing-for-agents",
   ]);
 });
 

@@ -81,7 +81,15 @@ export interface Manifest {
   limits?: { [K in keyof Limits]?: unknown } | undefined;
   /** Self-compact thresholds per model, the shape of the old `self-compact.json`. */
   selfCompact?: ProfileFile;
+  /** When /task checks that the user understands the work: "plan+end" (default) asks for their approach before the plan and a teach-back after verify, "end" only the teach-back, "off" neither. */
+  understanding?: Understanding;
 }
+
+export const UNDERSTANDING = ["off", "end", "plan+end"] as const;
+export type Understanding = (typeof UNDERSTANDING)[number];
+/** The understanding setting in force; a missing or unknown value is the default, "plan+end" (/doctor reports an unknown one). */
+export const understandingOf = (manifest?: { understanding?: unknown }): Understanding =>
+  UNDERSTANDING.includes(manifest?.understanding as Understanding) ? (manifest!.understanding as Understanding) : "plan+end";
 
 export interface PhaseModels {
   /** One-off project setup: worth a stronger model. */

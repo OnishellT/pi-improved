@@ -11,16 +11,16 @@ export async function selectOrType(ctx: any, title: string, options: string[]): 
 
 const Question = Type.Object({
   question: Type.String({ description: "One concrete question" }),
-  options: Type.Array(Type.String(), { minItems: 2, maxItems: 4, description: "2-4 answers; put the recommended one first" }),
+  options: Type.Optional(Type.Array(Type.String(), { minItems: 2, maxItems: 4, description: "2-4 answers; put the recommended one first. Leave out for an open question the user answers in their own words" })),
 });
 
-/** Batched multiple-choice questions to the user. Shared by setup and, later, the decision gate. */
+/** Batched questions to the user, multiple-choice or open. Shared by setup and, later, the decision gate. */
 export function registerAskUser(pi: ExtensionAPI) {
   pi.registerTool({
     name: "ask_user",
     label: "Ask user",
     description:
-      "Ask the user up to 5 questions at once, each with 2-4 options (recommended first). The user can always write a different answer. Ask only what the code and docs cannot answer.",
+      "Ask the user up to 5 questions at once, each with 2-4 options (recommended first), or open (no options) for an answer in their own words. The user can always write a different answer. Ask only what the code and docs cannot answer.",
     parameters: Type.Object({ questions: Type.Array(Question, { minItems: 1, maxItems: 5 }) }),
     exposure: "model-only",
     executionMode: "sequential",
@@ -29,7 +29,7 @@ export function registerAskUser(pi: ExtensionAPI) {
       const answers: { question: string; answer: string }[] = [];
       for (const [i, q] of questions.entries()) {
         const title = `(${i + 1}/${questions.length}) ${q.question}`;
-        const answer = await selectOrType(ctx, title, q.options);
+        const answer = q.options ? await selectOrType(ctx, title, q.options) : await ctx.ui.input(title);
         if (answer === undefined) break;
         answers.push({ question: q.question, answer });
       }

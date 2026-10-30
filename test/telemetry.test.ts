@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { test } from "node:test";
-import { ESCALATE_EVENT, REVIEW_EVENT, VERIFY_EVENT } from "../src/events.ts";
+import { ESCALATE_EVENT, REVIEW_EVENT, UNDERSTANDING_EVENT, VERIFY_EVENT } from "../src/events.ts";
 import { TASK_DONE_EVENT } from "../src/events.ts";
 import { registerLearn } from "../src/learn.ts";
 import { loadMetrics, metricsReport, registerTelemetry, taskMetrics } from "../src/telemetry.ts";
@@ -127,4 +127,16 @@ test("/metrics leaves plan checks out of the review column, not out of the cost"
   const mk = (id: string, reviews: object[]) => JSON.stringify({ id, metrics: { phases: {}, verifyFailures: 0, reviews } });
   const root = await tempProject({ ".pi/memory/tasks.jsonl": mk("A", [{ status: "plan-ok", model: "m", seconds: 1, cost: 0.1 }, { status: "approved", model: "m", seconds: 1, cost: 0.4 }]) });
   assert.match(await metricsReport(root), /^A\s+\$  0\.500 .*review: approved$/m);
+});
+
+test("the understanding outcome and its gap count are kept per task, and /metrics shows the rates", async () => {
+  const root = await tempProject({ ".pi/task.json": taskJson("U-1", "implementing") });
+  const s = setup();
+  await s.fire(UNDERSTANDING_EVENT, { root, outcome: "done", gaps: 2 });
+  assert.deepEqual(taskMetrics("U-1")!.understanding, { outcome: "done", gaps: 2 });
+  const mk = (id: string, understanding?: object) => JSON.stringify({ id, metrics: { phases: {}, verifyFailures: 0, reviews: [], ...(understanding && { understanding }) } });
+  const memory = [mk("A", { outcome: "done", gaps: 2 }), mk("B", { outcome: "done", gaps: 1 }), mk("C", { outcome: "skipped", gaps: 0 }), mk("D", { outcome: "no-ui", gaps: 0 }), mk("E")].join("\n");
+  const report = await metricsReport(await tempProject({ ".pi/memory/tasks.jsonl": memory }));
+  assert.match(report, /^Understanding \(4 tasks\): done 50%, skipped 25%, no-ui 25%, off 0%, 1\.5 gaps per answered check$/m);
+  assert.doesNotMatch(await metricsReport(await tempProject({ ".pi/memory/tasks.jsonl": mk("E") })), /Understanding/);
 });

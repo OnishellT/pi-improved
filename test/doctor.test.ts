@@ -68,12 +68,13 @@ test("/doctor validates mode: absent and valid pass, anything else fails", async
 });
 
 test("/doctor flags option values the code would read as another value, and unknown skills", async () => {
-  const t = await setup(() => ({ code: 0 }), true, undefined, { review: { minLevel: "medium" }, useAgentlint: "Never", useBend: "never", skills: { plan: ["no-such-skill"], review: "pstack-review" } });
+  const t = await setup(() => ({ code: 0 }), true, undefined, { review: { minLevel: "medium" }, useAgentlint: "Never", useBend: "never", understanding: "plan", skills: { plan: ["no-such-skill"], review: "pstack-review" } });
   await t.commands.get("doctor").handler("", t.ctx);
   const msg = t.notes[0].msg;
   assert.match(msg, /✗ review\.minLevel: "medium" is not valid: use "off", "low" or "high"/);
   assert.match(msg, /✗ useAgentlint: "Never" is not valid/);
   assert.match(msg, /✓ useBend: never/);
+  assert.match(msg, /✗ understanding: "plan" is not valid: use "off", "end" or "plan\+end"/);
   assert.match(msg, /✗ Skills: skills\.plan: unknown skill "no-such-skill"; skills\.review is not a list/);
 });
 
