@@ -35,6 +35,8 @@ export async function loadMetrics(root: string, taskId: string): Promise<TaskMet
   if (known) return known;
   try {
     const loaded = { ...empty(), ...JSON.parse(await fs.readFile(snapshotPath(root, taskId), "utf8")) } as TaskMetrics;
+    // Another update may have loaded or created it while the file was read: share that object, or its change is lost.
+    if (metrics.has(taskId)) return metrics.get(taskId);
     metrics.set(taskId, loaded);
     return loaded;
   } catch {
@@ -54,6 +56,13 @@ async function save(root: string, id: string, data: TaskMetrics) {
   } catch {}
 }
 
+/** The one metrics object updates of the task change: loaded, or created and kept in memory at once. */
+async function metricsFor(root: string, taskId: string): Promise<TaskMetrics> {
+  const data = (await loadMetrics(root, taskId)) ?? metrics.get(taskId) ?? empty();
+  metrics.set(taskId, data);
+  return data;
+}
+
 /** done: the user answered the teach-back; skipped: they declined it; no-ui: nobody could answer; off: `understanding` is "off". */
 export type UnderstandingOutcome = "done" | "skipped" | "no-ui" | "off";
 
@@ -61,7 +70,7 @@ export type UnderstandingOutcome = "done" | "skipped" | "no-ui" | "off";
 export async function recordUnderstanding(root: string, outcome: UnderstandingOutcome, gaps: number) {
   const task = await readTask(root).catch(() => undefined);
   if (!task || task.status === "done") return;
-  const data = (await loadMetrics(root, task.id)) ?? empty();
+  const data = await metricsFor(root, task.id);
   data.understanding = { outcome, gaps };
   await save(root, task.id, data);
 }
@@ -121,7 +130,7 @@ export function registerTelemetry(pi: ExtensionAPI) {
   async function active(root: string) {
     const task = await readTask(root).catch(() => undefined);
     if (!task || task.status === "done") return undefined;
-    return { id: task.id, status: task.status, data: (await loadMetrics(root, task.id)) ?? empty() };
+    return { id: task.id, status: task.status, data: await metricsFor(root, task.id) };
   }
   async function bump(root: string, change: (m: TaskMetrics) => void) {
     const t = await active(root);
