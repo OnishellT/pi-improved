@@ -320,6 +320,8 @@ export function registerGate(pi: ExtensionAPI) {
     // The understanding check was sent for this tree: understanding_done (or /task done) closes the task.
     const checking = task.understanding;
     if (checking?.tree === now) return;
+    // Only a person confirms changed code during the check: a session resumed headless leaves it to /task done.
+    if (checking && !ctx.hasUI) return void ctx.ui.notify("The code changed during the understanding check and nobody can confirm it here. /task done closes the task.", "info");
     // Headless, a pass is the answer; with no verify steps nothing passed, so only a person can call it done.
     const title = unverified ? "No verify steps: nothing checked this change" : "Verification OK";
     const done = ctx.hasUI ? await ctx.ui.confirm(title, `Is the task "${oneLine(task.title, 80)}" done?${dialogNotes(risk)}`) : !unverified;

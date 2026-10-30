@@ -218,6 +218,18 @@ test("understanding on: code changed between turns is verified and confirmed aga
   assert.equal((await readTask(t.root))?.understanding?.tree, asked, "declined: the check still points at the confirmed tree");
 });
 
+test("understanding on: code changed during the check is never confirmed headless", async () => {
+  const t = await setup({ pass: true, task: true, answers: [true], understanding: "end" });
+  await t.run();
+  await t.settle();
+  const asked = (await readTask(t.root))?.understanding?.tree;
+  t.setDiff("changed headless");
+  t.ctx.hasUI = false;
+  assert.equal(await t.settle(), undefined);
+  assert.equal((await readTask(t.root))?.understanding?.tree, asked);
+  assert.match(t.notes.at(-1)!, /nobody can confirm/);
+});
+
 test("review changes come first: the check follows the fixed code", async () => {
   const t = await setup({ pass: true, task: true, review: "VERDICT: CHANGES\n1. bug", answers: [true], understanding: "plan+end" });
   await t.run();
