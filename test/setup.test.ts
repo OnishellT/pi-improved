@@ -248,6 +248,9 @@ test("setup_finish accepts an empty verify list when no check can run here, runs
   registerSetup(pi);
   const schema = tools.get("setup_finish").parameters.properties.verify;
   assert.equal(schema.minItems, undefined);
+  // A check that fails here only because a service is missing stays out of verify; the summary names it and the service.
+  assert.match(schema.description, /Leave out a check that fails here only because a service it needs is missing, and name that check and service in the setup summary/);
+  assert.match(schema.description, /\[\] when no check can run here/);
   const { ctx, ui } = ctxFor(root, [true]);
   const result = await tools.get("setup_finish").execute("1", { verify: [], summary: "No check can run here: the tests need Postgres." }, undefined, undefined, ctx);
   assert.equal(result.terminate, true);
