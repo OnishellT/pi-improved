@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import { TASK_DONE_EVENT } from "../src/events.ts";
 import { registerLearn } from "../src/learn.ts";
@@ -92,6 +93,23 @@ test("a tree git cannot read is never taken as the verified one", async () => {
   assert.equal(emitted.length, 0);
   assert.equal(await recorded(root), undefined);
   assert.equal((await readTask(root))?.status, "implementing");
+});
+
+test("a tracked binary file rewritten with other bytes of the same size changes the snapshot (git diff names its blob)", async () => {
+  const root = await tempProject({ "logo.bin": Buffer.from([0, 1, 2, 3]) as any });
+  const run = (args: string[]) => spawnSync("git", args, { cwd: root, encoding: "utf8" });
+  for (const args of [["init", "-q"], ["add", "logo.bin"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init"]]) assert.equal(run(args).status, 0);
+  const pi: any = { exec: async (cmd: string, args: string[], opts: { cwd: string }) => {
+    const r = spawnSync(cmd, args, { cwd: opts.cwd, encoding: "utf8" });
+    return { code: r.status, stdout: r.stdout, stderr: r.stderr, killed: false };
+  } };
+  await fs.writeFile(path.join(root, "logo.bin"), Buffer.from([0, 9, 9, 3]));
+  const before = await treeSnapshot(pi, root);
+  assert.notEqual(before, UNREADABLE);
+  await fs.writeFile(path.join(root, "logo.bin"), Buffer.from([0, 7, 7, 3]));
+  assert.notEqual(await treeSnapshot(pi, root), before);
+  await fs.rm(path.join(root, "logo.bin"));
+  assert.notEqual(await treeSnapshot(pi, root), UNREADABLE, "a deleted tracked file is a change, not an unreadable tree");
 });
 
 test("the planning prompt asks for the user's approach first only when told to", () => {
