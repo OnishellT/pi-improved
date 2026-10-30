@@ -44,16 +44,23 @@ export async function loadMetrics(root: string, taskId: string): Promise<TaskMet
   }
 }
 
+const saving = new Map<string, Promise<void>>();
+/** Saves of one snapshot run one after another, each writing the state at its turn: an older one never lands last. */
 async function save(root: string, id: string, data: TaskMetrics) {
   metrics.set(id, data);
-  try {
-    const file = snapshotPath(root, id);
-    await fs.mkdir(path.dirname(file), { recursive: true });
-    // Temp file + rename in the same directory: overlapping saves never leave a truncated snapshot.
-    const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
-    await fs.writeFile(tmp, JSON.stringify(data));
-    await fs.rename(tmp, file);
-  } catch {}
+  const file = snapshotPath(root, id);
+  const next = (saving.get(file) ?? Promise.resolve()).then(async () => {
+    try {
+      await fs.mkdir(path.dirname(file), { recursive: true });
+      // Temp file + rename in the same directory: a crash never leaves a truncated snapshot.
+      const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+      await fs.writeFile(tmp, JSON.stringify(data));
+      await fs.rename(tmp, file);
+    } catch {}
+  });
+  saving.set(file, next);
+  await next;
+  if (saving.get(file) === next) saving.delete(file);
 }
 
 /** The one metrics object updates of the task change: loaded, or created and kept in memory at once. */
