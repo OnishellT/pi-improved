@@ -38,19 +38,33 @@ test("accumulates usage per phase and counts events", async () => {
   assert.deepEqual([m.verifyRuns, m.verifyFailures, m.escalations, m.reviews.length], [2, 1, 1, 1]);
 });
 
-test("baseline, progress, predating and premise runs are recorded apart from the final verifies", async () => {
+test("progress and premise runs are recorded apart from the final verifies", async () => {
   const root = await tempProject({ ".pi/task.json": taskJson("M-3", "implementing") });
   const s = setup();
-  await s.fire(VERIFY_EVENT, { root, kind: "baseline", ok: false, seconds: 4.5 });
   await s.fire(VERIFY_EVENT, { root, kind: "progress", ok: false, seconds: 1 });
   await s.fire(VERIFY_EVENT, { root, kind: "progress", ok: true, seconds: 1 });
-  await s.fire(VERIFY_EVENT, { root, kind: "gate", ok: false, seconds: 2, predates: true });
   await s.fire(VERIFY_EVENT, { root, kind: "gate", ok: false, seconds: 2, premise: true });
   await s.fire(VERIFY_EVENT, { root, kind: "gate", ok: false, seconds: 2, premise: false });
   const m = taskMetrics("M-3")!;
-  assert.deepEqual(m.baseline, { ok: false, seconds: 4.5 });
   assert.deepEqual(m.progress, { runs: 2, failures: 1 });
-  assert.deepEqual([m.verifyRuns, m.verifyFailures, m.predated, m.premises], [3, 2, 1, 1]);
+  assert.deepEqual([m.verifyRuns, m.verifyFailures, m.premises], [2, 2, 1]);
+});
+
+test("task and metrics files from before the baseline was removed still load, and /cost and /metrics report them", async () => {
+  const old = { phases: { implementing: { input: 1, output: 1, cacheRead: 0, cost: 0.2, seconds: 3 } }, verifyRuns: 2, verifyFailures: 0, predated: 1, premises: 0, baseline: { ok: false, seconds: 40 }, progress: { runs: 0, failures: 0 }, reviews: [], escalations: 0 };
+  const task = { ...JSON.parse(taskJson("M-old", "implementing")), baseline: { ok: false, seconds: 40, failing: [{ step: "t", lines: ["FAIL x"] }] }, predates: ["FAIL x"] };
+  const root = await tempProject({
+    ".pi/task.json": JSON.stringify(task),
+    ".pi/metrics/M-old.json": JSON.stringify(old),
+    ".pi/memory/tasks.jsonl": `${JSON.stringify({ id: "M-old2", title: "T", completedAt: "2026-10-01T00:00:00Z", metrics: old })}\n`,
+  });
+  const s = setup();
+  const notes: string[] = [];
+  const ctx = { cwd: root, ui: { notify: (t: string) => notes.push(t) } };
+  await s.commands.get("cost").handler("", ctx);
+  await s.commands.get("metrics").handler("", ctx);
+  assert.match(notes[0], /\$0\.200/);
+  assert.match(notes[1], /M-old2/);
 });
 
 test("snapshots are written through a temp file: no leftovers, valid JSON", async () => {

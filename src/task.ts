@@ -6,7 +6,7 @@ import { writeAdr, type AdrInput } from "./adr.ts";
 import { selectOrType } from "./ask.ts";
 import { exists, limitsOf } from "./config.ts";
 import { missingNames, relatesTo } from "./contract.ts";
-import { REVIEW_EVENT, VERIFY_EVENT, type ReviewPayload, type VerifyPayload } from "./events.ts";
+import { REVIEW_EVENT, type ReviewPayload } from "./events.ts";
 import { relatedTasks } from "./learn.ts";
 import { completeTask } from "./gate.ts";
 import { restoreModel, usePhaseModel } from "./models.ts";
@@ -16,7 +16,6 @@ import { highRiskReasons, minLevelOf, planRiskReasons } from "./risk.ts";
 import { phaseSkills, skillsBlock } from "./skills.ts";
 import { readManifest, type Manifest } from "./manifest.ts";
 import { inFiles, oneLine, readTask, resolveInside, updateTask, writeTask, type Decision, type Plan, type Task } from "./task-state.ts";
-import { runBaseline } from "./verify.ts";
 import { QUESTION_NUDGE, TASK_NUDGE, assistantText, endsOnQuestion, planText, taskPrompt } from "./task-prompt.ts";
 
 const MAX_NUDGES = 2; // "call task_plan" / "use ask_user" reminders per user message
@@ -180,17 +179,6 @@ export function registerTask(pi: ExtensionAPI) {
     } else ctx.ui.notify("Plan check: OK.", "info");
   };
 
-  /** Before the first edit: what already fails is not the change's fault (the gate checks against it). Takes as long as verify normally may. */
-  const baselineRun = async (ctx: any, root: string, manifest: Manifest, signal?: AbortSignal) => {
-    ctx.ui.setStatus("baseline", "running verify before the change…");
-    const baseline = await runBaseline(manifest.verify, pi.exec.bind(pi), root, manifest.maxReport, signal)
-      .catch(() => undefined)
-      .finally(() => ctx.ui.setStatus("baseline", undefined));
-    if (baseline) pi.events?.emit(VERIFY_EVENT, { root, kind: "baseline", ok: baseline.ok, seconds: baseline.seconds } satisfies VerifyPayload);
-    else if (!signal?.aborted) ctx.ui.notify("Verify could not run before the change: failures that already exist will count as the change's.", "warning");
-    return baseline;
-  };
-
   /** Fast path: a small plan with no risk trigger already passed the same deterministic gates; the dialog adds only cost. */
   const approve = async (ctx: any, plan: Plan, manifest: Manifest) => {
     const risk = planRiskReasons(plan, manifest);
@@ -308,15 +296,11 @@ export function registerTask(pi: ExtensionAPI) {
       await approve(ctx, plan, manifest);
 
       const baseCommit = task.baseCommit ?? (await gitHead(pi.exec.bind(pi), root));
-      const baseline = manifest.setup === "done" ? await baselineRun(ctx, root, manifest, signal) : undefined;
-      if (signal?.aborted) throw new Error("Cancelled while verify ran on the unchanged code, so the plan is not approved. Stop and wait for the user.");
       for (const { decision, adr } of pending) decision.source = await writeAdr(root, adr);
       await updateTask(root, (t) => {
         t.plan = plan;
         t.status = "implementing";
         if (baseCommit) t.baseCommit = baseCommit;
-        if (baseline) t.baseline = baseline;
-        else delete t.baseline;
       });
       ticketText.delete(root);
       const decided = plan.decisions.filter((d) => d.answer).map((d) => `- ${d.question} -> ${d.answer}${d.source ? ` (${d.source})` : ""}`);
@@ -326,7 +310,7 @@ export function registerTask(pi: ExtensionAPI) {
       // Implementation starts here; skills the plan block already loaded are not sent twice.
       const skills = await skillsBlock(root, "implement", await phaseSkills(root, "plan"));
       return {
-        content: [{ type: "text", text: "Plan approved. First write the tests at the agreed seams in the listed test files and run ONLY those test files to see them fail; then implement until they pass. Change only the listed files, use the agreed interface names and follow the decisions (read the ADRs they cite). Do not change existing tests or the verify configuration (test scripts, verify commands) to make verify pass, unless the ticket asks for it: a failing existing test means the code is wrong. Do not run the full verify; it runs automatically." + settled + (skills ? `\n\n${skills}` : "") }],
+        content: [{ type: "text", text: "Plan approved. First write the tests at the agreed seams in the listed test files and run ONLY those test files to see them fail; then implement until they pass. Change only the listed files, use the agreed interface names and follow the decisions (read the ADRs they cite). Do not change existing tests or the verify configuration (test scripts, verify commands) to make verify pass, unless the ticket asks for it: a failing existing test means the code is wrong. Do not run the full verify; it runs automatically. If the new tests or a service they need cannot run here, keep implementing: verify runs at the end and reports what did not run." + settled + (skills ? `\n\n${skills}` : "") }],
         details: { plan },
       };
     },

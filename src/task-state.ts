@@ -1,7 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { writeFileAtomicAsync } from "./config.ts";
-import type { Baseline } from "./verify.ts";
 
 export type TaskStatus = "planning" | "implementing" | "done";
 
@@ -47,10 +46,6 @@ export interface Task {
   planChecks?: number;
   /** HEAD when the task entered implementing: risk and review measure the diff against it. */
   baseCommit?: string;
-  /** The first verify command run when implementation started. Failures that match its `failing` signature predate the change. */
-  baseline?: Baseline;
-  /** Failure lines the last verify showed, all of which were already failing at baseline. /pr says so under verify. */
-  predates?: string[];
   /** The model in use before /task switched to the implement one: put back when the task ends. */
   model?: string;
   startedAt: string;
