@@ -182,7 +182,7 @@ export function registerSetup(pi: ExtensionAPI) {
     label: "Finish setup",
     description: "Finish /setup: checks the written files, runs verify and asks the user to approve. Call it only during /setup.",
     parameters: Type.Object({
-      verify: Type.Array(Type.String(), { description: "Shell commands that must all pass, in order. Leave out a check that fails here only because a service it needs is missing, and name that check and service in the setup summary so it can be added where the service runs; [] when no check can run here" }),
+      verify: Type.Array(Type.String(), { description: "Shell commands that must all pass, in order. Leave out a check that fails here only because a service it needs is missing; list it with that service under 'Before finishing' in AGENTS.md and in the setup summary. [] when no check can run here" }),
       summary: Type.String({ description: "What you documented and what is still unresolved, 3-8 lines" }),
     }),
     exposure: "model-only",
