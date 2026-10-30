@@ -115,7 +115,7 @@ export function registerGate(pi: ExtensionAPI) {
     const slow = seconds >= PROGRESS_MAX_SECONDS || !!result.results[0].killed;
     // A slow run that could not run the check (Nix still building) would cost the same time again: it turns the check off too.
     if (slow) await updateTask(cwd, (t) => void (t.progressOff = true));
-    if (infraFailure(result)) return;
+    if (infraFailure(result)) return slow ? `Progress check off: \`${step}\` could not run after ${Math.round(seconds)} s (${oneLine(infraFailure(result)!, 120)}). Run the tests you are working on yourself; verify runs when you finish.` : undefined;
     emitVerify({ root: cwd, kind: "progress", ok: result.ok, seconds });
     if (slow) {
       const took = result.results[0].killed ? `timed out after ${PROGRESS_TIMEOUT / 1000} s` : `took ${Math.round(seconds)} s, over ${PROGRESS_MAX_SECONDS} s`;
