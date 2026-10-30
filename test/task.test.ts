@@ -6,7 +6,7 @@ import { updateManifest } from "../src/manifest.ts";
 import { readTask, writeTask } from "../src/task-state.ts";
 import { planCheckWanted, registerTask, specFiles } from "../src/task.ts";
 import { APPROACH_FIRST, planText } from "../src/task-prompt.ts";
-import { TASK_DONE_EVENT, VERIFY_EVENT } from "../src/events.ts";
+import { TASK_DONE_EVENT, UNDERSTANDING_EVENT, VERIFY_EVENT } from "../src/events.ts";
 import { fakeCtx, fakePi, fakeUI, isSubagent, tempProject } from "./helpers.ts";
 
 const plan = (decisions: any[] = [], extra: any = {}) => ({
@@ -562,6 +562,15 @@ test("/task done closes an implementing task (done, event, model back); declinin
   assert.ok(done.completedAt);
   assert.deepEqual(t.emitted.map((e) => e.name), [TASK_DONE_EVENT]);
   assert.deepEqual(t.set, ["p/cheap", "p/mine"]);
+});
+
+test("/task done during the understanding check records it as skipped, before the task is done", async () => {
+  const t = await modelSetup();
+  await t.commands.get("task").handler("Add fee", t.ctxFor([]).ctx);
+  await writeTask(t.root, { ...(await readTask(t.root))!, status: "implementing", understanding: "asked" });
+  await t.commands.get("task").handler("done", t.ctxFor([]).ctx);
+  assert.deepEqual(t.emitted.map((e) => e.name), [UNDERSTANDING_EVENT, TASK_DONE_EVENT]);
+  assert.deepEqual(t.emitted[0].payload, { root: t.root, outcome: "skipped", gaps: 0 });
 });
 
 test("/task cancel puts the model back; a replaced task hands it on", async () => {
