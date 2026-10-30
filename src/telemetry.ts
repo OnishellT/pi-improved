@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { ESCALATE_EVENT, REVIEW_EVENT, UNDERSTANDING_EVENT, VERIFY_EVENT, type EscalatePayload, type ReviewPayload, type UnderstandingPayload, type VerifyPayload } from "./events.ts";
+import { ESCALATE_EVENT, REVIEW_EVENT, VERIFY_EVENT, type EscalatePayload, type ReviewPayload, type VerifyPayload } from "./events.ts";
 import { readMemory, readTask } from "./task-state.ts";
 
 export interface TaskMetrics {
@@ -15,7 +15,7 @@ export interface TaskMetrics {
   reviews: { status: string; model: string; seconds: number; cost?: number; discarded?: boolean }[];
   escalations: number;
   /** The teach-back at the end of the task; absent when the task was closed with /task done before it. */
-  understanding?: { outcome: string; gaps: number };
+  understanding?: { outcome: UnderstandingOutcome; gaps: number };
 }
 
 export const METRICS_DIR = ".pi/metrics/";
@@ -40,6 +40,30 @@ export async function loadMetrics(root: string, taskId: string): Promise<TaskMet
   } catch {
     return undefined;
   }
+}
+
+async function save(root: string, id: string, data: TaskMetrics) {
+  metrics.set(id, data);
+  try {
+    const file = snapshotPath(root, id);
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    // Temp file + rename in the same directory: overlapping saves never leave a truncated snapshot.
+    const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
+    await fs.writeFile(tmp, JSON.stringify(data));
+    await fs.rename(tmp, file);
+  } catch {}
+}
+
+/** done: the user answered the teach-back; skipped: they declined it; no-ui: nobody could answer; off: `understanding` is "off". */
+export type UnderstandingOutcome = "done" | "skipped" | "no-ui" | "off";
+
+/** Keeps the active task's understanding outcome and its number of gaps. Awaited before the task is completed, so the memory record has it. */
+export async function recordUnderstanding(root: string, outcome: UnderstandingOutcome, gaps: number) {
+  const task = await readTask(root).catch(() => undefined);
+  if (!task || task.status === "done") return;
+  const data = (await loadMetrics(root, task.id)) ?? empty();
+  data.understanding = { outcome, gaps };
+  await save(root, task.id, data);
 }
 
 /** How the last tasks' understanding checks ended, as rates, and the gaps per answered check; nothing when none was recorded. */
@@ -99,17 +123,6 @@ export function registerTelemetry(pi: ExtensionAPI) {
     if (!task || task.status === "done") return undefined;
     return { id: task.id, status: task.status, data: (await loadMetrics(root, task.id)) ?? empty() };
   }
-  async function save(root: string, id: string, data: TaskMetrics) {
-    metrics.set(id, data);
-    try {
-      const file = snapshotPath(root, id);
-      await fs.mkdir(path.dirname(file), { recursive: true });
-      // Temp file + rename in the same directory: overlapping saves never leave a truncated snapshot.
-      const tmp = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`;
-      await fs.writeFile(tmp, JSON.stringify(data));
-      await fs.rename(tmp, file);
-    } catch {}
-  }
   async function bump(root: string, change: (m: TaskMetrics) => void) {
     const t = await active(root);
     if (!t) return;
@@ -154,10 +167,6 @@ export function registerTelemetry(pi: ExtensionAPI) {
     return bump(root, (m) => void m.reviews.push({ status, model, seconds, ...(cost !== undefined && { cost }), ...(discarded && { discarded }) }));
   });
   pi.events?.on(ESCALATE_EVENT, (d) => bump((d as EscalatePayload).root, (m) => void m.escalations++));
-  pi.events?.on(UNDERSTANDING_EVENT, (d) => {
-    const { root, outcome, gaps } = d as UnderstandingPayload;
-    return bump(root, (m) => void (m.understanding = { outcome, gaps }));
-  });
 
   pi.registerCommand("cost", {
     description: "Phase, cost and tokens of the active task, and its last risk level",

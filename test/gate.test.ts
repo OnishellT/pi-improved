@@ -7,7 +7,8 @@ import { registerGate } from "../src/gate.ts";
 import { registerGuards } from "../src/guards.ts";
 import { APPROVE } from "../src/policy.ts";
 import { TASK_DONE_EVENT } from "../src/events.ts";
-import { ESCALATE_EVENT, REVIEW_EVENT, UNDERSTANDING_EVENT, VERIFY_EVENT } from "../src/events.ts";
+import { ESCALATE_EVENT, REVIEW_EVENT, VERIFY_EVENT } from "../src/events.ts";
+import { METRICS_DIR } from "../src/telemetry.ts";
 import { NIX_BUILD_FAILED, installMessage } from "../src/nix.ts";
 import { readTask } from "../src/task-state.ts";
 import { updateManifest } from "../src/manifest.ts";
@@ -17,6 +18,9 @@ import { fakePi, fakeUI, isSubagent, tempProject } from "./helpers.ts";
 // These tests are about verify and review: the understanding check after them is off unless a test turns it on.
 const manifest = (setup: string, understanding = "off") => JSON.stringify({ version: 1, setup, verify: ["check"], connectors: [], understanding });
 const task = { id: "t1", title: "Do it", status: "implementing", allowedExtra: [], startedAt: "2026-10-01T00:00:00.000Z" };
+
+/** The understanding outcome telemetry keeps for task t1: written only while the task is active. */
+const recorded = async (root: string) => JSON.parse(await fs.readFile(path.join(root, METRICS_DIR, "t1.json"), "utf8").catch(() => "{}")).understanding;
 
 async function setup(opts: { setup?: string; task?: boolean; pass?: boolean; answers?: unknown[]; review?: string; nix?: boolean | string; status?: string; understanding?: string } = {}) {
   const files: Record<string, string> = { ".pi/workflow.json": manifest(opts.setup ?? "done", opts.understanding) };
@@ -190,7 +194,8 @@ test("understanding on: a confirmed task gets the check message once and stays o
   const open = await readTask(t.root);
   assert.equal(open?.status, "implementing");
   assert.ok(open?.understanding?.tree);
-  assert.ok(!t.emitted.some((e) => e.name === TASK_DONE_EVENT || e.name === UNDERSTANDING_EVENT));
+  assert.ok(!t.emitted.some((e) => e.name === TASK_DONE_EVENT));
+  assert.equal(await recorded(t.root), undefined);
   // A change during the check is verified and confirmed again: its tree is the one understanding_done may close.
   t.setDiff("changed again");
   const again = await t.settle();
@@ -244,9 +249,7 @@ test("without a UI, or with understanding off, the task completes and the reason
     await t.run();
     assert.equal(await t.settle(), undefined);
     assert.equal((await readTask(t.root))?.status, "done");
-    const recorded = t.emitted.find((e) => e.name === UNDERSTANDING_EVENT);
-    assert.deepEqual(recorded.payload, { root: t.root, outcome, gaps: 0 });
-    assert.equal(recorded.taskStatus, "implementing", "recorded before the task is marked done");
+    assert.deepEqual(await recorded(t.root), { outcome, gaps: 0 }, "recorded before the task is marked done");
   }
 });
 

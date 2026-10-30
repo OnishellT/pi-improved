@@ -32,15 +32,6 @@ export interface EscalatePayload {
   model: string;
 }
 
-export const UNDERSTANDING_EVENT = "pi-improved:understanding";
-export interface UnderstandingPayload {
-  root: string;
-  /** done: the user answered the teach-back; skipped: they declined it; no-ui: nobody could answer; off: `understanding` is "off". */
-  outcome: "done" | "skipped" | "no-ui" | "off";
-  /** Misunderstandings the check found (only their number is kept). */
-  gaps: number;
-}
-
 /** Emitted by the gate when the user confirms a task is finished. */
 export const TASK_DONE_EVENT = "pi-improved:task-done";
 export interface TaskDonePayload {

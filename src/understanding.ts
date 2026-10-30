@@ -1,8 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { UNDERSTANDING_EVENT, type UnderstandingPayload } from "./events.ts";
 import { completeTask, treeSnapshot, UNREADABLE } from "./gate.ts";
 import { readTask } from "./task-state.ts";
+import { recordUnderstanding } from "./telemetry.ts";
 
 /** Ends the teach-back the gate asked for: records how it went, then completes the task the usual way. */
 export function registerUnderstanding(pi: ExtensionAPI) {
@@ -24,7 +24,7 @@ export function registerUnderstanding(pi: ExtensionAPI) {
       if (tree === UNREADABLE) throw new Error("git could not read the working tree, so the verified code cannot be confirmed. /task done closes the task.");
       if (tree !== task.understanding.tree) throw new Error("The code changed during the check. End your turn so verify checks it; then call understanding_done again.");
       // Before the task is marked done: telemetry records into the active task only.
-      pi.events.emit(UNDERSTANDING_EVENT, { root: ctx.cwd, outcome: skipped ? "skipped" : "done", gaps: skipped ? 0 : gaps.length } satisfies UnderstandingPayload);
+      await recordUnderstanding(ctx.cwd, skipped ? "skipped" : "done", skipped ? 0 : gaps.length);
       await completeTask(pi, ctx);
       return { content: [{ type: "text", text: "Recorded. The task is done." }], details: { skipped, gaps } };
     },
