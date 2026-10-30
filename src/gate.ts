@@ -17,7 +17,7 @@ import { assistantText, endsOnQuestion, understandingCheck } from "./task-prompt
 import { oneLine, readTask, updateTask, type Task } from "./task-state.ts";
 import { type Signature, failureSignature, agentlintStepOf, verifySteps, formatVerify, infraFailure, isPolicyFailure, runVerify, sameFailure, validCap } from "./verify.ts";
 
-const UNREADABLE = "unreadable";
+export const UNREADABLE = "unreadable";
 const MAX_REVIEWS = 1;
 const PROGRESS_TIMEOUT = 60_000;
 /** A progress run of the first verify command that takes this long, or times out, turns progress checks off for the rest of the task. */
@@ -95,6 +95,10 @@ export function registerGate(pi: ExtensionAPI) {
   pi.on("message_end", async (event) => void (lastText = assistantText(event.message) ?? lastText));
 
   const snapshot = (cwd: string) => treeSnapshot(pi, cwd);
+  const checkPending = async (cwd: string, now: string) => {
+    const t = await readTask(cwd).catch(() => undefined);
+    return t?.status === "implementing" && t.understanding !== undefined && t.understanding.tree !== now;
+  };
   const verify = async (manifest: Manifest, cwd: string) => {
     const t0 = Date.now();
     const isAgentlint = agentlintStepOf(manifest);
@@ -176,7 +180,8 @@ export function registerGate(pi: ExtensionAPI) {
     const { verifyRetries, failuresBeforeEscalation } = limitsOf(manifest);
     const now = await snapshot(ctx.cwd);
     // A deferred gate runs on the next turn even when that turn changes nothing.
-    if (now === start && now !== UNREADABLE && !writes && !deferred) return;
+    // A tree changed between turns during the understanding check is checked too: understanding_done waits for it.
+    if (now === start && now !== UNREADABLE && !writes && !deferred && !(await checkPending(ctx.cwd, now))) return;
     const state = `${now}:${writes}`;
     if (state === verified) return;
     // A state git could not read says nothing about the next one: never remember it as verified.
@@ -312,20 +317,21 @@ export function registerGate(pi: ExtensionAPI) {
       }
     }
     if (task?.status !== "implementing") return;
-    // Already confirmed, with the understanding check sent: understanding_done (or /task done) closes the task.
-    if (task.understanding) {
-      if (task.understanding.tree === now) return;
-      // Changed during the check and verified again: this tree is the one understanding_done may close.
-      await updateTask(ctx.cwd, (t) => void (t.understanding = { tree: now }));
-      const content = "The changed code went through the gate again. Finish the understanding check with understanding_done.";
-      return { entries: [{ type: "custom_message", customType: "understanding-check", content, display: true }], continue: true };
-    }
+    // The understanding check was sent for this tree: understanding_done (or /task done) closes the task.
+    const checking = task.understanding;
+    if (checking?.tree === now) return;
     // Headless, a pass is the answer; with no verify steps nothing passed, so only a person can call it done.
     const title = unverified ? "No verify steps: nothing checked this change" : "Verification OK";
     const done = ctx.hasUI ? await ctx.ui.confirm(title, `Is the task "${oneLine(task.title, 80)}" done?${dialogNotes(risk)}`) : !unverified;
     if (!done) {
       ctx.ui.notify(`The task stays open${ctx.hasUI ? "" : ": no verify steps checked it"}. /task done closes it.`, "info");
       return;
+    }
+    // Changed during the check, verified and confirmed again: this tree is the one understanding_done may close.
+    if (checking) {
+      await updateTask(ctx.cwd, (t) => void (t.understanding = { tree: now }));
+      const content = "The changed code passed the gate and the user confirmed it. Finish the understanding check with understanding_done.";
+      return { entries: [{ type: "custom_message", customType: "understanding-check", content, display: true }], continue: true };
     }
     // Before the task is marked done: telemetry looks up the active task, and a done one is not.
     if (skip && !reviewed.has(task.id)) pi.events.emit(REVIEW_EVENT, skip satisfies ReviewPayload);

@@ -7,14 +7,14 @@ import { APPROACH_FIRST, taskPrompt } from "../src/task-prompt.ts";
 import { skillsDir } from "../src/skills.ts";
 import { readTask } from "../src/task-state.ts";
 import { registerUnderstanding } from "../src/understanding.ts";
-import { treeSnapshot } from "../src/gate.ts";
+import { treeSnapshot, UNREADABLE } from "../src/gate.ts";
 import { fakePi, tempProject } from "./helpers.ts";
 
 const taskJson = (extra: object = {}) => JSON.stringify({ id: "U-1", title: "T", status: "implementing", allowedExtra: [], startedAt: "", ...extra });
 
 // The fake git prints `diff` for `git diff`: the tree the check was asked on, unless a test changes it.
-function setup(diff = "v1") {
-  const f = fakePi((cmd, args) => ({ code: 0, stdout: cmd === "git" && args[0] === "diff" ? diff : "" }));
+function setup(diff = "v1", gitWorks = true) {
+  const f = fakePi((cmd, args) => (gitWorks ? { code: 0, stdout: cmd === "git" && args[0] === "diff" ? diff : "" } : { code: 128, stderr: "not a git repository" }));
   const emitted: [string, any][] = [];
   f.pi.events = { emit: (name: string, data: any) => void emitted.push([name, data]), on: () => {} };
   registerUnderstanding(f.pi);
@@ -53,6 +53,14 @@ test("code changed since the gate verified it is not closed: the task stays open
   const root = await tempProject({ ".pi/task.json": taskJson(await asked()) });
   const { emitted, done } = setup("v2");
   await assert.rejects(done({ skipped: false, gaps: [] }, root), /code changed during the check/);
+  assert.equal(emitted.length, 0);
+  assert.equal((await readTask(root))?.status, "implementing");
+});
+
+test("a tree git cannot read is never taken as the verified one", async () => {
+  const root = await tempProject({ ".pi/task.json": taskJson({ understanding: { tree: UNREADABLE } }) });
+  const { emitted, done } = setup("v1", false);
+  await assert.rejects(done({ skipped: false, gaps: [] }, root), /git could not read/);
   assert.equal(emitted.length, 0);
   assert.equal((await readTask(root))?.status, "implementing");
 });

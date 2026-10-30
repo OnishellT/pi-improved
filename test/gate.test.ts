@@ -181,7 +181,7 @@ test("pass confirms the task, marks it done and emits the event; same state is n
 });
 
 test("understanding on: a confirmed task gets the check message once and stays open until understanding_done", async () => {
-  const t = await setup({ pass: true, task: true, answers: [true], understanding: "end" });
+  const t = await setup({ pass: true, task: true, answers: [true, true], understanding: "end" });
   await t.run();
   const r = await t.settle();
   assert.equal(r.continue, true);
@@ -191,15 +191,31 @@ test("understanding on: a confirmed task gets the check message once and stays o
   assert.equal(open?.status, "implementing");
   assert.ok(open?.understanding?.tree);
   assert.ok(!t.emitted.some((e) => e.name === TASK_DONE_EVENT || e.name === UNDERSTANDING_EVENT));
-  // A change during the check is verified again, with no dialog (no answers are scripted): its tree is the one understanding_done may close.
+  // A change during the check is verified and confirmed again: its tree is the one understanding_done may close.
   t.setDiff("changed again");
   const again = await t.settle();
+  assert.equal(t.ui.asked.length, 2, "the changed code is confirmed again");
   assert.equal(again.continue, true);
   assert.match(again.entries[0].content, /understanding_done/);
   const moved = await readTask(t.root);
   assert.equal(moved?.status, "implementing");
   assert.notEqual(moved?.understanding?.tree, open?.understanding?.tree);
   assert.equal(await t.settle(), undefined, "nothing changed since: no message");
+});
+
+test("understanding on: code changed between turns is verified and confirmed again; declined, understanding_done stays refused", async () => {
+  const t = await setup({ pass: true, task: true, answers: [true, false], understanding: "end" });
+  await t.run();
+  await t.settle();
+  const asked = (await readTask(t.root))?.understanding?.tree;
+  t.setDiff("edited by hand");
+  // The next turn starts on the changed tree, with no write by the agent.
+  await t.emit("before_agent_start", { messageType: "user" }, t.ctx);
+  const before = t.verifies();
+  assert.equal(await t.settle(), undefined);
+  assert.equal(t.verifies(), before + 1, "verify ran on the changed tree");
+  assert.equal(t.ui.asked.length, 2, "and the user was asked again");
+  assert.equal((await readTask(t.root))?.understanding?.tree, asked, "declined: the check still points at the confirmed tree");
 });
 
 test("review changes come first: the check follows the fixed code", async () => {
