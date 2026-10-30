@@ -460,6 +460,13 @@ test("a progress run that takes 30 s or more, or times out, turns the check off 
     assert.match(first.content[1].text, /^Progress check off: `check` took 45 s, over 30 s\. Run the tests you are working on yourself; verify runs when you finish\.$/);
     for (let i = 0; i < 3; i++) assert.equal(await t.emit("tool_result", event, t.ctx), undefined);
     assert.equal(t.verifies(), 1);
+    // Kept with the task, so a reloaded session does not run it again.
+    assert.equal((await readTask(t.root))?.progressOff, true);
+    const reloaded = await setup({ pass: true, task: true });
+    await everyOne(reloaded);
+    await fs.writeFile(path.join(reloaded.root, ".pi/task.json"), JSON.stringify({ ...task, progressOff: true }));
+    assert.equal(await reloaded.emit("tool_result", event, reloaded.ctx), undefined);
+    assert.equal(reloaded.verifies(), 0);
     const timedOut = await timedProgress(1, true);
     assert.match(((await timedOut.emit("tool_result", event, timedOut.ctx)) as any).content[1].text, /^Progress check off: `check` timed out after 60 s\./);
     assert.equal(await timedOut.emit("tool_result", event, timedOut.ctx), undefined);
@@ -475,13 +482,33 @@ test("a progress run that takes 30 s or more, or times out, turns the check off 
 test("an empty verify list runs nothing: the gate, the progress check and /verify tolerate it", async () => {
   const t = await setup({ pass: false, task: true });
   await updateManifest(t.root, (m) => void ((m.verify = []), (m.limits = { verifyEvery: 1 })));
+  t.ctx.hasUI = false;
   await t.run();
   assert.equal(await t.emit("tool_result", { toolName: "write", content: [] }, t.ctx), undefined);
   assert.equal(await t.settle(), undefined);
   await t.commands.get("verify").handler("", t.ctx);
   assert.equal(t.verifies(), 0);
+  // Headless, nothing passed, so the task stays open.
   assert.equal((await readTask(t.root))?.status, "implementing");
+  assert.ok(t.notes.some((n) => /stays open: no verify steps checked it/.test(n)));
   assert.match(t.notes.at(-1)!, /No verification steps configured/);
+  assert.equal(t.emitted.filter((e: any) => e.name === VERIFY_EVENT).length, 0);
+});
+
+test("an empty verify list keeps the other gates: the contract check still runs, and only a person closes the task", async () => {
+  const t = await setup({ pass: true, task: true, answers: [true] });
+  await updateManifest(t.root, (m) => void (m.verify = []));
+  const missing = { summary: "s", steps: [], files: [], decisions: [], interface: [{ file: "src/none.ts", exports: ["absentName"], usage: "absentName()", source: "ticket" }], seams: [] };
+  await fs.writeFile(path.join(t.root, ".pi/task.json"), JSON.stringify({ ...task, plan: missing }));
+  await t.run();
+  const contract = await t.settle();
+  assert.equal(contract?.entries[0].customType, "contract-gate");
+  await fs.writeFile(path.join(t.root, ".pi/task.json"), JSON.stringify(task));
+  t.ctx.hasUI = true;
+  await fs.writeFile(path.join(t.root, "touched.txt"), "x");
+  assert.equal(await t.settle(), undefined);
+  assert.deepEqual(t.ui.asked, ["No verify steps: nothing checked this change"]);
+  assert.equal((await readTask(t.root))?.status, "done");
 });
 
 test("the progress check has a 60 s cap", async () => {

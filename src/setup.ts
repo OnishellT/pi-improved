@@ -182,7 +182,7 @@ export function registerSetup(pi: ExtensionAPI) {
     label: "Finish setup",
     description: "Finish /setup: checks the written files, runs verify and asks the user to approve. Call it only during /setup.",
     parameters: Type.Object({
-      verify: Type.Array(Type.String(), { description: "Shell commands that must all pass, in order. [] only when the project has no check that can run here" }),
+      verify: Type.Array(Type.String(), { description: "Shell commands that must all pass, in order. Keep a check whose service is missing here (setup then finishes with verify pending); [] only when the project has no check at all" }),
       summary: Type.String({ description: "What you documented and what is still unresolved, 3-8 lines" }),
     }),
     exposure: "model-only",
@@ -253,7 +253,8 @@ export function registerSetup(pi: ExtensionAPI) {
       if (!steps.length) verifyNote = "\n\n⚠️  No verify steps: nothing checks the agent's work until one is added to .pi/workflow.json.";
 
       const changed = (await run("git", ["-C", root, "status", "--porcelain", "--untracked-files=all"])).trim() || "(no changes detected by git)";
-      const approved = await ctx.ui.confirm("Approve the setup?", `${summary}${verifyNote}\n\nFiles:\n${changed}\n\nReview it with git diff before answering.`);
+      // Nobody can approve without a UI: the files stay uncommitted, for the person to review with git diff.
+      const approved = !ctx.hasUI || (await ctx.ui.confirm("Approve the setup?", `${summary}${verifyNote}\n\nFiles:\n${changed}\n\nReview it with git diff before answering.`));
       if (!approved) {
         const feedback = await ctx.ui.input("What should change?");
         throw new Error(`The user did not approve. Feedback: ${feedback || "(none)"}. Apply it and call setup_finish again.`);

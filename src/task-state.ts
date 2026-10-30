@@ -44,6 +44,8 @@ export interface Task {
   spec?: string[];
   /** Strong-model plan spot checks already spent on this task (bounded to keep the cost flat). */
   planChecks?: number;
+  /** A progress check of this task was slow or timed out, so the rest are off. */
+  progressOff?: boolean;
   /** HEAD when the task entered implementing: risk and review measure the diff against it. */
   baseCommit?: string;
   /** The model in use before /task switched to the implement one: put back when the task ends. */

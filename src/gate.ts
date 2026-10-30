@@ -72,8 +72,6 @@ export function registerGate(pi: ExtensionAPI) {
   let lastSignature: Signature | undefined;
   let repeats = 0;
   let sinceCheck = 0;
-  // The task whose progress checks are off: its first verify command was too slow.
-  let progressOff: string | undefined;
   let skip: ReviewPayload | undefined;
   let warnedNoReviewModel = false;
   let lastText = "";
@@ -107,7 +105,7 @@ export function registerGate(pi: ExtensionAPI) {
     const every = limitsOf(manifest).verifyEvery;
     if (!manifest || manifest.setup !== "done" || !manifest.verify.length || !every) return;
     const task = await readTask(cwd).catch(() => undefined);
-    if (task?.status !== "implementing" || progressOff === task.id) return;
+    if (task?.status !== "implementing" || task.progressOff) return;
     if (++sinceCheck < every) return;
     sinceCheck = 0;
     const step = manifest.verify[0];
@@ -117,7 +115,7 @@ export function registerGate(pi: ExtensionAPI) {
     const seconds = (Date.now() - t0) / 1000;
     emitVerify({ root: cwd, kind: "progress", ok: result.ok, seconds });
     if (seconds >= PROGRESS_MAX_SECONDS || result.results[0].killed) {
-      progressOff = task.id;
+      await updateTask(cwd, (t) => void (t.progressOff = true));
       const took = result.results[0].killed ? `timed out after ${PROGRESS_TIMEOUT / 1000} s` : `took ${Math.round(seconds)} s, over ${PROGRESS_MAX_SECONDS} s`;
       return `Progress check off: \`${step}\` ${took}. Run the tests you are working on yourself; verify runs when you finish.`;
     }
@@ -168,7 +166,8 @@ export function registerGate(pi: ExtensionAPI) {
     await checkAcceptances(ctx);
     // A broken manifest (a merge conflict) must not turn the gate off unnoticed.
     const manifest = await readManifest(ctx.cwd).catch((e: Error) => void ctx.ui.notify(`Verify did not run: ${e.message}`, "error"));
-    if (!manifest || manifest.setup !== "done" || !manifest.verify.length || event.outcome !== "completed") return;
+    // An empty verify list still runs the contract check, the risk report and the review; only the task cannot pass verify.
+    if (!manifest || manifest.setup !== "done" || event.outcome !== "completed") return;
     const { verifyRetries, failuresBeforeEscalation } = limitsOf(manifest);
     const now = await snapshot(ctx.cwd);
     // A deferred gate runs on the next turn even when that turn changes nothing.
@@ -220,7 +219,8 @@ export function registerGate(pi: ExtensionAPI) {
     if (reviewing) ctx.ui.setStatus("review", `reviewing the diff with ${reviewModel}…`);
     const clearStatus = () => ctx.ui.setStatus("review", undefined);
     const { ok, report, policy, infra, signature, seconds } = await verify(manifest, ctx.cwd);
-    const emit = (extra: Pick<VerifyPayload, "premise"> = {}) => emitVerify({ root: ctx.cwd, ok, seconds, ...extra });
+    const unverified = !verifySteps(manifest).length;
+    const emit = (extra: Pick<VerifyPayload, "premise"> = {}) => void (unverified || emitVerify({ root: ctx.cwd, ok, seconds, ...extra }));
     if (infra) {
       // Not a verify failure: the code cannot be at fault, so the model hears nothing and no retry is spent.
       emit();
@@ -307,10 +307,11 @@ export function registerGate(pi: ExtensionAPI) {
       }
     }
     if (task?.status !== "implementing") return;
-    // Headless, a pass is the answer.
-    const done = ctx.hasUI ? await ctx.ui.confirm("Verification OK", `Is the task "${oneLine(task.title, 80)}" done?${dialogNotes(risk)}`) : true;
+    // Headless, a pass is the answer; with no verify steps nothing passed, so only a person can call it done.
+    const title = unverified ? "No verify steps: nothing checked this change" : "Verification OK";
+    const done = ctx.hasUI ? await ctx.ui.confirm(title, `Is the task "${oneLine(task.title, 80)}" done?${dialogNotes(risk)}`) : !unverified;
     if (!done) {
-      ctx.ui.notify("The task stays open. /task done closes it.", "info");
+      ctx.ui.notify(`The task stays open${ctx.hasUI ? "" : ": no verify steps checked it"}. /task done closes it.`, "info");
       return;
     }
     // Before the task is marked done: telemetry looks up the active task, and a done one is not.
