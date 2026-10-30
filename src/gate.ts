@@ -2,10 +2,11 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { ESCALATE_EVENT, REVIEW_EVENT, TASK_DONE_EVENT, UNDERSTANDING_EVENT, VERIFY_EVENT, type EscalatePayload, type ReviewPayload, type TaskDonePayload, type UnderstandingPayload, type VerifyPayload } from "./events.ts";
+import { ESCALATE_EVENT, REVIEW_EVENT, TASK_DONE_EVENT, VERIFY_EVENT, type EscalatePayload, type ReviewPayload, type TaskDonePayload, type VerifyPayload } from "./events.ts";
 import { checkContract, formatContract } from "./contract.ts";
 import { limitsOf } from "./config.ts";
 import { git } from "./git.ts";
+import { recordUnderstanding } from "./telemetry.ts";
 import { readManifest, understandingOf, type Manifest } from "./manifest.ts";
 import { restoreModel, switchModel } from "./models.ts";
 import { assessRisk, minLevelOf } from "./risk.ts";
@@ -344,7 +345,7 @@ export function registerGate(pi: ExtensionAPI) {
       const content = understandingCheck(path.join(skillsDir(), "understanding-check", "SKILL.md"));
       return { entries: [{ type: "custom_message", customType: "understanding-check", content, display: true }], continue: true };
     }
-    pi.events.emit(UNDERSTANDING_EVENT, { root: ctx.cwd, outcome: understanding === "off" ? "off" : "no-ui", gaps: 0 } satisfies UnderstandingPayload);
+    await recordUnderstanding(ctx.cwd, understanding === "off" ? "off" : "no-ui", 0);
     await completeTask(pi, ctx);
   });
 

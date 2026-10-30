@@ -6,7 +6,7 @@ import { writeAdr, type AdrInput } from "./adr.ts";
 import { selectOrType } from "./ask.ts";
 import { exists, limitsOf } from "./config.ts";
 import { missingNames, relatesTo } from "./contract.ts";
-import { REVIEW_EVENT, UNDERSTANDING_EVENT, type ReviewPayload, type UnderstandingPayload } from "./events.ts";
+import { REVIEW_EVENT, type ReviewPayload } from "./events.ts";
 import { relatedTasks } from "./learn.ts";
 import { completeTask } from "./gate.ts";
 import { restoreModel, usePhaseModel } from "./models.ts";
@@ -16,6 +16,7 @@ import { highRiskReasons, minLevelOf, planRiskReasons } from "./risk.ts";
 import { phaseSkills, skillsBlock } from "./skills.ts";
 import { readManifest, understandingOf, type Manifest } from "./manifest.ts";
 import { inFiles, oneLine, readTask, resolveInside, updateTask, writeTask, type Decision, type Plan, type Task } from "./task-state.ts";
+import { recordUnderstanding } from "./telemetry.ts";
 import { QUESTION_NUDGE, TASK_NUDGE, assistantText, endsOnQuestion, planText, taskPrompt } from "./task-prompt.ts";
 
 const MAX_NUDGES = 2; // "call task_plan" / "use ask_user" reminders per user message
@@ -213,7 +214,7 @@ export function registerTask(pi: ExtensionAPI) {
       if (arg === "done") {
         if (active?.status !== "implementing") return ctx.ui.notify(active ? `The task is ${active.status}: only an implementing task can be marked done.` : "No active task.", "info");
         // Closing the task during the understanding check skips it.
-        if (active.understanding) pi.events.emit(UNDERSTANDING_EVENT, { root, outcome: "skipped", gaps: 0 } satisfies UnderstandingPayload);
+        if (active.understanding) await recordUnderstanding(root, "skipped", 0);
         await completeTask(pi, ctx);
         return ctx.ui.notify(`Task done: ${oneLine(active.title)}.`, "info");
       }

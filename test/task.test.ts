@@ -6,7 +6,8 @@ import { updateManifest } from "../src/manifest.ts";
 import { readTask, writeTask } from "../src/task-state.ts";
 import { planCheckWanted, registerTask, specFiles } from "../src/task.ts";
 import { APPROACH_FIRST, planText } from "../src/task-prompt.ts";
-import { TASK_DONE_EVENT, UNDERSTANDING_EVENT, VERIFY_EVENT } from "../src/events.ts";
+import { TASK_DONE_EVENT, VERIFY_EVENT } from "../src/events.ts";
+import { METRICS_DIR } from "../src/telemetry.ts";
 import { fakeCtx, fakePi, fakeUI, isSubagent, tempProject } from "./helpers.ts";
 
 const plan = (decisions: any[] = [], extra: any = {}) => ({
@@ -573,8 +574,9 @@ test("/task done during the understanding check records it as skipped, before th
   await t.commands.get("task").handler("Add fee", t.ctxFor([]).ctx);
   await writeTask(t.root, { ...(await readTask(t.root))!, status: "implementing", understanding: { tree: "t" } });
   await t.commands.get("task").handler("done", t.ctxFor([]).ctx);
-  assert.deepEqual(t.emitted.map((e) => e.name), [UNDERSTANDING_EVENT, TASK_DONE_EVENT]);
-  assert.deepEqual(t.emitted[0].payload, { root: t.root, outcome: "skipped", gaps: 0 });
+  const { id } = (await readTask(t.root))!;
+  assert.deepEqual(t.emitted.map((e) => e.name), [TASK_DONE_EVENT]);
+  assert.deepEqual(JSON.parse(await fs.readFile(path.join(t.root, METRICS_DIR, `${id}.json`), "utf8")).understanding, { outcome: "skipped", gaps: 0 });
 });
 
 test("/task cancel puts the model back; a replaced task hands it on", async () => {

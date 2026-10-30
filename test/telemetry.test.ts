@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { test } from "node:test";
-import { ESCALATE_EVENT, REVIEW_EVENT, UNDERSTANDING_EVENT, VERIFY_EVENT } from "../src/events.ts";
+import { ESCALATE_EVENT, REVIEW_EVENT, VERIFY_EVENT } from "../src/events.ts";
 import { TASK_DONE_EVENT } from "../src/events.ts";
 import { registerLearn } from "../src/learn.ts";
-import { loadMetrics, metricsReport, registerTelemetry, taskMetrics } from "../src/telemetry.ts";
+import { loadMetrics, metricsReport, recordUnderstanding, registerTelemetry, taskMetrics } from "../src/telemetry.ts";
 import { fakePi, tempProject } from "./helpers.ts";
 
 function setup() {
@@ -131,8 +131,7 @@ test("/metrics leaves plan checks out of the review column, not out of the cost"
 
 test("the understanding outcome and its gap count are kept per task, and /metrics shows the rates", async () => {
   const root = await tempProject({ ".pi/task.json": taskJson("U-1", "implementing") });
-  const s = setup();
-  await s.fire(UNDERSTANDING_EVENT, { root, outcome: "done", gaps: 2 });
+  await recordUnderstanding(root, "done", 2);
   assert.deepEqual(taskMetrics("U-1")!.understanding, { outcome: "done", gaps: 2 });
   const mk = (id: string, understanding?: object) => JSON.stringify({ id, metrics: { phases: {}, verifyFailures: 0, reviews: [], ...(understanding && { understanding }) } });
   const memory = [mk("A", { outcome: "done", gaps: 2 }), mk("B", { outcome: "done", gaps: 1 }), mk("C", { outcome: "skipped", gaps: 0 }), mk("D", { outcome: "no-ui", gaps: 0 }), mk("E")].join("\n");
