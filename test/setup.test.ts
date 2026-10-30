@@ -26,7 +26,8 @@ const ctxFor = (root: string, answers: unknown[]) => fakeCtx(root, answers, { mo
 test("checkOutputs reports every missing piece", async () => {
   const root = await tempProject({ "AGENTS.md": "x\n".repeat(200), ".pi/skills/bad/SKILL.md": "# no frontmatter" });
   const problems = await checkOutputs(root, [], exec);
-  assert.equal(problems.length, 8);
+  assert.equal(problems.length, 7);
+  assert.ok(!problems.some((p) => /verify steps/i.test(p)), "an empty verify list is not a problem");
   assert.deepEqual(await checkOutputs(await tempProject(documented), ["true"], exec), []);
 });
 
@@ -219,6 +220,41 @@ test("setup_finish sends verify failures back to the model, then completes after
   assert.equal(manifest.setup, "done");
   assert.equal(manifest.mode, "direct");
   assert.deepEqual(manifest.verify, ["npm test"]);
+});
+
+test("without a UI, setup_finish finishes with verify pending after the last failure instead of pausing setup", async () => {
+  const root = await tempProject(documented);
+  await updateManifest(root, (m) => void (m.setup = "running"));
+  const { pi, tools } = fakePi((cmd) => (cmd === "bash" ? { code: 1, stderr: "redis: connection refused" } : { code: 0 }));
+  registerSetup(pi);
+  const finish = (ctx: any) => tools.get("setup_finish").execute("1", { verify: ["npm test"], summary: "s" }, undefined, undefined, ctx);
+  const headless = (answers: unknown[]) => fakeCtx(root, answers, { hasUI: false });
+  await assert.rejects(finish(headless([]).ctx), /verify FAILED/);
+  await assert.rejects(finish(headless([]).ctx), /verify FAILED/);
+  const last = headless([true]);
+  const result = await finish(last.ctx);
+  assert.equal(result.terminate, true);
+  assert.deepEqual(last.ui.asked, ["Approve the setup?"]);
+  assert.match(last.ui.messages[0], /verify still fails/);
+  const manifest = await readManifest(root);
+  assert.deepEqual([manifest.setup, manifest.verify], ["done", ["npm test"]]);
+});
+
+test("setup_finish accepts an empty verify list when no check can run here, runs nothing and says so in the approval", async () => {
+  const root = await tempProject(documented);
+  await updateManifest(root, (m) => void (m.setup = "running"));
+  const ran: string[] = [];
+  const { pi, tools } = fakePi((cmd, args) => (cmd === "bash" && ran.push(args[1]), { code: 0 }));
+  registerSetup(pi);
+  const schema = tools.get("setup_finish").parameters.properties.verify;
+  assert.equal(schema.minItems, undefined);
+  const { ctx, ui } = ctxFor(root, [true]);
+  const result = await tools.get("setup_finish").execute("1", { verify: [], summary: "No check can run here: the tests need Postgres." }, undefined, undefined, ctx);
+  assert.equal(result.terminate, true);
+  assert.deepEqual(ran, []);
+  assert.match(ui.messages[0], /No verify steps: nothing checks the agent's work until one is added/);
+  const manifest = await readManifest(root);
+  assert.deepEqual([manifest.setup, manifest.verify], ["done", []]);
 });
 
 test("setup_finish leaves mode unset in the project when the global file sets it", async () => {

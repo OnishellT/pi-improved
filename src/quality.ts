@@ -191,5 +191,5 @@ export function commitSubject(title: string, prefix = ""): string {
   return `${prefix}${cut.replace(/[.…\s]+$/, "")}`.trim();
 }
 
-/** Whether /pr may commit the uncommitted work: after verify passed, failed only where it failed before the task, or when the project has no verify step. */
-export const mayCommit = (verify: "pass" | "old" | "fail" | "none") => verify !== "fail";
+/** Whether /pr may commit the uncommitted work: after verify passed, or when the project has no verify step. */
+export const mayCommit = (verify: "pass" | "fail" | "none") => verify !== "fail";

@@ -24,5 +24,6 @@ Tests verify behavior through public interfaces, not implementation details. A g
 
 - Confirm each new test fails for the reason you intend, not a typo or missing import.
 - Once per task, break the code on purpose, see the test catch it, undo.
+- If a new test cannot run here because a service it needs is missing, write it anyway, keep implementing and say so at the end.
 
 Examples and mocking guidance, read only if needed: `{{package}}/vendor/skills/tdd/references/tests.md` and `{{package}}/vendor/skills/tdd/references/mocking.md`.

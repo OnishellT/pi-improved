@@ -7,7 +7,6 @@ import { readTask, writeTask } from "../src/task-state.ts";
 import { planCheckWanted, registerTask, specFiles } from "../src/task.ts";
 import { planText } from "../src/task-prompt.ts";
 import { TASK_DONE_EVENT, VERIFY_EVENT } from "../src/events.ts";
-import { installMessage } from "../src/nix.ts";
 import { fakeCtx, fakePi, fakeUI, isSubagent, tempProject } from "./helpers.ts";
 
 const plan = (decisions: any[] = [], extra: any = {}) => ({
@@ -471,71 +470,22 @@ test("the approval dialog shows the intent and each usage line, and the saved pl
   assert.match(planText(saved), /^Intent: Charge a fee/);
 });
 
-async function baselineSetup(exec: (cmd: string, args: string[]) => { code: number; stdout?: string }) {
-  const runs: { step: string; timeout: number; signal?: AbortSignal }[] = [];
-  const h = fakePi(exec);
+test("approving the plan runs no verify command, and the agent hears to keep implementing when tests cannot run here", async () => {
+  const runs: string[] = [];
+  const h = fakePi(() => ({ code: 1, stdout: "FAIL old test 12" }));
   const base = h.pi.exec;
-  h.pi.exec = (cmd: string, args: string[], o: any) => (cmd === "bash" && runs.push({ step: args[1], timeout: o.timeout, signal: o.signal }), base(cmd, args));
+  h.pi.exec = (cmd: string, args: string[], o: any) => (cmd === "bash" && runs.push(args[1]), base(cmd, args, o));
   const emitted: any[] = [];
   h.pi.events = { emit: (name: string, payload: any) => emitted.push({ name, payload }) };
   registerTask(h.pi);
   const root = await tempProject({ "src/money.ts": "export const m = 1;\n" });
   await updateManifest(root, (m) => void ((m.setup = "done"), (m.review = { always: true }), (m.verify = ["fast check", "slow check"])));
-  const status: (string | undefined)[] = [];
-  const ctxFor = (answers: unknown[]) => {
-    const { ctx } = fakeCtx(root, answers);
-    ctx.ui.setStatus = (key: string, text?: string) => key === "baseline" && status.push(text);
-    return ctx;
-  };
-  await h.commands.get("task").handler("Add fee", ctxFor([]));
-  return { ...h, root, runs, emitted, status, ctxFor };
-}
-
-test("approving the plan runs every verify command once, shows a status line, and stores the baseline with its duration", async () => {
-  const t = await baselineSetup((cmd) => (cmd === "bash" ? { code: 1, stdout: "FAIL old test 12" } : { code: 0 }));
-  const ctl = new AbortController();
-  await t.tools.get("task_plan").execute("1", plan(), ctl.signal, undefined, t.ctxFor(["Accept the proposed names", true]));
-  assert.deepEqual(t.runs.map((r) => r.step), ["fast check", "slow check"]);
-  assert.ok(t.runs.every((r) => r.timeout === 10 * 60_000 && r.signal === ctl.signal));
-  assert.match(t.status[0]!, /^running verify before the change/);
-  assert.equal(t.status.at(-1), undefined);
-  const baseline = (await readTask(t.root))!.baseline!;
-  assert.equal(baseline.ok, false);
-  assert.equal(typeof baseline.seconds, "number");
-  assert.deepEqual(baseline.failing, [{ step: "fast check", lines: ["FAIL old test 12"] }, { step: "slow check", lines: ["FAIL old test 12"] }]);
-  const event = t.emitted.find((e) => e.name === VERIFY_EVENT).payload;
-  assert.deepEqual([event.kind, event.ok, event.root, typeof event.seconds], ["baseline", false, t.root, "number"]);
-});
-
-test("no baseline runs while setup is not done, and none is stored without a verify command", async () => {
-  const t = await baselineSetup(() => ({ code: 1, stdout: "FAIL x" }));
-  await updateManifest(t.root, (m) => void (m.setup = "running"));
-  await t.tools.get("task_plan").execute("1", plan(), undefined, undefined, t.ctxFor(["Accept the proposed names", true]));
-  assert.deepEqual(t.runs, []);
-  assert.equal(t.status.length, 0);
-  assert.equal((await readTask(t.root))!.baseline, undefined);
-  const { commands, tools, ctxFor, root } = await setup();
-  await commands.get("task").handler("Add fee", ctxFor([]).ctx);
-  await tools.get("task_plan").execute("1", plan(), undefined, undefined, ctxFor([true]).ctx);
-  assert.equal((await readTask(root))!.baseline, undefined);
-});
-
-test("a passing baseline is stored as ok with its duration", async () => {
-  const t = await baselineSetup(() => ({ code: 0 }));
-  await t.tools.get("task_plan").execute("1", plan(), undefined, undefined, t.ctxFor(["Accept the proposed names", true]));
-  const baseline = (await readTask(t.root))!.baseline!;
-  assert.deepEqual([baseline.ok, baseline.failing, typeof baseline.seconds], [true, undefined, "number"]);
-});
-
-test("a baseline cut short by the abort signal is not stored and the plan is not approved", async () => {
-  const t = await baselineSetup(() => ({ code: 1, stdout: "FAIL x" }));
-  const ctl = new AbortController();
-  const base = t.pi.exec;
-  t.pi.exec = (cmd: string, args: string[], o: any) => (cmd === "bash" && ctl.abort(), base(cmd, args, o));
-  await assert.rejects(t.tools.get("task_plan").execute("1", plan(), ctl.signal, undefined, t.ctxFor(["Accept the proposed names", true])), /Cancelled while verify ran/);
-  // Still planning: an implementing task without a baseline would count every old failure as new.
-  assert.equal((await readTask(t.root))!.baseline, undefined);
-  assert.equal((await readTask(t.root))!.status, "planning");
+  await h.commands.get("task").handler("Add fee", fakeCtx(root, []).ctx);
+  const result = await h.tools.get("task_plan").execute("1", plan(), undefined, undefined, fakeCtx(root, ["Accept the proposed names", true]).ctx);
+  assert.deepEqual(runs, []);
+  assert.equal(emitted.find((e) => e.name === VERIFY_EVENT), undefined);
+  assert.equal((await readTask(root))!.status, "implementing");
+  assert.match(result.content[0].text, /cannot run here, keep implementing: verify runs at the end/);
 });
 
 test("/task titles a long pasted ticket by its first line and keeps the whole text in the prompt and the evidence", async () => {
@@ -661,13 +611,4 @@ test("plan check: one that did not run does not use up the budget", async () => 
   await tools.get("task_plan").execute("1", plan(), undefined, undefined, ctxFor([true]).ctx);
   assert.equal(spawns.length, 1);
   assert.equal((await readTask(root))!.planChecks ?? 0, 0);
-});
-
-test("a baseline that cannot run says failures that already exist will count as new", async () => {
-  const t = await baselineSetup((cmd) => (cmd === "bash" ? { code: 127, stderr: installMessage() } : { code: 0 }) as any);
-  const ctx = t.ctxFor(["Accept the proposed names", true]);
-  const notes: string[] = [];
-  ctx.ui.notify = (m: string) => void notes.push(m);
-  await t.tools.get("task_plan").execute("1", plan(), undefined, undefined, ctx);
-  assert.ok(notes.some((n) => /Verify could not run before the change/.test(n)), notes.join("\n"));
 });

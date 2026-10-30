@@ -9,7 +9,7 @@ import { isNixFailure, NixError } from "./nix.ts";
 import { commitSubject, mayCommit } from "./quality.ts";
 import { assessRisk } from "./risk.ts";
 import { isLocalState, LOCAL_STATE, oneLine, readTask, type Task } from "./task-state.ts";
-import { agentlintStepOf, carryOnWhenPredated, failedLines, formatVerify, predatesBaseline, runVerify, validCap, verifySteps } from "./verify.ts";
+import { formatVerify, runVerify, validCap, verifySteps } from "./verify.ts";
 
 const TEMPLATES = [".github/pull_request_template.md", ".github/PULL_REQUEST_TEMPLATE.md", "docs/pull_request_template.md", "pull_request_template.md"];
 const EVIDENCE_SKILL = ".pi/skills/verify-app/SKILL.md";
@@ -81,9 +81,8 @@ export function buildBody({ task, facts, verify, risk }: BodyInput): string {
     ...(!plan && facts.commits.length ? ["", ...facts.commits.map((c) => `- ${c}`)] : []),
     ...(issue ? ["", `Closes #${issue}`] : []),
   ].join("\n").trim();
-  const predates = task?.predates?.length ? `\n\nVerify fails, but only with failures that predate this change (they already failed before it):\n${task.predates.map((l) => `- ${l}`).join("\n")}` : "";
   const verified =
-    !verify ? "Not run." : verify === "none" ? "The project has no verification steps." : `${verify.ok ? "Passed" : "FAILED"}:\n\n\`\`\`\n${verify.text}\n\`\`\`${verify.ok ? "" : predates}`;
+    !verify ? "Not run." : verify === "none" ? "The project has no verification steps." : `${verify.ok ? "Passed" : "FAILED"}:\n\n\`\`\`\n${verify.text}\n\`\`\``;
   // The reasons show whatever the review policy decided.
   const riskText = !risk ? "Not assessed." : risk.reasons.length ? `${risk.review ? "Risky" : `Risk ${risk.level}`}: ${risk.reasons.join("; ")}.` : "Low risk: no reason found.";
   const sections: [string, string][] = [
@@ -163,7 +162,7 @@ export async function runPr(exec: Exec, root: string, ui: Pick<ExtensionContext[
   if (!facts) return { status: "not-ready", detail: "This folder is not a git repository." };
   if (!facts.base) return { status: "not-ready", detail: "No base branch found. Run /pr <base-branch>." };
   const baseName = facts.base.replace(/^origin\//, "");
-  let task = await readTask(root).catch(() => undefined);
+  const task = await readTask(root).catch(() => undefined);
   const manifest = await readManifest(root).catch(() => undefined);
 
   let branch = facts.branch;
@@ -176,19 +175,16 @@ export async function runPr(exec: Exec, root: string, ui: Pick<ExtensionContext[
     branch = proposed;
   }
 
-  // Verify runs before anything is committed: /pr commits only a tree that passes, or one whose only failures predate the task.
+  // Verify runs before anything is committed: /pr commits only a tree that passes.
   let verify: BodyInput["verify"] = "none";
   if (manifest?.verify.length) {
-    const isAgentlint = agentlintStepOf(manifest);
-    const result = await runVerify(verifySteps(manifest), exec, root, undefined, validCap(manifest.maxReport), undefined, carryOnWhenPredated(task?.baseline?.failing, isAgentlint));
+    const result = await runVerify(verifySteps(manifest), exec, root, undefined, validCap(manifest.maxReport));
     verify = { ok: result.ok, text: formatVerify(result) };
-    // Only this run decides: a failure that appeared after the gate's check is not "old".
-    if (task && !result.ok) task = { ...task, predates: predatesBaseline(result, task.baseline?.failing, isAgentlint) ? failedLines(result) : undefined };
     // Verify can write files (reports, caches): the commit offer lists the tree as it is now.
     facts = (await gatherFacts(exec, root, facts.base)) ?? facts;
   }
   // /task leaves its work uncommitted; without this the PR would miss it.
-  if (facts.dirty.length && !mayCommit(verify === "none" ? "none" : verify.ok ? "pass" : task?.predates ? "old" : "fail"))
+  if (facts.dirty.length && !mayCommit(verify === "none" ? "none" : verify.ok ? "pass" : "fail"))
     return { status: "declined", detail: `Verify failed, so the uncommitted work was not committed and nothing was pushed. Fix it and run /pr again.\n\n${verify === "none" ? "" : verify.text}` };
   if (facts.dirty.length) {
     if (await ui.confirm("Commit the uncommitted work?", `Commit these to ${branch} so they go in the PR?\n${facts.dirty.join("\n")}`)) {

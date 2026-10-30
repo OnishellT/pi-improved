@@ -44,7 +44,6 @@ export async function checkOutputs(root: string, verify: string[], exec: Exec): 
   if (wanted.includes("domain-modeling") && !(await exists(path.join(root, "GLOSSARY.md")))) problems.push("GLOSSARY.md is missing.");
   if (wanted.includes("pstack-create-verification-skill")) problems.push(...(await checkVerifyApp(root, exec)));
   if (!valid) problems.push("No domain skill found in .pi/skills/<name>/SKILL.md.");
-  if (!verify.length) problems.push("No verify steps. Every project needs at least one check that runs.");
   return problems;
 }
 
@@ -183,7 +182,7 @@ export function registerSetup(pi: ExtensionAPI) {
     label: "Finish setup",
     description: "Finish /setup: checks the written files, runs verify and asks the user to approve. Call it only during /setup.",
     parameters: Type.Object({
-      verify: Type.Array(Type.String(), { minItems: 1, description: "Shell commands that must all pass, in order" }),
+      verify: Type.Array(Type.String(), { description: "Shell commands that must all pass, in order. [] only when the project has no check that can run here" }),
       summary: Type.String({ description: "What you documented and what is still unresolved, 3-8 lines" }),
     }),
     exposure: "model-only",
@@ -242,7 +241,8 @@ export function registerSetup(pi: ExtensionAPI) {
         verifyFailures++;
         const report = formatVerify(result);
         if (verifyFailures < MAX_VERIFY_FAILURES) throw new Error(`${report}\n\nFix the cause (or the verify steps, if they are wrong) and call setup_finish again.`);
-        const choice = await ctx.ui.select(`verify failed ${verifyFailures} times. What now?`, ["Keep trying", "Finish anyway (verify stays pending)", "Pause setup"]);
+        // Nobody can answer without a UI: a missing service must not stop setup, so it finishes with verify pending.
+        const choice = ctx.hasUI ? await ctx.ui.select(`verify failed ${verifyFailures} times. What now?`, ["Keep trying", "Finish anyway (verify stays pending)", "Pause setup"]) : "Finish anyway (verify stays pending)";
         if (choice === "Keep trying") throw new Error(`${report}\n\nThe user asked you to keep trying.`);
         if (choice !== "Finish anyway (verify stays pending)") {
           await updateManifest(root, (m) => void (m.setup = "pending"));
@@ -250,6 +250,7 @@ export function registerSetup(pi: ExtensionAPI) {
         }
         verifyNote = "\n\n⚠️  verify still fails.";
       }
+      if (!steps.length) verifyNote = "\n\n⚠️  No verify steps: nothing checks the agent's work until one is added to .pi/workflow.json.";
 
       const changed = (await run("git", ["-C", root, "status", "--porcelain", "--untracked-files=all"])).trim() || "(no changes detected by git)";
       const approved = await ctx.ui.confirm("Approve the setup?", `${summary}${verifyNote}\n\nFiles:\n${changed}\n\nReview it with git diff before answering.`);

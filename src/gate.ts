@@ -15,15 +15,14 @@ import { reviewDiff } from "./review.ts";
 import { skillsBlock } from "./skills.ts";
 import { assistantText, endsOnQuestion } from "./task-prompt.ts";
 import { oneLine, readTask, updateTask, type Task } from "./task-state.ts";
-import { type Signature, carryOnWhenPredated, failedLines, failureSignature, agentlintStepOf, verifySteps, formatVerify, infraFailure, isPolicyFailure, predatesBaseline, runVerify, sameFailure, validCap } from "./verify.ts";
+import { type Signature, failureSignature, agentlintStepOf, verifySteps, formatVerify, infraFailure, isPolicyFailure, runVerify, sameFailure, validCap } from "./verify.ts";
 
 const UNREADABLE = "unreadable";
 const MAX_REVIEWS = 1;
 const PROGRESS_TIMEOUT = 60_000;
-/** The progress check runs only when the first verify command took less than this at baseline. */
-const PROGRESS_MAX_BASELINE = 30;
+/** A progress run of the first verify command that takes this long, or times out, turns progress checks off for the rest of the task. */
+const PROGRESS_MAX_SECONDS = 30;
 const PROGRESS_TAIL = 1200;
-const PREDATES_SHOWN = 5;
 const TOUCHED_SHOWN = 10;
 /** The dialog lists what could have turned verify green or slipped past it, so the person sees it before accepting. */
 const listNote = (title: string, items: string[] = []) =>
@@ -35,12 +34,14 @@ const PREMISE = [
   "Name an observation that would contradict it (a value, a log line, a file's content), then check it by reading, grepping or running before you touch code.",
   "If the premise is wrong, start again from what you observed.",
 ].join("\n");
+/** Verify no longer runs before the change, so a failure may be old. */
+const UNTOUCHED = "A failure in code the change did not touch may already have been there: do not fix it outside the plan; report it to the user at the end.";
 /** What the model hears after a failed verify. The premise lines go with any failure from the escalation point on that repeats the last one. */
 async function advice(cwd: string, report: string, kind: "policy" | "diagnose" | "fix", premise: boolean, agentlint = "agentlint") {
   if (kind === "policy")
     return `${report}\n\nThis is an agentlint rule. Fix the code if the finding is right. If the code is right as it is, run \`${agentlint} propose <selector> --summary "<why>"\` (selector from \`next --format json\`) so the user sees your reason, then finish again as is: the user will be asked to approve it.`;
   const head = kind === "diagnose" ? `${report}\n\n${await skillsBlock(cwd, "diagnose")}\n\nApply the diagnosing-bugs method to this failure before changing code: reproduce, isolate, state the hypothesis, then fix.` : `${report}\n\nFix it, then finish.`;
-  return premise ? `${head}\n\n${PREMISE}` : head;
+  return premise ? `${head} ${UNTOUCHED}\n\n${PREMISE}` : `${head} ${UNTOUCHED}`;
 }
 // `limits.verifyRetries` and `limits.failuresBeforeEscalation` (config.ts) set the retries and when the failed verify diagnoses the bug and hands the attempt to the stronger model.
 
@@ -71,7 +72,8 @@ export function registerGate(pi: ExtensionAPI) {
   let lastSignature: Signature | undefined;
   let repeats = 0;
   let sinceCheck = 0;
-  let slowNoted: string | undefined;
+  // The task whose progress checks are off: its first verify command was too slow.
+  let progressOff: string | undefined;
   let skip: ReviewPayload | undefined;
   let warnedNoReviewModel = false;
   let lastText = "";
@@ -92,36 +94,35 @@ export function registerGate(pi: ExtensionAPI) {
     // HEAD is part of it: a change committed through bash leaves the tree clean, and that is still a change.
     return createHash("sha1").update(parts.join("\n--\n")).digest("hex");
   };
-  const verify = async (manifest: Manifest, cwd: string, before: Signature[] | undefined) => {
+  const verify = async (manifest: Manifest, cwd: string) => {
     const t0 = Date.now();
     const isAgentlint = agentlintStepOf(manifest);
-    const result = await runVerify(verifySteps(manifest), pi.exec.bind(pi), cwd, undefined, validCap(manifest.maxReport), undefined, carryOnWhenPredated(before, isAgentlint));
-    return { ok: result.ok, report: formatVerify(result), infra: infraFailure(result), policy: !result.ok && isPolicyFailure(result, isAgentlint), signature: failureSignature(result), predated: predatesBaseline(result, before, isAgentlint), lines: failedLines(result), failing: result.results.filter((r) => !r.ok).map((r) => r.step), seconds: (Date.now() - t0) / 1000 };
+    const result = await runVerify(verifySteps(manifest), pi.exec.bind(pi), cwd, undefined, validCap(manifest.maxReport));
+    return { ok: result.ok, report: formatVerify(result), infra: infraFailure(result), policy: !result.ok && isPolicyFailure(result, isAgentlint), signature: failureSignature(result), seconds: (Date.now() - t0) / 1000 };
   };
   const emitVerify = (payload: Omit<VerifyPayload, "kind"> & { kind?: VerifyPayload["kind"] }) => void pi.events?.emit(VERIFY_EVENT, { kind: "gate", ...payload } satisfies VerifyPayload);
-  /** Every `limits.verifyEvery` writes while implementing: the first verify command's result, to append to that tool result. Off when it was slow at baseline. */
+  /** Every `limits.verifyEvery` writes while implementing: the first verify command's result, to append to that tool result. Off for the task once a run is slow or times out. */
   const progress = async (cwd: string) => {
     const manifest = await readManifest(cwd).catch(() => undefined);
     const every = limitsOf(manifest).verifyEvery;
     if (!manifest || manifest.setup !== "done" || !manifest.verify.length || !every) return;
     const task = await readTask(cwd).catch(() => undefined);
-    const took = task?.baseline?.seconds;
-    if (task?.status !== "implementing" || took === undefined) return;
-    if (took >= PROGRESS_MAX_BASELINE) {
-      if (slowNoted === task.id) return;
-      slowNoted = task.id;
-      return `Progress check off: \`${manifest.verify[0]}\` took ${Math.round(took)} s before the change, over ${PROGRESS_MAX_BASELINE} s. Run the tests you are working on yourself; verify runs when you finish.`;
-    }
+    if (task?.status !== "implementing" || progressOff === task.id) return;
     if (++sinceCheck < every) return;
     sinceCheck = 0;
     const step = manifest.verify[0];
     const t0 = Date.now();
     const result = await runVerify([step], pi.exec.bind(pi), cwd, PROGRESS_TIMEOUT, validCap(manifest.maxReport));
     if (infraFailure(result)) return;
-    emitVerify({ root: cwd, kind: "progress", ok: result.ok, seconds: (Date.now() - t0) / 1000 });
+    const seconds = (Date.now() - t0) / 1000;
+    emitVerify({ root: cwd, kind: "progress", ok: result.ok, seconds });
+    if (seconds >= PROGRESS_MAX_SECONDS || result.results[0].killed) {
+      progressOff = task.id;
+      const took = result.results[0].killed ? `timed out after ${PROGRESS_TIMEOUT / 1000} s` : `took ${Math.round(seconds)} s, over ${PROGRESS_MAX_SECONDS} s`;
+      return `Progress check off: \`${step}\` ${took}. Run the tests you are working on yourself; verify runs when you finish.`;
+    }
     if (result.ok) return `Progress check: \`${step}\` passes.`;
-    const old = predatesBaseline(result, task.baseline?.failing, agentlintStepOf(manifest)) ? " (it already failed before the change)" : "";
-    return `Progress check: \`${step}\` fails${old}. This is not the final gate, and a failure can be expected mid-change (a test for code you have not written yet). Fix it only if it is not.\n${result.results[0].output.slice(-PROGRESS_TAIL)}`;
+    return `Progress check: \`${step}\` fails. This is not the final gate, and a failure can be expected mid-change (a test for code you have not written yet). Fix it only if it is not.\n${result.results[0].output.slice(-PROGRESS_TAIL)}`;
   };
   const review = async (cwd: string, task: NonNullable<Awaited<ReturnType<typeof readTask>>>, model: string, signal: AbortSignal, steps: string[]) => {
     const t0 = Date.now();
@@ -218,8 +219,8 @@ export function registerGate(pi: ExtensionAPI) {
     const reviewing = wanted && task && reviewModel ? review(ctx.cwd, task, reviewModel, abort.signal, verifySteps(manifest)) : undefined;
     if (reviewing) ctx.ui.setStatus("review", `reviewing the diff with ${reviewModel}…`);
     const clearStatus = () => ctx.ui.setStatus("review", undefined);
-    const { ok, report, policy, infra, signature, predated: onlyOld, lines, failing, seconds } = await verify(manifest, ctx.cwd, task?.baseline?.failing);
-    const emit = (extra: Pick<VerifyPayload, "predates" | "premise"> = {}) => emitVerify({ root: ctx.cwd, ok, seconds, ...extra });
+    const { ok, report, policy, infra, signature, seconds } = await verify(manifest, ctx.cwd);
+    const emit = (extra: Pick<VerifyPayload, "premise"> = {}) => emitVerify({ root: ctx.cwd, ok, seconds, ...extra });
     if (infra) {
       // Not a verify failure: the code cannot be at fault, so the model hears nothing and no retry is spent.
       emit();
@@ -242,9 +243,7 @@ export function registerGate(pi: ExtensionAPI) {
       }
       return deescalate(ctx).then(() => undefined);
     }
-    // Only failures that were already there before the change: not the agent's fault, so it neither retries nor escalates.
-    const predated = !ok && !policy && onlyOld ? lines.slice(0, PREDATES_SHOWN) : undefined;
-    if (!ok && !predated) {
+    if (!ok) {
       // The code will change, so this review is stale: stop its subagent now instead of paying for a verdict nobody uses.
       if (reviewing) {
         abort.abort();
@@ -287,9 +286,7 @@ export function registerGate(pi: ExtensionAPI) {
       const customType = diagnose ? "verify-diagnose" : "verify-gate";
       return { entries: [{ type: "custom_message", customType, content, display: true }], continue: true };
     }
-    emit({ predates: !!predated });
-    if (task?.status === "implementing" && JSON.stringify(task.predates) !== JSON.stringify(predated)) await updateTask(ctx.cwd, (t) => void (predated ? (t.predates = predated) : delete t.predates));
-    if (predated) ctx.ui.notify(`Verify fails, but only with failures that predate this change: ${predated.join(" | ")}`, "warning");
+    emit();
 
     verified = remembered;
     await deescalate(ctx);
@@ -310,10 +307,10 @@ export function registerGate(pi: ExtensionAPI) {
       }
     }
     if (task?.status !== "implementing") return;
-    // Headless, a pass is the answer; with old failures only a person can call it done.
-    const done = ctx.hasUI ? await ctx.ui.confirm(predated ? "Only old failures remain" : "Verification OK", `Is the task "${oneLine(task.title, 80)}" done?${predated ? `\n\nThese steps still fail, as they did before the task:\n${failing.map((s) => `- ${s}`).join("\n")}` : ""}${dialogNotes(risk)}`) : !predated;
+    // Headless, a pass is the answer.
+    const done = ctx.hasUI ? await ctx.ui.confirm("Verification OK", `Is the task "${oneLine(task.title, 80)}" done?${dialogNotes(risk)}`) : true;
     if (!done) {
-      ctx.ui.notify(`The task stays open${ctx.hasUI ? "" : `: verify still fails as it did before the task (${failing.join(", ")})`}. /task done closes it.`, "info");
+      ctx.ui.notify("The task stays open. /task done closes it.", "info");
       return;
     }
     // Before the task is marked done: telemetry looks up the active task, and a done one is not.
@@ -326,7 +323,7 @@ export function registerGate(pi: ExtensionAPI) {
     handler: async (_args, ctx) => {
       const manifest = await readManifest(ctx.cwd);
       if (!manifest.verify.length) return ctx.ui.notify("No verification steps configured.", "warning");
-      const { ok, report } = await verify(manifest, ctx.cwd, undefined);
+      const { ok, report } = await verify(manifest, ctx.cwd);
       ctx.ui.notify(report, ok ? "info" : "error");
     },
   });

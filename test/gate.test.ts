@@ -316,7 +316,6 @@ test("1st failure fixes, the 2nd diagnoses and escalates, pass restores the mode
 
 const sigOf = (output: string, step = "check") => failureSignature({ ok: false, results: [{ step, ok: false, output }] });
 const PREMISE_LINES = /every fix so far assumed something false[\s\S]*contradict it[\s\S]*before you touch code/;
-const baselineOf = (output: string, extra: object = {}) => ({ baseline: { ok: false, seconds: 1, failing: [sigOf(output)].filter(Boolean), ...extra } });
 const gateEvents = (t: { emitted: any[] }) => t.emitted.filter((e) => e.name === VERIFY_EVENT).map((e) => e.payload);
 
 test("the same failure twice adds the premise lines to the escalation prompt; a different one keeps today's", async () => {
@@ -360,112 +359,32 @@ test("the premise lines go with every repeat from the escalation point on, inclu
   assert.match(third.entries[0].content, /Fix it, then finish\.[\s\S]*every fix so far assumed/);
 });
 
-test("a failure that predates the change lets the agent finish: no retry, no escalation, a note, a task record and one notice", async () => {
-  const out = "FAIL test/old.test.ts after 7ms\nError: expected 1 got 2";
-  const t = await parallel({ escalate: "p/strong" }, [false, false], out, baselineOf(out));
-  t.gate.resolve();
-  t.setOut("FAIL test/old.test.ts after 9ms\nError: expected 1 got 2");
-  assert.equal(await t.settle(), undefined);
-  assert.deepEqual(t.set, []);
-  assert.equal(t.emitted.find((e) => e.name === ESCALATE_EVENT), undefined);
-  assert.deepEqual((await readTask(t.ctx.cwd))?.predates, ["FAIL test/old.test.ts after 9ms", "Error: expected 1 got 2"]);
-  assert.equal(t.notes.filter((n) => /predate this change/.test(n)).length, 1);
-  assert.match(t.notes.find((n) => /predate/.test(n))!, /^Verify fails, but only with failures that predate this change: FAIL test\/old\.test\.ts after 9ms \| Error: expected 1 got 2$/);
-  assert.deepEqual(gateEvents(t).map((p) => [p.kind, p.ok, p.predates]), [["gate", false, true]]);
-  assert.deepEqual(t.ctx.ui.asked, ["Only old failures remain"]);
-  assert.match(t.ctx.ui.messages[0], /done\?\n\nThese steps still fail, as they did before the task:\n- check$/);
-  t.setOut("a brand new failure: Error 5");
-  await t.emit("tool_result", { toolName: "write" }, t.ctx);
-  const fresh = await t.settle();
-  assert.match(fresh.entries[0].content, /Fix it, then finish/);
-  assert.doesNotMatch(fresh.entries[0].content, /predate/);
-  t.setCode(0);
-  await t.settle();
-  assert.equal((await readTask(t.ctx.cwd))?.predates, undefined);
-});
-
-test("the stored predating lines follow the latest verify, not the first one", async () => {
+test("an old task.json with baseline and predates still loads; its old failure is a normal one, and the advice says an untouched failure may be old", async () => {
   const out = "FAIL test/old.test.ts\nError: expected 1 got 2";
-  const t = await parallel({}, [false, false], out, baselineOf(out));
-  t.gate.resolve();
-  assert.equal(await t.settle(), undefined);
-  assert.deepEqual((await readTask(t.ctx.cwd))?.predates, ["FAIL test/old.test.ts", "Error: expected 1 got 2"]);
-  t.setOut("FAIL test/old.test.ts");
-  await t.emit("tool_result", { toolName: "write" }, t.ctx);
-  assert.equal(await t.settle(), undefined);
-  assert.deepEqual((await readTask(t.ctx.cwd))?.predates, ["FAIL test/old.test.ts"]);
-});
-
-test("a new line, a baseline that passed or one without lines is a normal failure", async () => {
-  const out = "FAIL test/old.test.ts\nError: expected 1 got 2";
-  for (const [now, extra] of [
-    [`${out}\nError: brand new`, baselineOf(out)],
-    [out, { baseline: { ok: true, seconds: 1 } }],
-    [out, { baseline: { ok: false, seconds: 1 } }],
-    [out, {}],
-  ] as const) {
-    const t = await parallel({}, [], now, extra);
-    t.gate.resolve();
-    const r = await t.settle();
-    assert.match(r.entries[0].content, /Fix it, then finish/, now);
-    assert.equal((await readTask(t.ctx.cwd))?.predates, undefined);
-  }
-});
-
-const twoSteps = (second: { code: number; stdout: string }) => (step: string) => (step === "check" ? { code: 1, stdout: "FAIL old.test.ts" } : second);
-const withBaseline = (...failing: [string, string][]) => ({ baseline: { ok: false, seconds: 1, failing: failing.map(([step, out]) => sigOf(out, step)) } });
-
-test("step 1 predates and a later step passes: the gate runs on and the agent finishes with the note", async () => {
-  const t = await parallel({}, [false], "", withBaseline(["check", "FAIL old.test.ts"]), ["check", "types"], twoSteps({ code: 0, stdout: "" }));
-  t.gate.resolve();
-  assert.equal(await t.settle(), undefined);
-  assert.equal(t.order.filter((o) => o === "verify:end").length, 2);
-  assert.deepEqual((await readTask(t.ctx.cwd))?.predates, ["FAIL old.test.ts"]);
-  assert.equal(t.notes.filter((n) => /predate this change/.test(n)).length, 1);
-});
-
-test("step 1 predates and a later step fails with something new: it blocks, and the report is the new failure", async () => {
-  const t = await parallel({}, [], "", withBaseline(["check", "FAIL old.test.ts"]), ["check", "types"], twoSteps({ code: 1, stdout: "Error TS2322 in a.ts" }));
+  const t = await parallel({}, [], out, { baseline: { ok: false, seconds: 1, failing: [sigOf(out)] }, predates: ["FAIL test/old.test.ts"] });
   t.gate.resolve();
   const r = await t.settle();
-  assert.match(r.entries[0].content, /Fix it, then finish/);
-  assert.match(r.entries[0].content, /Error TS2322 in a\.ts/);
-  assert.equal((await readTask(t.ctx.cwd))?.predates, undefined);
+  assert.match(r.entries[0].content, /Fix it, then finish\. A failure in code the change did not touch may already have been there: do not fix it outside the plan; report it to the user at the end\./);
+  assert.deepEqual(gateEvents(t).map((p) => [p.kind, p.ok, "predates" in p]), [["gate", false, false]]);
+  const second = await t.settle();
+  assert.match(second.entries[0].content, /then fix\. A failure in code the change did not touch may already have been there/);
 });
 
-test("a later step that failed at the baseline with the same lines predates too; one the baseline never saw failing does not", async () => {
-  const both = await parallel({}, [false], "", withBaseline(["check", "FAIL old.test.ts"], ["types", "Error TS1 in a.ts"]), ["check", "types"], twoSteps({ code: 1, stdout: "Error TS1 in a.ts" }));
-  both.gate.resolve();
-  assert.equal(await both.settle(), undefined);
-  const unseen = await parallel({}, [], "", withBaseline(["check", "FAIL old.test.ts"]), ["check", "types"], twoSteps({ code: 1, stdout: "Error TS1 in a.ts" }));
-  unseen.gate.resolve();
-  assert.match((await unseen.settle()).entries[0].content, /Fix it, then finish/);
-});
-
-test("a failing agentlint rule never counts as predating", async () => {
-  const out = "agentlint: unresolved findings\nerror x";
+test("an agentlint failure's advice does not carry the untouched-code sentence", async () => {
   const lint = "agentlint check --all";
-  const t = await parallel({}, [], out, { baseline: { ok: false, seconds: 1, failing: [sigOf(out, lint)] } }, [lint]);
+  const t = await parallel({}, [], "agentlint: unresolved findings\nerror x", {}, [lint]);
   t.gate.resolve();
-  assert.match((await t.settle()).entries[0].content, /This is an agentlint rule/);
+  const r = await t.settle();
+  assert.match(r.entries[0].content, /This is an agentlint rule/);
+  assert.doesNotMatch(r.entries[0].content, /did not touch/);
 });
 
-test("the agentlint step setup recorded is an agentlint rule whatever its command, never predating", async () => {
-  const out = "agentlint: unresolved findings\nerror x";
-  const step = "pnpm agentlint check --all";
-  const t = await parallel({}, [], out, { baseline: { ok: false, seconds: 1, failing: [sigOf(out, step)] } }, [step]);
-  await updateManifest(t.ctx.cwd, (m) => void (m.agentlintStep = step));
-  t.gate.resolve();
-  assert.match((await t.settle()).entries[0].content, /This is an agentlint rule/);
-});
-
-const slow = { baseline: { ok: true, seconds: 1 } };
 const everyOne = async (t: { root: string }, limits: object = { verifyEvery: 1 }) => updateManifest(t.root, (m) => void (m.limits = limits));
 
 test("every verifyEvery writes the first verify command runs and its result is appended to the tool result", async () => {
   const t = await setup({ pass: false, task: true });
   await updateManifest(t.root, (m) => void (m.limits = { verifyEvery: 2 }));
-  await fs.writeFile(path.join(t.root, ".pi/task.json"), JSON.stringify({ ...task, ...slow }));
+  await fs.writeFile(path.join(t.root, ".pi/task.json"), JSON.stringify(task));
   await t.emit("before_agent_start", { messageType: "user" }, t.ctx);
   const event = { toolName: "edit", content: [{ type: "text", text: "edited" }] };
   assert.equal(await t.emit("tool_result", event, t.ctx), undefined);
@@ -484,62 +403,85 @@ test("every verifyEvery writes the first verify command runs and its result is a
 test("a progress failure says it may be expected mid-change (a test for code not written yet) and to fix it only if not", async () => {
   const t = await setup({ pass: false, task: true });
   await everyOne(t);
-  await fs.writeFile(path.join(t.root, ".pi/task.json"), JSON.stringify({ ...task, ...slow }));
+  await fs.writeFile(path.join(t.root, ".pi/task.json"), JSON.stringify(task));
   const text = ((await t.emit("tool_result", { toolName: "write", content: [] }, t.ctx)) as any).content[0].text;
   assert.match(text, /not the final gate, and a failure can be expected mid-change \(a test for code you have not written yet\)\. Fix it only if it is not\./);
   assert.doesNotMatch(text, /fix it if your change caused it/);
 });
 
-test("the progress check says when it passes or already failed at baseline, and never runs when off or not implementing", async () => {
+test("the progress check says when it passes, and never runs when off or not implementing", async () => {
   const pass = await setup({ pass: true, task: true });
   await everyOne(pass);
-  await fs.writeFile(path.join(pass.root, ".pi/task.json"), JSON.stringify({ ...task, ...slow }));
+  await fs.writeFile(path.join(pass.root, ".pi/task.json"), JSON.stringify(task));
   const event = { toolName: "write", content: [] };
   assert.match(((await pass.emit("tool_result", event, pass.ctx)) as any).content[0].text, /^Progress check: `check` passes\.$/);
-  const old = await setup({ pass: false, task: true });
-  await everyOne(old);
-  await fs.writeFile(path.join(old.root, ".pi/task.json"), JSON.stringify({ ...task, ...baselineOf("Error: boom") }));
-  assert.match(((await old.emit("tool_result", event, old.ctx)) as any).content[0].text, /fails \(it already failed before the change\)/);
   const off = await setup({ pass: false, task: true });
   await everyOne(off, { verifyEvery: 0 });
-  await fs.writeFile(path.join(off.root, ".pi/task.json"), JSON.stringify({ ...task, ...slow }));
+  await fs.writeFile(path.join(off.root, ".pi/task.json"), JSON.stringify(task));
   for (let i = 0; i < 6; i++) assert.equal(await off.emit("tool_result", event, off.ctx), undefined);
   const planning = await setup({ pass: false, task: true });
   await everyOne(planning);
-  await fs.writeFile(path.join(planning.root, ".pi/task.json"), JSON.stringify({ ...task, ...slow, status: "planning" }));
+  await fs.writeFile(path.join(planning.root, ".pi/task.json"), JSON.stringify({ ...task, status: "planning" }));
   assert.equal(await planning.emit("tool_result", event, planning.ctx), undefined);
   assert.equal(off.verifies() + planning.verifies(), 0);
 });
 
 test("the progress check is on by default every 5 writes", async () => {
   const t = await setup({ pass: true, task: true });
-  await fs.writeFile(path.join(t.root, ".pi/task.json"), JSON.stringify({ ...task, ...slow }));
+  await fs.writeFile(path.join(t.root, ".pi/task.json"), JSON.stringify(task));
   const event = { toolName: "write", content: [] };
   for (let i = 0; i < 4; i++) assert.equal(await t.emit("tool_result", event, t.ctx), undefined);
   assert.ok(await t.emit("tool_result", event, t.ctx));
 });
 
-test("the progress check is skipped when the baseline's first step took 30 s or more; the first write result says why, once", async () => {
-  const t = await setup({ pass: false, task: true });
-  await everyOne(t);
-  await fs.writeFile(path.join(t.root, ".pi/task.json"), JSON.stringify({ ...task, baseline: { ok: true, seconds: 45.4 } }));
-  const event = { toolName: "write", content: [{ type: "text", text: "wrote" }] };
-  const first: any = await t.emit("tool_result", event, t.ctx);
-  assert.equal(first.content[0].text, "wrote");
-  assert.match(first.content[1].text, /^Progress check off: `check` took 45 s before the change, over 30 s\./);
-  for (let i = 0; i < 3; i++) assert.equal(await t.emit("tool_result", event, t.ctx), undefined);
-  assert.equal(t.verifies(), 0);
-  const edge = await setup({ pass: true, task: true });
-  await everyOne(edge);
-  await fs.writeFile(path.join(edge.root, ".pi/task.json"), JSON.stringify({ ...task, baseline: { ok: true, seconds: 29.9 } }));
-  assert.match(((await edge.emit("tool_result", event, edge.ctx)) as any).content[1].text, /passes/);
-});
-
-test("the progress check does not run without a recorded baseline duration", async () => {
+/** Each progress run takes `seconds` on the clock, or is killed by its timeout. */
+async function timedProgress(seconds: number, killed = false) {
   const t = await setup({ pass: true, task: true });
   await everyOne(t);
-  for (let i = 0; i < 3; i++) assert.equal(await t.emit("tool_result", { toolName: "write", content: [] }, t.ctx), undefined);
+  const exec = t.pi.exec;
+  t.pi.exec = async (cmd: string, args: string[], o: any) => {
+    const r = await exec(cmd, args, o);
+    if (cmd !== "bash") return r;
+    clock += seconds * 1000;
+    return killed ? { ...r, code: 1, killed: true } : r;
+  };
+  return t;
+}
+let clock = 0;
+const realNow = Date.now;
+
+test("a progress run that takes 30 s or more, or times out, turns the check off for the task; the result says why, once", async () => {
+  Date.now = () => realNow() + clock;
+  try {
+    const event = { toolName: "write", content: [{ type: "text", text: "wrote" }] };
+    const t = await timedProgress(45.4);
+    const first: any = await t.emit("tool_result", event, t.ctx);
+    assert.equal(first.content[0].text, "wrote");
+    assert.match(first.content[1].text, /^Progress check off: `check` took 45 s, over 30 s\. Run the tests you are working on yourself; verify runs when you finish\.$/);
+    for (let i = 0; i < 3; i++) assert.equal(await t.emit("tool_result", event, t.ctx), undefined);
+    assert.equal(t.verifies(), 1);
+    const timedOut = await timedProgress(1, true);
+    assert.match(((await timedOut.emit("tool_result", event, timedOut.ctx)) as any).content[1].text, /^Progress check off: `check` timed out after 60 s\./);
+    assert.equal(await timedOut.emit("tool_result", event, timedOut.ctx), undefined);
+    const edge = await timedProgress(29.9);
+    assert.match(((await edge.emit("tool_result", event, edge.ctx)) as any).content[1].text, /passes/);
+    assert.match(((await edge.emit("tool_result", event, edge.ctx)) as any).content[1].text, /passes/);
+    assert.equal(edge.verifies(), 2);
+  } finally {
+    Date.now = realNow;
+  }
+});
+
+test("an empty verify list runs nothing: the gate, the progress check and /verify tolerate it", async () => {
+  const t = await setup({ pass: false, task: true });
+  await updateManifest(t.root, (m) => void ((m.verify = []), (m.limits = { verifyEvery: 1 })));
+  await t.run();
+  assert.equal(await t.emit("tool_result", { toolName: "write", content: [] }, t.ctx), undefined);
+  assert.equal(await t.settle(), undefined);
+  await t.commands.get("verify").handler("", t.ctx);
   assert.equal(t.verifies(), 0);
+  assert.equal((await readTask(t.root))?.status, "implementing");
+  assert.match(t.notes.at(-1)!, /No verification steps configured/);
 });
 
 test("the progress check has a 60 s cap", async () => {
@@ -548,7 +490,7 @@ test("the progress check has a 60 s cap", async () => {
   const exec = t.pi.exec;
   t.pi.exec = (cmd: string, args: string[], o: any) => (timeouts.push(o?.timeout), exec(cmd, args, o));
   await everyOne(t);
-  await fs.writeFile(path.join(t.root, ".pi/task.json"), JSON.stringify({ ...task, ...slow }));
+  await fs.writeFile(path.join(t.root, ".pi/task.json"), JSON.stringify(task));
   await t.emit("tool_result", { toolName: "write", content: [] }, t.ctx);
   assert.deepEqual(timeouts, [60_000]);
 });
@@ -809,21 +751,13 @@ test("the done dialog names the task on one line, even when the title holds a wh
   assert.equal(asked[0][1], 'Is the task "Superconduct shred" done?');
 });
 
-test("without a UI a passing verify marks the task done; only old failures keep it open with a notice", async () => {
+test("without a UI a passing verify marks the task done", async () => {
   const t = await setup({ pass: true, task: true });
   t.ctx.hasUI = false;
   await t.run();
   assert.equal(await t.settle(), undefined);
   assert.equal((await readTask(t.root))?.status, "done");
   assert.ok(t.emitted.some((e) => e.name === TASK_DONE_EVENT && e.payload.hasUI === false));
-  const out = "FAIL test/old.test.ts\nError: expected 1 got 2";
-  const old = await parallel({}, [], out, baselineOf(out));
-  old.ctx.hasUI = false;
-  old.gate.resolve();
-  assert.equal(await old.settle(), undefined);
-  assert.equal((await readTask(old.ctx.cwd))?.status, "implementing");
-  assert.equal(old.emitted.find((e) => e.name === TASK_DONE_EVENT), undefined);
-  assert.match(old.notes.at(-1)!, /^The task stays open: verify still fails as it did before the task \(check\)\. \/task done closes it\.$/);
 });
 
 test("declining the done dialog says how to close the task later", async () => {

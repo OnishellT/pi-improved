@@ -50,13 +50,12 @@ test("body: summary, closes, verify, risk, ADRs, tests", () => {
   assert.doesNotMatch(body, /Evidence/);
 });
 
-test("body: the intent leads the summary; failures that predate the change are listed under verify", () => {
-  const withIntent = { ...task, predates: ["FAIL old", "expected 1 got 2"], plan: { ...task.plan, intent: "Let people add the thing" } };
+test("body: the intent leads the summary; a predates list left in an old task.json is not shown", () => {
+  const withIntent: any = { ...task, predates: ["FAIL old", "expected 1 got 2"], plan: { ...task.plan, intent: "Let people add the thing" } };
   const failed = buildBody({ task: withIntent, facts, verify: { ok: false, text: "verify FAILED" } });
   assert.match(failed, /## Summary\nLet people add the thing\n\nAdd the thing\n\n- step one/);
-  assert.match(failed, /FAILED:[\s\S]*verify FAILED\n```\n\nVerify fails, but only with failures that predate this change[\s\S]*- FAIL old\n- expected 1 got 2/);
-  assert.doesNotMatch(buildBody({ task: withIntent, facts, verify: { ok: true, text: "verify passed" } }), /predate/);
-  assert.doesNotMatch(buildBody({ task, facts, verify: { ok: false, text: "verify FAILED" } }), /predate|Let people/);
+  assert.match(failed, /FAILED:[\s\S]*verify FAILED\n```/);
+  assert.doesNotMatch(failed, /predate|FAIL old/);
 });
 
 test("body: template kept, evidence note, no verify steps", () => {
@@ -123,48 +122,18 @@ test("a failing git status stops /pr instead of passing for a clean tree", async
   assert.match(out.detail ?? "", /git status failed/);
 });
 
-test("the body calls a failing verify old only when this run's failures all predate the baseline", async () => {
-  const baseline = { ok: false, seconds: 1, failing: [stepSignature({ step: "npm test", ok: false, output: "FAIL old.test.ts" })!] };
-  const shownBody = async (output: string) => {
-    const root = await project();
-    await fs.writeFile(path.join(root, ".pi/task.json"), JSON.stringify({ ...task, status: "implementing", baseline, predates: ["FAIL old.test.ts"] }));
-    const inner = setup({ gh: false }).exec;
-    const exec: any = async (cmd: string, args: string[]) => (cmd === "bash" ? { code: 1, stdout: output, stderr: "", killed: false } : inner(cmd, args));
-    const ui: any = fakeUI([true]);
-    let shown = "";
-    ui.notify = (m: string) => void (shown += m);
-    await runPr(exec, root, ui);
-    return shown;
-  };
-  assert.match(await shownBody("FAIL old.test.ts"), /predate this change[\s\S]*- FAIL old\.test\.ts/);
-  assert.doesNotMatch(await shownBody("FAIL old.test.ts\nFAIL brand-new.test.ts"), /predate/);
-});
-
-test("an old first failure does not stop /pr from running the later steps", async () => {
+test("an old task.json with a baseline: /pr stops at the first failure, never calls it old and does not commit", async () => {
   const baseline = { ok: false, seconds: 1, failing: [stepSignature({ step: "check", ok: false, output: "FAIL old.test.ts" })!] };
-  const root = await tempProject({ ".pi/workflow.json": JSON.stringify({ version: 1, setup: "done", verify: ["check", "types"], connectors: [], review: { never: true } }), ".pi/task.json": JSON.stringify({ ...task, status: "implementing", baseline }) });
-  const inner = setup({ gh: false }).exec;
+  const root = await tempProject({ ".pi/workflow.json": JSON.stringify({ version: 1, setup: "done", verify: ["check", "types"], connectors: [], review: { never: true } }), ".pi/task.json": JSON.stringify({ ...task, status: "implementing", baseline, predates: ["FAIL old.test.ts"] }) });
+  const inner = setup({ dirty: " M src/fee.ts\n" });
   const ran: string[] = [];
-  const exec: any = async (cmd: string, args: string[]) => (cmd === "bash" ? (ran.push(args[1]), { code: 1, stdout: args[1] === "check" ? "FAIL old.test.ts" : "Error TS1 in a.ts", stderr: "", killed: false }) : inner(cmd, args));
-  const ui: any = fakeUI([true]);
-  let shown = "";
-  ui.notify = (m: string) => void (shown += m);
-  await runPr(exec, root, ui);
-  assert.deepEqual(ran, ["check", "types"]);
-  assert.doesNotMatch(shown, /predate/);
-});
-
-test("/pr keeps as much output as the gate, so a long old failure still matches the baseline", async () => {
-  const output = Array.from({ length: 300 }, (_, i) => `FAIL old ${i}.test.ts`).join("\n");
-  const baseline = { ok: false, seconds: 1, failing: [stepSignature({ step: "check", ok: false, output })!] };
-  const root = await tempProject({ ".pi/workflow.json": JSON.stringify({ version: 1, setup: "done", verify: ["check"], connectors: [], review: { never: true }, maxReport: 20000 }), ".pi/task.json": JSON.stringify({ ...task, status: "implementing", baseline }) });
-  const inner = setup({ gh: false }).exec;
-  const exec: any = async (cmd: string, args: string[]) => (cmd === "bash" ? { code: 1, stdout: output, stderr: "", killed: false } : inner(cmd, args));
-  const ui: any = fakeUI([true]);
-  let shown = "";
-  ui.notify = (m: string) => void (shown += m);
-  await runPr(exec, root, ui);
-  assert.match(shown, /predate this change/);
+  const exec: any = async (cmd: string, args: string[]) => (cmd === "bash" ? (ran.push(args[1]), { code: 1, stdout: "FAIL old.test.ts", stderr: "", killed: false }) : inner.exec(cmd, args));
+  const ui = fakeUI([true, false]);
+  const out = await runPr(exec, root, ui as any);
+  assert.deepEqual(ran, ["check"]);
+  assert.equal(out.status, "declined");
+  assert.doesNotMatch(out.detail ?? "", /predate/);
+  assert.ok(!inner.has("git", "commit"));
 });
 
 test("on the base branch: needs a confirmed task branch first", async () => {
@@ -318,18 +287,6 @@ test("the commit offer lists what verify wrote, not the tree from before it ran"
   await runPr(exec, await project(), ui as any);
   assert.equal(ui.asked[0], "Commit the uncommitted work?");
   assert.match(ui.messages[0], /coverage\.xml/);
-});
-
-test("a verify that fails only where it failed before the task still lets /pr commit", async () => {
-  const baseline = { ok: false, seconds: 1, failing: [stepSignature({ step: "npm test", ok: false, output: "FAIL old.test.ts" })!] };
-  const root = await project();
-  await fs.writeFile(path.join(root, ".pi/task.json"), JSON.stringify({ ...task, status: "implementing", baseline }));
-  const inner = setup({ dirty: " M src/fee.ts\n" });
-  const exec: any = async (cmd: string, args: string[]) => (cmd === "bash" ? { code: 1, stdout: "FAIL old.test.ts", stderr: "", killed: false } : inner.exec(cmd, args));
-  const ui = fakeUI([true, false]);
-  await runPr(exec, root, ui as any);
-  assert.deepEqual(ui.asked.slice(0, 1), ["Commit the uncommitted work?"]);
-  assert.ok(inner.has("git", "commit"));
 });
 
 test("the commit subject and PR title stay within 72 characters, without a trailing period", () => {

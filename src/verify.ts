@@ -19,15 +19,15 @@ export const VERIFY_TIMEOUT = 10 * 60_000;
 export const validCap = (n: unknown) => (typeof n === "number" && Number.isFinite(n) && n >= 200 ? Math.floor(n) : undefined);
 const tail = (text: string, max: number) => (text.length > max ? `…${text.slice(-max)}` : text);
 
-/** Runs verify steps in order and stops at the first failure, unless `carryOn` says that failure does not count. Each step keeps the last `maxReport` characters of its output. */
-export async function runVerify(steps: string[], exec: Exec, cwd: string, timeout = VERIFY_TIMEOUT, maxReport = DEFAULT_MAX_REPORT, signal?: AbortSignal, carryOn?: (failed: StepResult) => boolean) {
+/** Runs verify steps in order and stops at the first failure. Each step keeps the last `maxReport` characters of its output. */
+export async function runVerify(steps: string[], exec: Exec, cwd: string, timeout = VERIFY_TIMEOUT, maxReport = DEFAULT_MAX_REPORT, signal?: AbortSignal) {
   const results: StepResult[] = [];
   for (const step of steps) {
     // Login shell on purpose: it loads PATH from nvm/asdf and the like, which a plain `bash -c` would miss.
     const { stdout, stderr, code, killed } = await exec("bash", ["-lc", step], { cwd, timeout, ...(signal && { signal }) });
     const ok = code === 0 && !killed;
     results.push({ step, ok, output: tail(`${stdout}\n${stderr}`.trim(), maxReport), ...(killed && { killed: true }), ...(isNixFailure({ code, stderr }) && { infra: true }) });
-    if (!ok && !carryOn?.(results[results.length - 1])) break;
+    if (!ok) break;
   }
   return { ok: results.length === steps.length && results.every((r) => r.ok), results };
 }
@@ -51,9 +51,7 @@ export const isPolicyFailure = ({ results }: Awaited<ReturnType<typeof runVerify
 
 export function formatVerify({ ok, results }: Awaited<ReturnType<typeof runVerify>>) {
   const lines = results.map((r) => `${r.ok ? "✓" : "✗"} ${r.step}`);
-  // Every failed step's output: an old failure the run carried on past keeps its diagnostics next to the new one.
-  const failed = results.filter((r) => !r.ok);
-  return [ok ? "verify passed" : "verify FAILED", ...lines, ...failed.flatMap((r) => ["", ...(failed.length > 1 ? [`✗ ${r.step}:`] : []), r.output])].join("\n");
+  return [ok ? "verify passed" : "verify FAILED", ...lines, ...results.filter((r) => !r.ok).flatMap((r) => ["", r.output])].join("\n");
 }
 
 type VerifyRun = Awaited<ReturnType<typeof runVerify>>;
@@ -85,7 +83,7 @@ const normalize = (line: string) => VOLATILE.reduce((l, [re, to]) => l.replace(r
 /** The lines of a step's output that look like errors, as printed. A cut-off first line (the report keeps only a tail) is dropped. */
 export const failureLines = (output: string) => outputLines(output).filter((l) => FAILURE_LINE.test(l));
 
-/** Undefined when the step passed, printed nothing, or its output is partial (killed, or cut to the report size): a partial output never matches a baseline. */
+/** Undefined when the step passed, printed nothing, or its output is partial (killed, or cut to the report size): a partial output never matches another. */
 export function stepSignature(r: StepResult): Signature | undefined {
   if (r.ok || r.killed || r.output.startsWith("…")) return undefined;
   const lines = outputLines(r.output).map(normalize).sort();
@@ -98,55 +96,8 @@ export const failureSignature = ({ results }: VerifyRun) => stepSignature(result
 const counts = (lines: string[]) => lines.reduce((m, l) => m.set(l, (m.get(l) ?? 0) + 1), new Map<string, number>());
 
 /** The same step failed with exactly the same lines, as many times each. */
-export const sameFailure = (a?: Signature, b?: Signature) => !!a && !!b && a.lines.length === b.lines.length && predates(a, b);
-
-/** Every line of `now` was already in `before`, at least as often: nothing new printed. Any new line, or one printed more often, makes it new. */
-export function predates(now?: Signature, before?: Signature) {
-  if (!now || !before || now.step !== before.step) return false;
-  const had = counts(before.lines);
-  return [...counts(now.lines)].every(([line, n]) => n <= (had.get(line) ?? 0));
-}
-
-/** One failing step whose lines were all failing at the baseline already. */
-const stepPredates = (r: StepResult, before: Signature[] | undefined) => predates(stepSignature(r), Array.isArray(before) ? before.find((f) => f.step === r.step) : undefined);
-
-/** Something failed, and every failing step failed only with lines it already had at the baseline. A step the baseline never ran or never saw fail counts as new. */
-export const predatesBaseline = ({ results }: VerifyRun, before: Signature[] | undefined, isAgentlint?: (step: string) => boolean) => {
-  const failed = results.filter((r) => !r.ok);
-  return failed.length > 0 && failed.every((r) => !isPolicyStep(r, isAgentlint) && stepPredates(r, before));
-};
-
-/** The failure lines of every failing step, as printed. */
-/** The error lines of every failed step; a step whose output has none (a bare diff, say) is named by its command. */
-export const failedLines = ({ results }: VerifyRun) =>
-  results.filter((r) => !r.ok).flatMap((r) => {
-    const lines = failureLines(r.output);
-    return lines.length ? lines : [r.step];
-  });
-
-/** The carryOn for `runVerify`: a failing step that predates the baseline does not stop the run, so later steps still run. */
-export const carryOnWhenPredated = (before: Signature[] | undefined, isAgentlint?: (step: string) => boolean) => (r: StepResult) => !isPolicyStep(r, isAgentlint) && stepPredates(r, before);
-
-export interface Baseline {
-  ok: boolean;
-  /** Seconds the first verify command took. */
-  seconds: number;
-  /** Each step that failed, with its failure lines. */
-  failing?: Signature[];
-}
-
-/** Every verify command run once before implementing, none stopping the others. Undefined when it cannot say (no steps, Nix missing or failing, aborted). */
-export async function runBaseline(steps: string[], exec: Exec, cwd: string, maxReport?: unknown, signal?: AbortSignal): Promise<Baseline | undefined> {
-  if (!steps.length) return undefined;
-  const results: StepResult[] = [];
-  let seconds = 0;
-  for (const step of steps) {
-    const t0 = Date.now();
-    const run = await runVerify([step], exec, cwd, VERIFY_TIMEOUT, validCap(maxReport), signal);
-    if (infraFailure(run) || signal?.aborted) return undefined;
-    if (!results.length) seconds = (Date.now() - t0) / 1000;
-    results.push(...run.results);
-  }
-  const failing = results.map(stepSignature).filter((x): x is Signature => !!x);
-  return results.every((r) => r.ok) ? { ok: true, seconds } : { ok: false, seconds, failing };
+export function sameFailure(a?: Signature, b?: Signature) {
+  if (!a || !b || a.step !== b.step || a.lines.length !== b.lines.length) return false;
+  const had = counts(b.lines);
+  return [...counts(a.lines)].every(([line, n]) => n === had.get(line));
 }
