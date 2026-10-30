@@ -6,7 +6,7 @@ import { writeAdr, type AdrInput } from "./adr.ts";
 import { selectOrType } from "./ask.ts";
 import { exists, limitsOf } from "./config.ts";
 import { missingNames, relatesTo } from "./contract.ts";
-import { REVIEW_EVENT, type ReviewPayload } from "./events.ts";
+import { REVIEW_EVENT, UNDERSTANDING_EVENT, type ReviewPayload, type UnderstandingPayload } from "./events.ts";
 import { relatedTasks } from "./learn.ts";
 import { completeTask } from "./gate.ts";
 import { restoreModel, usePhaseModel } from "./models.ts";
@@ -212,6 +212,8 @@ export function registerTask(pi: ExtensionAPI) {
       }
       if (arg === "done") {
         if (active?.status !== "implementing") return ctx.ui.notify(active ? `The task is ${active.status}: only an implementing task can be marked done.` : "No active task.", "info");
+        // Closing the task during the understanding check skips it.
+        if (active.understanding === "asked") pi.events.emit(UNDERSTANDING_EVENT, { root, outcome: "skipped", gaps: 0 } satisfies UnderstandingPayload);
         await completeTask(pi, ctx);
         return ctx.ui.notify(`Task done: ${oneLine(active.title)}.`, "info");
       }
