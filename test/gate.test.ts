@@ -475,9 +475,9 @@ test("a progress run that takes 30 s or more, or times out, turns the check off 
     assert.match(((await edge.emit("tool_result", event, edge.ctx)) as any).content[1].text, /passes/);
     assert.match(((await edge.emit("tool_result", event, edge.ctx)) as any).content[1].text, /passes/);
     assert.equal(edge.verifies(), 2);
-    // A slow run that could not run the check at all (Nix building) also turns it off, silently.
+    // A slow run that could not run the check at all (Nix building) also turns it off, and says so once.
     const nix = await timedProgress(61, false, true);
-    assert.equal(await nix.emit("tool_result", event, nix.ctx), undefined);
+    assert.match(((await nix.emit("tool_result", event, nix.ctx)) as any).content[1].text, /^Progress check off: `check` could not run after 61 s \(Nix could not build bash\)\. Run the tests/);
     assert.equal((await readTask(nix.root))?.progressOff, true);
     assert.equal(await nix.emit("tool_result", event, nix.ctx), undefined);
     assert.equal(nix.verifies(), 1);
