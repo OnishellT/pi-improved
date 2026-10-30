@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import * as fsCallbacks from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import { test } from "node:test";
 import { ESCALATE_EVENT, REVIEW_EVENT, VERIFY_EVENT } from "../src/events.ts";
 import { TASK_DONE_EVENT } from "../src/events.ts";
@@ -141,6 +143,35 @@ test("a review and the understanding outcome recorded at once, after a restart, 
   assert.deepEqual([m.verifyRuns, m.reviews.length, m.understanding], [1, 1, { outcome: "no-ui", gaps: 0 }]);
   const disk = JSON.parse(await fs.readFile(path.join(root, ".pi/metrics/COLD-1.json"), "utf8"));
   assert.deepEqual([disk.reviews.length, disk.understanding], [1, { outcome: "no-ui", gaps: 0 }]);
+});
+
+test("a slow earlier snapshot save never lands over a later one", async () => {
+  const root = await tempProject({ ".pi/task.json": taskJson("SLOW-1", "implementing") });
+  const s = setup();
+  // The first snapshot write (the review alone) takes longer than the next (review + outcome).
+  const real = fsCallbacks.promises.writeFile;
+  let calls = 0;
+  let started!: () => void;
+  const firstWrite = new Promise<void>((r) => (started = r));
+  fsCallbacks.promises.writeFile = (async (...args: any[]) => {
+    if (calls++ === 0) {
+      started();
+      await new Promise((r) => setTimeout(r, 50));
+    }
+    return (real as any)(...args);
+  }) as any;
+  syncBuiltinESMExports();
+  try {
+    const review = s.fire(REVIEW_EVENT, { root, status: "skipped", model: "m", seconds: 0 });
+    await firstWrite;
+    await recordUnderstanding(root, "done", 3);
+    await review;
+  } finally {
+    fsCallbacks.promises.writeFile = real;
+    syncBuiltinESMExports();
+  }
+  const disk = JSON.parse(await fs.readFile(path.join(root, ".pi/metrics/SLOW-1.json"), "utf8"));
+  assert.deepEqual([disk.reviews.length, disk.understanding], [1, { outcome: "done", gaps: 3 }]);
 });
 
 test("the understanding outcome and its gap count are kept per task, and /metrics shows the rates", async () => {
