@@ -188,12 +188,18 @@ test("understanding on: a confirmed task gets the check message once and stays o
   assert.equal(r.entries[0].customType, "understanding-check");
   assert.match(r.entries[0].content, /understanding-check\/SKILL\.md[\s\S]*understanding_done/);
   const open = await readTask(t.root);
-  assert.deepEqual([open?.status, open?.understanding], ["implementing", "asked"]);
+  assert.equal(open?.status, "implementing");
+  assert.ok(open?.understanding?.tree);
   assert.ok(!t.emitted.some((e) => e.name === TASK_DONE_EVENT || e.name === UNDERSTANDING_EVENT));
-  // A later change is verified again, but neither the dialog nor the check comes back (no answers are scripted).
+  // A change during the check is verified again, with no dialog (no answers are scripted): its tree is the one understanding_done may close.
   t.setDiff("changed again");
-  assert.equal(await t.settle(), undefined);
-  assert.equal((await readTask(t.root))?.status, "implementing");
+  const again = await t.settle();
+  assert.equal(again.continue, true);
+  assert.match(again.entries[0].content, /understanding_done/);
+  const moved = await readTask(t.root);
+  assert.equal(moved?.status, "implementing");
+  assert.notEqual(moved?.understanding?.tree, open?.understanding?.tree);
+  assert.equal(await t.settle(), undefined, "nothing changed since: no message");
 });
 
 test("review changes come first: the check follows the fixed code", async () => {

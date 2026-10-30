@@ -80,7 +80,7 @@ export default async function (rawPi: ExtensionAPI) {
   pi.on("session_start", (event) => {
     if (event.reason !== "resume" && event.reason !== "fork") return;
     const active = pi.getActiveTools();
-    const missing = ["setup_finish", "task_plan"].filter((t) => !active.includes(t));
+    const missing = ["setup_finish", "task_plan", "understanding_done"].filter((t) => !active.includes(t));
     if (missing.length) pi.setActiveTools([...active, ...missing]);
   });
   registerPr(pi);

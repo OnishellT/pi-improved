@@ -7,7 +7,7 @@ description: End-of-task teach-back: the user explains the change in their own w
 
 The user owns this change. Check that they can explain it, then close the task. Teach; do not grade.
 
-1. Read the diff (`git diff` against the task's base commit) and the plan's decisions.
+1. Read the whole change: `git diff` against the task's base commit, plus the new files `git status --short` lists as untracked (`??`), which the diff leaves out. Then the plan's decisions.
 2. One `ask_user` call with 2-3 open questions (no options), each answerable from this diff only:
    - behavior: what happens for an input or path the change touches;
    - failure: what breaks, or what the user sees, when a dependency or input goes wrong;

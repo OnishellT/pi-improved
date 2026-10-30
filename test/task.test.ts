@@ -123,13 +123,17 @@ test("open ask_user answers while planning are the user's approach, not decision
   assert.deepEqual((await readTask(root))!.plan!.decisions.map((d) => d.question), ["Rounding?"]);
 });
 
-test("the planning prompt asks for the user's approach first only with understanding plan+end (the default)", async () => {
+test("the planning prompt asks for the user's approach first only with understanding plan+end (the default) and a UI", async () => {
   for (const [understanding, asks] of [[undefined, true], ["plan+end", true], ["end", false], ["off", false]] as const) {
     const { commands, sent, ctxFor, root } = await setup();
     if (understanding) await updateManifest(root, (m) => void (m.understanding = understanding));
     await commands.get("task").handler("Add fee", ctxFor([]).ctx);
     assert.equal(sent[0].includes(APPROACH_FIRST), asks, String(understanding));
   }
+  // Headless, nobody can answer ask_user: the agent plans straight away.
+  const { commands, sent, root } = await setup();
+  await commands.get("task").handler("Add fee", fakeCtx(root, [], { hasUI: false }).ctx);
+  assert.ok(sent[0] && !sent[0].includes(APPROACH_FIRST));
 });
 
 test("ask_user answers outside planning are not plan decisions", async () => {
@@ -567,7 +571,7 @@ test("/task done closes an implementing task (done, event, model back); declinin
 test("/task done during the understanding check records it as skipped, before the task is done", async () => {
   const t = await modelSetup();
   await t.commands.get("task").handler("Add fee", t.ctxFor([]).ctx);
-  await writeTask(t.root, { ...(await readTask(t.root))!, status: "implementing", understanding: "asked" });
+  await writeTask(t.root, { ...(await readTask(t.root))!, status: "implementing", understanding: { tree: "t" } });
   await t.commands.get("task").handler("done", t.ctxFor([]).ctx);
   assert.deepEqual(t.emitted.map((e) => e.name), [UNDERSTANDING_EVENT, TASK_DONE_EVENT]);
   assert.deepEqual(t.emitted[0].payload, { root: t.root, outcome: "skipped", gaps: 0 });

@@ -80,7 +80,7 @@ test("a session saved with the phase tools inactive gets them back once", async 
   await emit("session_start", { reason: "resume" }, { cwd: "/" });
   await emit("session_start", { reason: "fork" }, { cwd: "/" });
   await emit("session_start", { reason: "reload" }, { cwd: "/" });
-  assert.deepEqual(sets, [["read", "setup_finish", "task_plan"]]);
+  assert.deepEqual(sets, [["read", "setup_finish", "task_plan", "understanding_done"]]);
 });
 
 test("a bundled pi-subagent that fails to load is reported at session start, not swallowed", async () => {

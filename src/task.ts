@@ -91,7 +91,7 @@ export function registerTask(pi: ExtensionAPI) {
     ticketText.delete(ctx.cwd);
     const previous = await usePhaseModel(pi, ctx, "implement");
     if (previous && !task.model) await updateTask(ctx.cwd, (t) => void (t.model = previous));
-    pi.sendUserMessage(taskPrompt(task.title, task.ticket, tracker(manifest), await relatedTasks(ctx.cwd, task.body ?? task.title), await skillsBlock(ctx.cwd, "plan"), task.spec, task.body, understandingOf(manifest) === "plan+end"));
+    pi.sendUserMessage(taskPrompt(task.title, task.ticket, tracker(manifest), await relatedTasks(ctx.cwd, task.body ?? task.title), await skillsBlock(ctx.cwd, "plan"), task.spec, task.body, understandingOf(manifest) === "plan+end" && ctx.hasUI));
     return ctx.waitForIdle();
   };
 
@@ -213,7 +213,7 @@ export function registerTask(pi: ExtensionAPI) {
       if (arg === "done") {
         if (active?.status !== "implementing") return ctx.ui.notify(active ? `The task is ${active.status}: only an implementing task can be marked done.` : "No active task.", "info");
         // Closing the task during the understanding check skips it.
-        if (active.understanding === "asked") pi.events.emit(UNDERSTANDING_EVENT, { root, outcome: "skipped", gaps: 0 } satisfies UnderstandingPayload);
+        if (active.understanding) pi.events.emit(UNDERSTANDING_EVENT, { root, outcome: "skipped", gaps: 0 } satisfies UnderstandingPayload);
         await completeTask(pi, ctx);
         return ctx.ui.notify(`Task done: ${oneLine(active.title)}.`, "info");
       }
