@@ -97,10 +97,12 @@ test("a tree git cannot read is never taken as the verified one", async () => {
 
 test("a tracked binary file rewritten with other bytes of the same size changes the snapshot (git diff names its blob)", async () => {
   const root = await tempProject({ "logo.bin": Buffer.from([0, 1, 2, 3]) as any });
-  const run = (args: string[]) => spawnSync("git", args, { cwd: root, encoding: "utf8" });
+  // The user's git config (commit.gpgsign, core.hooksPath) stays out of this repository.
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
+  const run = (args: string[]) => spawnSync("git", args, { cwd: root, encoding: "utf8", env });
   for (const args of [["init", "-q"], ["add", "logo.bin"], ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "init"]]) assert.equal(run(args).status, 0);
   const pi: any = { exec: async (cmd: string, args: string[], opts: { cwd: string }) => {
-    const r = spawnSync(cmd, args, { cwd: opts.cwd, encoding: "utf8" });
+    const r = spawnSync(cmd, args, { cwd: opts.cwd, encoding: "utf8", env });
     return { code: r.status, stdout: r.stdout, stderr: r.stderr, killed: false };
   } };
   await fs.writeFile(path.join(root, "logo.bin"), Buffer.from([0, 9, 9, 3]));
