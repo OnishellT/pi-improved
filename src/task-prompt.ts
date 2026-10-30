@@ -10,9 +10,9 @@ export const assistantText = (message: any): string | undefined =>
 export const TASK_NUDGE = "Call task_plan with your plan.";
 export const QUESTION_NUDGE = "The user does not read plain-text questions here. If you need a decision, call ask_user. Otherwise make the reasonable choice that fits the plan, AGENTS.md and the ADRs, and keep implementing.";
 
-/** Sent by the gate once verify (and any review) passed: the teach-back, then `understanding_done` completes the task. */
+/** Sent by the gate once the user confirms a verified (and, if requested, reviewed) task: the teach-back, then `understanding_done` completes the task. */
 export const understandingCheck = (skill: string) =>
-  `Verify passed. Before the task closes, run the understanding check: read ${skill} and follow it. It ends with understanding_done, which completes the task.`;
+  `The user confirmed the task is done. Before it closes, run the understanding check: read ${skill} and follow it. It ends with understanding_done, which completes the task.`;
 
 /** Planning, with `understanding` "plan+end": the user reasons about the key decisions before the agent proposes. */
 export const APPROACH_FIRST =
