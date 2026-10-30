@@ -8,7 +8,7 @@ import { registerGuards } from "../src/guards.ts";
 import { APPROVE } from "../src/policy.ts";
 import { TASK_DONE_EVENT } from "../src/events.ts";
 import { ESCALATE_EVENT, REVIEW_EVENT, VERIFY_EVENT } from "../src/events.ts";
-import { installMessage } from "../src/nix.ts";
+import { NIX_BUILD_FAILED, installMessage } from "../src/nix.ts";
 import { readTask } from "../src/task-state.ts";
 import { updateManifest } from "../src/manifest.ts";
 import { failureSignature } from "../src/verify.ts";
@@ -435,7 +435,7 @@ test("the progress check is on by default every 5 writes", async () => {
 });
 
 /** Each progress run takes `seconds` on the clock, or is killed by its timeout. */
-async function timedProgress(seconds: number, killed = false) {
+async function timedProgress(seconds: number, killed = false, infra = false) {
   const t = await setup({ pass: true, task: true });
   await everyOne(t);
   const exec = t.pi.exec;
@@ -443,6 +443,7 @@ async function timedProgress(seconds: number, killed = false) {
     const r = await exec(cmd, args, o);
     if (cmd !== "bash") return r;
     clock += seconds * 1000;
+    if (infra) return { ...r, code: 127, stderr: `${NIX_BUILD_FAILED} bash` };
     return killed ? { ...r, code: 1, killed: true } : r;
   };
   return t;
@@ -474,6 +475,12 @@ test("a progress run that takes 30 s or more, or times out, turns the check off 
     assert.match(((await edge.emit("tool_result", event, edge.ctx)) as any).content[1].text, /passes/);
     assert.match(((await edge.emit("tool_result", event, edge.ctx)) as any).content[1].text, /passes/);
     assert.equal(edge.verifies(), 2);
+    // A slow run that could not run the check at all (Nix building) also turns it off, silently.
+    const nix = await timedProgress(61, false, true);
+    assert.equal(await nix.emit("tool_result", event, nix.ctx), undefined);
+    assert.equal((await readTask(nix.root))?.progressOff, true);
+    assert.equal(await nix.emit("tool_result", event, nix.ctx), undefined);
+    assert.equal(nix.verifies(), 1);
   } finally {
     Date.now = realNow;
   }
