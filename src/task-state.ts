@@ -50,6 +50,8 @@ export interface Task {
   baseCommit?: string;
   /** The model in use before /task switched to the implement one: put back when the task ends. */
   model?: string;
+  /** "asked": the gate sent the understanding check, and `understanding_done` completes the task. */
+  understanding?: "asked";
   startedAt: string;
   completedAt?: string;
 }

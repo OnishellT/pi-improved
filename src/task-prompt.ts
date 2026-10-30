@@ -10,6 +10,14 @@ export const assistantText = (message: any): string | undefined =>
 export const TASK_NUDGE = "Call task_plan with your plan.";
 export const QUESTION_NUDGE = "The user does not read plain-text questions here. If you need a decision, call ask_user. Otherwise make the reasonable choice that fits the plan, AGENTS.md and the ADRs, and keep implementing.";
 
+/** Sent by the gate once verify (and any review) passed: the teach-back, then `understanding_done` completes the task. */
+export const understandingCheck = (skill: string) =>
+  `Verify passed. Before the task closes, run the understanding check: read ${skill} and follow it. It ends with understanding_done, which completes the task.`;
+
+/** Planning, with `understanding` "plan+end": the user reasons about the key decisions before the agent proposes. */
+export const APPROACH_FIRST =
+  "Before proposing a design, ask the user how they would approach the one or two most consequential decisions of this task: one ask_user call, open questions (no options), no recommendation. Build the plan from their answer; where it is wrong or risky, say why with evidence from the code. If they answer \"skip\" or ask for a proposal, propose.";
+
 export const planText = (p: Plan) =>
   [
     ...(p.intent ? [`Intent: ${p.intent}`, ""] : []),
@@ -25,12 +33,13 @@ export const planText = (p: Plan) =>
     ...(p.decisions.length ? ["", "Decisions:", ...p.decisions.map((d) => `- ${d.question} → ${d.answer ?? `see ${d.source}`}`)] : []),
   ].join("\n");
 
-export function taskPrompt(title: string, ticket: string | undefined, tracker: string | undefined, related: string[], skills = "", spec: string[] = [], body?: string) {
+export function taskPrompt(title: string, ticket: string | undefined, tracker: string | undefined, related: string[], skills = "", spec: string[] = [], body?: string, approachFirst = false) {
   const steps = [
     ticket && tracker ? `Read ticket ${ticket} with the ${tracker} tools (tool_search finds them). Read only.` : ticket && `Ticket ${ticket} has no connector enabled. Work from the title.`,
     spec.length && `Read in full: ${spec.join(", ")}.`,
     "Read GLOSSARY.md, AGENTS.md, the .pi/skills/* skills and docs/adr/* decisions that relate to the task.",
     "Read the files you will touch and their siblings (their names and exports are the convention). Edit nothing yet.",
+    approachFirst && APPROACH_FIRST,
     "Call task_plan: intent, summary, steps, files (repo-relative, directories end with /), decisions, interface, seams.",
   ].filter(Boolean);
   return [

@@ -21,6 +21,7 @@ import { registerSubagentView } from "./subagent-view.ts";
 import { registerTask } from "./task.ts";
 import { registerTelemetry } from "./telemetry.ts";
 import { registerTriggers } from "./triggers.ts";
+import { registerUnderstanding } from "./understanding.ts";
 
 /** `pi` whose `exec` puts the Nix git, gh, bash and tmux first on the PATH of the commands that need them. */
 function withNix(pi: ExtensionAPI): ExtensionAPI {
@@ -72,6 +73,7 @@ export default async function (rawPi: ExtensionAPI) {
   registerGuards(pi);
   registerTriggers(pi);
   registerGate(pi);
+  registerUnderstanding(pi);
   registerLearn(pi);
   // Sessions saved when these tools were toggled per phase come back with them inactive; turn them on once.
   // Only on resume or fork: new sessions already have them, and a startup `--tools` list stays as given.

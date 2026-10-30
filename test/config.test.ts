@@ -13,7 +13,7 @@ import { registerGate } from "../src/gate.ts";
 import { TASK_DONE_EVENT } from "../src/events.ts";
 import { registerLearn } from "../src/learn.ts";
 import { migrateGlobal, migrateLegacy, migrateProject } from "../src/legacy-config.ts";
-import { MANIFEST_PATH, patchMap, readManifest, readProjectManifest, updateManifest } from "../src/manifest.ts";
+import { MANIFEST_PATH, patchMap, readManifest, readProjectManifest, understandingOf, updateManifest } from "../src/manifest.ts";
 import { registerModels } from "../src/models.ts";
 import { planRiskReasons } from "../src/risk.ts";
 import { registerSkills } from "../src/skills.ts";
@@ -50,6 +50,15 @@ test("readManifest: the project wins over the global file, plain objects merge d
     assert.deepEqual(m.limits, { retroEvery: 3, fastPath: { files: 4, decisions: 1 } });
     assert.deepEqual(limitsOf(m), { ...DEFAULT_LIMITS, retroEvery: 3, fastPath: { files: 4, interface: 6, decisions: 1 } });
   });
+});
+
+test("understanding: the global file sets it, the project file overrides it, and a missing or unknown value is plan+end", async () => {
+  await withGlobal({ understanding: "end" }, async () => {
+    assert.equal(understandingOf(await readManifest(await tempProject({}))), "end");
+    assert.equal(understandingOf(await readManifest(await tempProject({ ".pi/workflow.json": JSON.stringify({ understanding: "off" }) }))), "off");
+  });
+  assert.equal(understandingOf({}), "plan+end");
+  assert.equal(understandingOf({ understanding: "always" }), "plan+end");
 });
 
 test("readManifest: an old setup with agentlint only inside a script gets the standard step added, recorded and saved once", async () => {

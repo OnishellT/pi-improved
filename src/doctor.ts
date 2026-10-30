@@ -7,7 +7,7 @@ import { desktopMissing } from "./computer/desktop.ts";
 import { which } from "./computer/which.ts";
 import { bundledExtension, hasGlobalSubagent } from "./subagent-ext.ts";
 import { checkLimits, PREFERENCE_KEYS, readGlobal } from "./config.ts";
-import { configFiles, readManifest, readProjectManifest, type Manifest } from "./manifest.ts";
+import { configFiles, readManifest, readProjectManifest, UNDERSTANDING, type Manifest } from "./manifest.ts";
 import { listSkills } from "./skills.ts";
 import { chromeHeadless, credentialStatus, hasNix, installMessage, NIXPKGS, nixPackage, type CredentialStatus } from "./nix.ts";
 
@@ -150,6 +150,7 @@ export async function runDoctor(pi: ExtensionAPI, ctx: ExtensionContext, version
     ["review.minLevel", manifest?.review?.minLevel, ["off", "low", "high"]],
     ["useAgentlint", manifest?.useAgentlint, ["ask", "always", "never"]],
     ["useBend", manifest?.useBend, ["ask", "always", "never"]],
+    ["understanding", manifest?.understanding, [...UNDERSTANDING]],
   ];
   for (const [name, value, allowed] of choices) {
     if (value === undefined) continue;

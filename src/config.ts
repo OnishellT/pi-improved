@@ -9,7 +9,7 @@ export const GLOBAL_FILE = "pi-improved.json";
 export const globalPath = (dir = agentDir()) => path.join(dir, GLOBAL_FILE);
 
 /** Preferences the global file may hold (the project file may hold the same ones). */
-export const PREFERENCE_KEYS = ["mode", "models", "skills", "skillsOnDemand", "basePrompt", "useAgentlint", "useBend", "maxReport", "contextWarn", "review", "limits", "computer", "subagentPanes", "selfCompact"];
+export const PREFERENCE_KEYS = ["mode", "models", "skills", "skillsOnDemand", "basePrompt", "useAgentlint", "useBend", "maxReport", "contextWarn", "review", "limits", "computer", "subagentPanes", "selfCompact", "understanding"];
 
 export const isObject = (value: unknown): value is Record<string, any> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 

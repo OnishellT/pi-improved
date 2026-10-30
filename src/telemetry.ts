@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { ESCALATE_EVENT, REVIEW_EVENT, VERIFY_EVENT, type EscalatePayload, type ReviewPayload, type VerifyPayload } from "./events.ts";
+import { ESCALATE_EVENT, REVIEW_EVENT, UNDERSTANDING_EVENT, VERIFY_EVENT, type EscalatePayload, type ReviewPayload, type UnderstandingPayload, type VerifyPayload } from "./events.ts";
 import { readMemory, readTask } from "./task-state.ts";
 
 export interface TaskMetrics {
@@ -14,6 +14,8 @@ export interface TaskMetrics {
   progress: { runs: number; failures: number };
   reviews: { status: string; model: string; seconds: number; cost?: number; discarded?: boolean }[];
   escalations: number;
+  /** The teach-back at the end of the task; absent when the task was closed with /task done before it. */
+  understanding?: { outcome: string; gaps: number };
 }
 
 export const METRICS_DIR = ".pi/metrics/";
@@ -40,6 +42,16 @@ export async function loadMetrics(root: string, taskId: string): Promise<TaskMet
   }
 }
 
+/** How the last tasks' understanding checks ended, as rates, and the gaps per answered check; nothing when none was recorded. */
+function understandingLine(records: any[]): string[] {
+  const checks: { outcome: string; gaps: number }[] = records.map((r) => r.metrics.understanding).filter(Boolean);
+  if (!checks.length) return [];
+  const rate = (outcome: string) => `${outcome} ${Math.round((checks.filter((c) => c.outcome === outcome).length / checks.length) * 100)}%`;
+  const done = checks.filter((c) => c.outcome === "done");
+  const gaps = done.length ? `, ${(done.reduce((s, c) => s + c.gaps, 0) / done.length).toFixed(1)} gaps per answered check` : "";
+  return [`Understanding (${checks.length} tasks): ${["done", "skipped", "no-ui", "off"].map(rate).join(", ")}${gaps}`];
+}
+
 export async function metricsReport(root: string): Promise<string> {
   const records = (await readMemory(root)).filter((r) => r.metrics);
   if (!records.length) return "No metrics yet: they are saved when each task ends.";
@@ -58,7 +70,7 @@ export async function metricsReport(root: string): Promise<string> {
   const paid = all.filter((x) => x.status !== "skipped-low-risk" && x.status !== "not-requested" && !String(x.status).startsWith("plan-") && x.cost !== undefined);
   const avoided = all.filter((x) => x.status === "skipped-low-risk").length;
   const mean = paid.length ? paid.reduce((s, x) => s + x.cost, 0) / paid.length : 0;
-  return [`Last ${rows.length} tasks (id, cost, tokens in+out, seconds, verify failures, reviews):`, ...lines, `Mean cost per task: $${avg.toFixed(3)}`, `Reviews avoided: ${avoided} (≈ $${(avoided * mean).toFixed(2)} saved)`].join("\n");
+  return [`Last ${rows.length} tasks (id, cost, tokens in+out, seconds, verify failures, reviews):`, ...lines, `Mean cost per task: $${avg.toFixed(3)}`, `Reviews avoided: ${avoided} (≈ $${(avoided * mean).toFixed(2)} saved)`, ...understandingLine(records.slice(-10))].join("\n");
 }
 
 /** The active task's phase, cost and tokens per phase, and the last risk verdict, from the persisted metrics. */
@@ -142,6 +154,10 @@ export function registerTelemetry(pi: ExtensionAPI) {
     return bump(root, (m) => void m.reviews.push({ status, model, seconds, ...(cost !== undefined && { cost }), ...(discarded && { discarded }) }));
   });
   pi.events?.on(ESCALATE_EVENT, (d) => bump((d as EscalatePayload).root, (m) => void m.escalations++));
+  pi.events?.on(UNDERSTANDING_EVENT, (d) => {
+    const { root, outcome, gaps } = d as UnderstandingPayload;
+    return bump(root, (m) => void (m.understanding = { outcome, gaps }));
+  });
 
   pi.registerCommand("cost", {
     description: "Phase, cost and tokens of the active task, and its last risk level",

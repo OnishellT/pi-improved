@@ -95,6 +95,7 @@ Every key the code reads. Setup and `/models` write most of them; the rest you e
 | `computer` | `{ browser?, desktop? }` | off | Set by `/computer` ([docs/COMPUTER.md](docs/COMPUTER.md)). Global file only: a repo cannot choose what the agent drives. |
 | `subagentPanes` | `tern` | tmux only | `tern` opens subagent panes in Tern too. Global file only. |
 | `selfCompact` | `{ default?, models? }` | see Self-compaction | Self-compact thresholds per model. |
+| `understanding` | `off` \| `end` \| `plan+end` | `plan+end` | Inside `/task`: `plan+end` asks for the user's approach to the key decisions before the plan and runs a teach-back after verify; `end` only the teach-back; `off` neither. |
 
 A `limits` value that is not a whole number in range falls back to its default, and `/doctor` reports it.
 
