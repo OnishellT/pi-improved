@@ -111,11 +111,13 @@ export function registerGate(pi: ExtensionAPI) {
     const step = manifest.verify[0];
     const t0 = Date.now();
     const result = await runVerify([step], pi.exec.bind(pi), cwd, PROGRESS_TIMEOUT, validCap(manifest.maxReport));
-    if (infraFailure(result)) return;
     const seconds = (Date.now() - t0) / 1000;
+    const slow = seconds >= PROGRESS_MAX_SECONDS || !!result.results[0].killed;
+    // A slow run that could not run the check (Nix still building) would cost the same time again: it turns the check off too.
+    if (slow) await updateTask(cwd, (t) => void (t.progressOff = true));
+    if (infraFailure(result)) return;
     emitVerify({ root: cwd, kind: "progress", ok: result.ok, seconds });
-    if (seconds >= PROGRESS_MAX_SECONDS || result.results[0].killed) {
-      await updateTask(cwd, (t) => void (t.progressOff = true));
+    if (slow) {
       const took = result.results[0].killed ? `timed out after ${PROGRESS_TIMEOUT / 1000} s` : `took ${Math.round(seconds)} s, over ${PROGRESS_MAX_SECONDS} s`;
       return `Progress check off: \`${step}\` ${took}. Run the tests you are working on yourself; verify runs when you finish.`;
     }
