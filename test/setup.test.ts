@@ -249,7 +249,7 @@ test("setup_finish accepts an empty verify list when no check can run here, runs
   const schema = tools.get("setup_finish").parameters.properties.verify;
   assert.equal(schema.minItems, undefined);
   // A check that fails here only because a service is missing stays out of verify; the summary names it and the service.
-  assert.match(schema.description, /Leave out a check that fails here only because a service it needs is missing, and name that check and service in the setup summary/);
+  assert.match(schema.description, /Leave out a check that fails here only because a service it needs is missing; list it with that service under 'Before finishing' in AGENTS.md/);
   assert.match(schema.description, /\[\] when no check can run here/);
   const { ctx, ui } = ctxFor(root, [true]);
   const result = await tools.get("setup_finish").execute("1", { verify: [], summary: "No check can run here: the tests need Postgres." }, undefined, undefined, ctx);
@@ -339,6 +339,8 @@ test("the startup offer: \"Don't ask again\" declines setup for good, \"Later\" 
 test("setup prompt asks for the before-finishing and /task sections with the verify commands", () => {
   const text = setupPrompt({} as any, { version: 1, setup: "running", verify: ["npm test"], connectors: [], language: "English" }, false);
   assert.match(text, /Before finishing[\s\S]*`npm test`/);
+  // A check left out of verify for a missing service is still recorded in AGENTS.md, so another machine can run it.
+  assert.match(text, /plus any check left out of verify because a service it needs cannot run here, naming that service, so a later session or another machine can run it/);
   assert.match(text, /When to use \/task[\s\S]*migrations/);
 });
 
