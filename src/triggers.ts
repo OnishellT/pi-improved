@@ -159,7 +159,7 @@ export function registerTriggers(pi: ExtensionAPI) {
 
   pi.on("tool_call", async (event: any, ctx: ExtensionContext) => {
     const task = await readTask(ctx.cwd).catch(() => undefined);
-    if (task?.status === "planning" && (event.toolName === "write" || event.toolName === "edit")) return { block: true, reason: "Planning edits nothing. Submit the plan with task_plan; edits start once it is approved." };
+    if (task?.status === "planning" && (event.toolName === "write" || event.toolName === "edit")) return { block: true, reason: "Planning edits nothing. Submit the plan with task_plan; edits start once it is recorded." };
     if (task?.status !== "implementing") return;
     // Headless: the scope and migration gates are off; a new dependency is denied, since nobody can approve it.
     if (!ctx.hasUI) return headlessDependency(event, ctx);
@@ -181,7 +181,7 @@ export function registerTriggers(pi: ExtensionAPI) {
       if (pick === "Allow this file" || pick === "Allow the whole folder") {
         const entry = pick === "Allow this file" ? file : `${path.posix.dirname(file)}/`;
         await updateTask(ctx.cwd, (t) => void t.allowedExtra.push(entry));
-      } else return { block: true, reason: `${file} is outside the approved plan and the user blocked it. Stay within the plan files, or ask the user to extend the plan.` };
+      } else return { block: true, reason: `${file} is outside the plan and the user blocked it. Stay within the plan files, or ask the user to extend the plan.` };
     }
 
     const manifests = names.filter(isManifest);

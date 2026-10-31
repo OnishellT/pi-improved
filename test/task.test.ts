@@ -21,7 +21,7 @@ const plan = (decisions: any[] = [], extra: any = {}) => ({
   ...extra,
 });
 
-/** `fast: false` (default) marks the project as always-review, which keeps the human approval dialog in these tests. */
+/** `fast: false` (default) marks the project as always-review: a risky plan, which still goes straight to implementing. */
 async function setup(done = true, fast = false) {
   const root = await tempProject({ "docs/adr/0001-money.md": "# money\n", "src/money.ts": "export const m = 1;\n" });
   if (done) await updateManifest(root, (m) => void ((m.setup = "done"), !fast && (m.review = { always: true })));
@@ -69,13 +69,13 @@ test("active task: replace asks, cancel keeps it", async () => {
   assert.equal((await readTask(root))!.title, "Second");
 });
 
-test("task_plan with a documented source asks only for approval", async () => {
+test("task_plan with a documented source asks nothing and goes straight to implementing", async () => {
   const { commands, tools, ctxFor, root } = await setup();
   await commands.get("task").handler("Add fee", ctxFor([]).ctx);
-  const { ctx, ui } = ctxFor([true]);
+  const { ctx, ui } = ctxFor([]);
   const decisions = [{ question: "Money type?", options: ["cents", "float"], source: "docs/adr/0001-money.md#types" }];
   await tools.get("task_plan").execute("1", plan(decisions), undefined, undefined, ctx);
-  assert.equal(ui.asked.length, 1);
+  assert.equal(ui.asked.length, 0);
   const task = (await readTask(root))!;
   assert.equal(task.status, "implementing");
   assert.equal(task.plan!.decisions[0].status, "documented");
@@ -84,10 +84,10 @@ test("task_plan with a documented source asks only for approval", async () => {
 test("invalid source is asked and recorded as an ADR", async () => {
   const { commands, tools, ctxFor, root } = await setup();
   await commands.get("task").handler("Add fee", ctxFor([]).ctx);
-  const { ctx, ui } = ctxFor(["✏️  Other answer…", "basis points", true]);
+  const { ctx, ui } = ctxFor(["✏️  Other answer…", "basis points"]);
   const decisions = [{ question: "Fee unit?", options: ["cents", "percent"], source: "docs/missing.md" }];
   const result = await tools.get("task_plan").execute("1", plan(decisions), undefined, undefined, ctx);
-  assert.equal(ui.asked.length, 3);
+  assert.equal(ui.asked.length, 2);
   const d = (await readTask(root))!.plan!.decisions[0];
   // The model is told pi wrote the ADR, so it neither deletes it nor writes its own.
   assert.ok(result.content[0].text.includes(`Fee unit? -> basis points (${d.source})`));
@@ -104,9 +104,9 @@ test("ask_user answers given while planning become decisions with ADRs and are n
   const details = { answers: [{ question: "Rounding?", answer: "half-up" }, { question: "Negative amounts?", answer: "throw" }] };
   const result = await emit("tool_result", { toolName: "ask_user", input, details, content: [{ type: "text", text: "Q: Rounding?" }] }, ctxFor([]).ctx);
   assert.match(result.content.at(-1).text, /already recorded as plan decisions/);
-  const { ctx, ui } = ctxFor([true]);
+  const { ctx, ui } = ctxFor([]);
   await tools.get("task_plan").execute("1", plan([{ question: "Rounding?", options: ["half-up", "banker"] }]), undefined, undefined, ctx);
-  assert.equal(ui.asked.length, 1);
+  assert.equal(ui.asked.length, 0);
   const decisions = (await readTask(root))!.plan!.decisions;
   assert.deepEqual(decisions.map((d) => [d.question, d.answer]), [["Rounding?", "half-up"], ["Negative amounts?", "throw"]]);
   assert.match(await fs.readFile(path.join(root, decisions[1].source!), "utf8"), /throw/);
@@ -120,7 +120,7 @@ test("open ask_user answers while planning are the user's approach, not decision
   await emit("tool_result", { toolName: "ask_user", input, details, content: [] }, ctxFor([]).ctx);
   const open = { questions: [input.questions[0]] };
   assert.equal(await emit("tool_result", { toolName: "ask_user", input: open, details: { answers: [details.answers[0]] }, content: [] }, ctxFor([]).ctx), undefined);
-  await tools.get("task_plan").execute("1", plan(), undefined, undefined, ctxFor([true]).ctx);
+  await tools.get("task_plan").execute("1", plan(), undefined, undefined, ctxFor([]).ctx);
   assert.deepEqual((await readTask(root))!.plan!.decisions.map((d) => d.question), ["Rounding?"]);
 });
 
@@ -142,17 +142,18 @@ test("ask_user answers outside planning are not plan decisions", async () => {
   const result = await emit("tool_result", { toolName: "ask_user", input: { questions: [{ question: "Q?", options: ["a", "b"] }] }, details: { answers: [{ question: "Q?", answer: "a" }] }, content: [] }, ctxFor([]).ctx);
   assert.equal(result, undefined);
   await commands.get("task").handler("Add fee", ctxFor([]).ctx);
-  await tools.get("task_plan").execute("1", plan(), undefined, undefined, ctxFor([true]).ctx);
+  await tools.get("task_plan").execute("1", plan(), undefined, undefined, ctxFor([]).ctx);
   assert.equal((await readTask(root))!.plan!.decisions.length, 0);
 });
 
-test("cancelled question stops; rejection returns feedback and stays planning", async () => {
+test("a cancelled planning question stops the plan, which stays planning", async () => {
   const { commands, tools, ctxFor, root } = await setup();
   await commands.get("task").handler("Add fee", ctxFor([]).ctx);
-  const run = (answers: unknown[], decisions: any[] = []) => tools.get("task_plan").execute("1", plan(decisions), undefined, undefined, ctxFor(answers).ctx);
-  await assert.rejects(run([undefined], [{ question: "Q?", options: ["a", "b"] }]), /not approved/);
-  await assert.rejects(run([false, "Smaller steps"]), /Smaller steps/);
-  assert.equal((await readTask(root))!.status, "planning");
+  const decisions = [{ question: "Q?", options: ["a", "b"] }];
+  await assert.rejects(tools.get("task_plan").execute("1", plan(decisions), undefined, undefined, ctxFor([undefined]).ctx), /cancelled the decision question, so the plan stops here/);
+  const task = (await readTask(root))!;
+  assert.equal(task.status, "planning");
+  assert.equal(task.plan, undefined);
 });
 
 test("a retried plan reuses an answer only while the question's options stay the same", async () => {
@@ -160,16 +161,17 @@ test("a retried plan reuses an answer only while the question's options stay the
   await commands.get("task").handler("Add fee", ctxFor([]).ctx);
   const run = (answers: unknown[], options: string[]) => {
     const c = ctxFor(answers);
-    return { ui: c.ui, done: tools.get("task_plan").execute("1", plan([{ question: "Q?", options }]), undefined, undefined, c.ctx) };
+    const decisions = [{ question: "Q?", options }, { question: "R?", options: ["x", "y"] }];
+    return { ui: c.ui, done: tools.get("task_plan").execute("1", plan(decisions), undefined, undefined, c.ctx) };
   };
-  const first = run(["a", false, "Smaller steps"], ["a", "b"]);
-  await assert.rejects(first.done, /Smaller steps/);
-  const same = run([false, "Again"], ["a", "b"]);
-  await assert.rejects(same.done, /Again/);
-  assert.equal(same.ui.asked.length, 2);
-  const changed = run(["c", true], ["a", "c"]);
+  // The second question is cancelled: the retry asks only that one again.
+  await assert.rejects(run(["a", undefined], ["a", "b"]).done, /cancelled/);
+  const same = run([undefined], ["a", "b"]);
+  await assert.rejects(same.done, /cancelled/);
+  assert.deepEqual(same.ui.asked, ["R?"]);
+  const changed = run(["c", "x"], ["a", "c"]);
   await changed.done;
-  assert.equal(changed.ui.asked.length, 2);
+  assert.deepEqual(changed.ui.asked, ["Q?", "R?"]);
 });
 
 test("task_plan fails without a planning task", async () => {
@@ -223,9 +225,9 @@ test("a plain-text question while implementing is routed to ask_user, except in 
 test("invented interface names ask the user and write an ADR", async () => {
   const { commands, tools, ctxFor, root } = await setup();
   await commands.get("task").handler("Add fee", ctxFor([]).ctx);
-  const { ctx, ui } = ctxFor(["Accept the proposed names", true]);
+  const { ctx, ui } = ctxFor(["Accept the proposed names"]);
   const result = await tools.get("task_plan").execute("1", plan([], { interface: [{ file: "src/fee.ts", exports: ["fee"], signatures: ["fee(n: number): number"], source: "user" }] }), undefined, undefined, ctx);
-  assert.equal(ui.asked.length, 2);
+  assert.equal(ui.asked.length, 1);
   assert.match(result.content[0].text, /write the tests/);
   const d = (await readTask(root))!.plan!.decisions[0];
   assert.equal(d.status, "decided");
@@ -235,17 +237,17 @@ test("invented interface names ask the user and write an ADR", async () => {
 test("interface from ticket or an existing path is accepted silently", async () => {
   const { commands, tools, ctxFor, root } = await setup();
   await commands.get("task").handler("Add fee", ctxFor([]).ctx);
-  const { ctx, ui } = ctxFor([true]);
+  const { ctx, ui } = ctxFor([]);
   const iface = [{ file: "src/fee.ts", exports: ["fee"], usage: "fee(100)", source: "ticket" }, { file: "src/money.ts", exports: ["m"], source: "src/money.ts#m" }];
   await tools.get("task_plan").execute("1", plan([], { interface: iface }), undefined, undefined, ctx);
-  assert.equal(ui.asked.length, 1);
+  assert.equal(ui.asked.length, 0);
   assert.equal((await readTask(root))!.plan!.decisions.length, 0);
 });
 
 test("seam outside files and empty interface with new files are rejected", async () => {
   const { commands, tools, ctxFor } = await setup();
   await commands.get("task").handler("Add fee", ctxFor([]).ctx);
-  const run = (extra: any) => tools.get("task_plan").execute("1", plan([], extra), undefined, undefined, ctxFor([true]).ctx);
+  const run = (extra: any) => tools.get("task_plan").execute("1", plan([], extra), undefined, undefined, ctxFor([]).ctx);
   await assert.rejects(run({ seams: [{ name: "x", testFile: "test/other.test.ts", catches: "y" }] }), /test\/other\.test\.ts/);
   await assert.rejects(run({ interface: [] }), /interface is empty/);
   await run({ interface: [], files: ["src/money.ts"], seams: [{ name: "m", testFile: "src/money.ts", catches: "x" }] });
@@ -258,14 +260,14 @@ test("names labelled 'ticket' but absent from the ticket text are asked; names i
   await commands.get("task").handler("Add fee per docs/spec.md", ctxFor([]).ctx);
   assert.deepEqual((await readTask(root))!.spec, ["docs/spec.md"]);
   // computeTotal is in the spec, fee is in the title: nothing to ask
-  const quiet = ctxFor([true]);
+  const quiet = ctxFor([]);
   await tools.get("task_plan").execute("1", plan([], { interface: [{ file: "src/fee.ts", exports: ["fee", "computeTotal"], source: "ticket" }] }), undefined, undefined, quiet.ctx);
-  assert.equal(quiet.ui.asked.length, 1);
+  assert.equal(quiet.ui.asked.length, 0);
   // parseMicros is nowhere and the new file `micros.ts` is not a ticket noun: the label 'ticket' does not save it
   await commands.get("task").handler("Add fee per docs/spec.md", ctxFor(["Replace it"]).ctx);
-  const loud = ctxFor(["Accept the proposed names", true]);
+  const loud = ctxFor(["Accept the proposed names"]);
   await tools.get("task_plan").execute("1", plan([], { files: ["src/micros.ts", "test/fee.test.ts"], interface: [{ file: "src/micros.ts", exports: ["parseMicros"], source: "ticket" }] }), undefined, undefined, loud.ctx);
-  assert.equal(loud.ui.asked.length, 2);
+  assert.equal(loud.ui.asked.length, 1);
   assert.match(loud.ui.asked[0], /Proposed names[\s\S]*src\/micros\.ts: parseMicros \(not found in ticket: parseMicros, micros\.ts\)/);
   assert.equal((await readTask(root))!.plan!.decisions[0].status, "decided");
 });
@@ -273,7 +275,7 @@ test("names labelled 'ticket' but absent from the ticket text are asked; names i
 test("a cited existing file must contain the names too", async () => {
   const { commands, tools, ctxFor } = await setup();
   await commands.get("task").handler("Add fee", ctxFor([]).ctx);
-  const { ctx, ui } = ctxFor(["Accept the proposed names", true]);
+  const { ctx, ui } = ctxFor(["Accept the proposed names"]);
   await tools.get("task_plan").execute("1", plan([], { interface: [{ file: "src/money.ts", exports: ["m", "formatUsd"], source: "src/money.ts" }] }), undefined, undefined, ctx);
   assert.match(ui.asked[0], /not found in src\/money\.ts: formatUsd/);
 });
@@ -312,22 +314,23 @@ test("plan check: FIX sends the findings back and the retry skips the paid check
   await assert.rejects(tools.get("task_plan").execute("1", plan(), undefined, undefined, ctxFor([]).ctx), /senior review[\s\S]*call it feeRate/);
   assert.deepEqual(spawns, ["gpt-6-astra"]);
   assert.equal(emitted.at(-1).payload.status, "plan-fix");
-  await tools.get("task_plan").execute("1", plan(), undefined, undefined, ctxFor([true]).ctx);
+  await tools.get("task_plan").execute("1", plan(), undefined, undefined, ctxFor([]).ctx);
   assert.equal(spawns.length, 1);
   assert.equal((await readTask(root))!.status, "implementing");
 });
 
-test("plan check: OK proceeds to the approval", async () => {
-  const { tools, spawns, emitted, ctxFor, userNames } = await planCheckSetup();
-  await tools.get("task_plan").execute("1", userNames, undefined, undefined, ctxFor(["Accept the proposed names", true]).ctx);
+test("plan check: OK proceeds to implementing", async () => {
+  const { tools, spawns, emitted, ctxFor, userNames, root } = await planCheckSetup();
+  await tools.get("task_plan").execute("1", userNames, undefined, undefined, ctxFor(["Accept the proposed names"]).ctx);
   assert.equal(spawns.length, 1);
   assert.equal(emitted.at(-1).payload.status, "plan-ok");
+  assert.equal((await readTask(root))!.status, "implementing");
 });
 
 test("plan check: review.plan = false disables it", async () => {
   const { tools, spawns, ctxFor, userNames, root } = await planCheckSetup();
   await updateManifest(root, (m) => void (m.review = { plan: false }));
-  await tools.get("task_plan").execute("1", userNames, undefined, undefined, ctxFor(["Accept the proposed names", true]).ctx);
+  await tools.get("task_plan").execute("1", userNames, undefined, undefined, ctxFor(["Accept the proposed names"]).ctx);
   assert.equal(spawns.length, 0);
 });
 
@@ -339,45 +342,45 @@ test("ticket text from the tracker connector counts as evidence; other MCP resul
   const iface = [{ file: "src/fee.ts", exports: ["computeTotal"], source: "ticket" }];
   await read("mcp__browser__page_text");
   await read("bash");
-  const loud = ctxFor(["Accept the proposed names", true]);
+  const loud = ctxFor(["Accept the proposed names"]);
   await tools.get("task_plan").execute("1", plan([], { interface: iface }), undefined, undefined, loud.ctx);
-  assert.equal(loud.ui.asked.length, 2);
+  assert.equal(loud.ui.asked.length, 1);
   await commands.get("task").handler("PAY-12", ctxFor(["Replace it"]).ctx);
   await read("mcp__jira__get_issue");
-  const quiet = ctxFor([true]);
+  const quiet = ctxFor([]);
   await tools.get("task_plan").execute("1", plan([], { interface: iface }), undefined, undefined, quiet.ctx);
-  assert.equal(quiet.ui.asked.length, 1);
+  assert.equal(quiet.ui.asked.length, 0);
 });
 
 test("a tracker result read after planning ended is not evidence for the next task", async () => {
   const { commands, tools, ctxFor, emit, root } = await setup();
   await updateManifest(root, (m) => void (m.connectors = [{ id: "jira" }]));
   await commands.get("task").handler("PAY-12", ctxFor([]).ctx);
-  await tools.get("task_plan").execute("1", plan([], { interface: [{ file: "src/money.ts", exports: ["m"], source: "src/money.ts" }] }), undefined, undefined, ctxFor([true]).ctx);
+  await tools.get("task_plan").execute("1", plan([], { interface: [{ file: "src/money.ts", exports: ["m"], source: "src/money.ts" }] }), undefined, undefined, ctxFor([]).ctx);
   await emit("tool_result", { toolName: "mcp__jira__get_issue", content: "Add `computeTotal` to src/fee.ts" }, { cwd: root });
   await commands.get("task").handler("PAY-12", ctxFor(["Replace it"]).ctx);
-  const { ctx, ui } = ctxFor(["Accept the proposed names", true]);
+  const { ctx, ui } = ctxFor(["Accept the proposed names"]);
   await tools.get("task_plan").execute("1", plan([], { interface: [{ file: "src/fee.ts", exports: ["computeTotal"], source: "ticket" }] }), undefined, undefined, ctx);
-  assert.equal(ui.asked.length, 2);
+  assert.equal(ui.asked.length, 1);
 });
 
 test("a decision whose source exists but is about something else is still asked", async () => {
   const { commands, tools, ctxFor, root } = await setup();
   await commands.get("task").handler("Add fee", ctxFor([]).ctx);
-  const { ctx, ui } = ctxFor(["cents", true]);
+  const { ctx, ui } = ctxFor(["cents"]);
   const decisions = [{ question: "Fee unit?", options: ["cents", "percent"], source: "docs/adr/0001-money.md" }];
   await tools.get("task_plan").execute("1", plan(decisions), undefined, undefined, ctx);
-  assert.equal(ui.asked.length, 2);
+  assert.equal(ui.asked.length, 1);
   assert.equal((await readTask(root))!.plan!.decisions[0].status, "decided");
 });
 
 test("a decision source outside the project is never read", async () => {
   const { commands, tools, ctxFor } = await setup();
   await commands.get("task").handler("Add fee", ctxFor([]).ctx);
-  const { ctx, ui } = ctxFor(["cents", true]);
+  const { ctx, ui } = ctxFor(["cents"]);
   const decisions = [{ question: "Money type?", options: ["cents", "float"], source: "../../../../etc/hosts" }];
   await tools.get("task_plan").execute("1", plan(decisions), undefined, undefined, ctx);
-  assert.equal(ui.asked.length, 2);
+  assert.equal(ui.asked.length, 1);
 });
 
 test("specFiles keeps existing in-repo files once, ignoring trailing punctuation and files outside the repo", async () => {
@@ -391,9 +394,9 @@ test("ticket text from the tracker is evidence for names labelled 'ticket'", asy
   await commands.get("task").handler("PAY-12", ctxFor([]).ctx);
   assert.equal((await readTask(root))!.ticket, "PAY-12");
   await emit("tool_result", { toolName: "mcp__jira__get_issue", content: "Add `computeTotal` to src/fee.ts" }, { cwd: root });
-  const { ctx, ui } = ctxFor([true]);
+  const { ctx, ui } = ctxFor([]);
   await tools.get("task_plan").execute("1", plan([], { interface: [{ file: "src/fee.ts", exports: ["computeTotal"], source: "ticket" }] }), undefined, undefined, ctx);
-  assert.equal(ui.asked.length, 1);
+  assert.equal(ui.asked.length, 0);
 });
 
 test("/task cancel says so when there is no task; 'Continue it' on an implementing task tells the user", async () => {
@@ -407,7 +410,7 @@ test("/task cancel says so when there is no task; 'Continue it' on an implementi
   };
   assert.match((await say("cancel"))[0], /No active task/);
   await commands.get("task").handler("Add fee", ctxFor([]).ctx);
-  await tools.get("task_plan").execute("1", plan(), undefined, undefined, ctxFor([true]).ctx);
+  await tools.get("task_plan").execute("1", plan(), undefined, undefined, ctxFor([]).ctx);
   assert.match((await say("Add fee", ["Continue it"]))[0], /already implementing/);
   assert.match((await say("cancel"))[0], /Task cancelled/);
   assert.equal(await readTask(root), undefined);
@@ -425,36 +428,53 @@ test("plan check is off by default and follows review.plan, review.always and ri
   assert.equal(on({ always: true, never: true, plan: false }), true);
 });
 
-test("approving the plan stores the HEAD commit as baseCommit", async () => {
+test("recording the plan stores the HEAD commit as baseCommit", async () => {
   const hash = "a".repeat(40);
   const h = fakePi((cmd, args) => (cmd === "git" && args[0] === "rev-parse" ? { code: 0, stdout: `${hash}\n` } : { code: 0 }));
   registerTask(h.pi);
   const root = await tempProject({ "src/money.ts": "export const m = 1;\n" });
   await updateManifest(root, (m) => void (m.setup = "done"));
-  const ui = fakeUI(["Accept the proposed names", true]);
+  const ui = fakeUI(["Accept the proposed names"]);
   const ctx = { cwd: root, hasUI: true, ui, waitForIdle: async () => {} } as any;
   await h.commands.get("task").handler("Add fee", ctx);
   await h.tools.get("task_plan").execute("1", { ...plan(), interface: [{ file: "src/fee.ts", exports: ["fee"], source: "user" }] }, undefined, undefined, ctx);
   assert.equal((await readTask(root))!.baseCommit, hash);
 });
 
-test("fast path: a small plan with no risk trigger skips the approval dialog but still runs the gates", async () => {
-  const { commands, tools, ctxFor, root } = await setup(true, true);
+test("small and risky plans both go straight to implementing with one short notice, never the whole plan", async () => {
+  for (const [fast, line] of [[true, "Plan recorded: 1 step, 2 files. Implementing."], [false, "Plan recorded: 1 step, 2 files. Implementing. Risk: review.always."]] as const) {
+    const { commands, tools, ctxFor, root } = await setup(true, fast);
+    await commands.get("task").handler("Add fee", ctxFor([]).ctx);
+    const { ui, ctx } = ctxFor([]);
+    const notes: string[] = [];
+    ctx.ui.notify = (m: string) => void notes.push(m);
+    let confirms = 0;
+    ctx.ui.confirm = async () => (confirms++, true);
+    const result = await tools.get("task_plan").execute("1", plan(), undefined, undefined, ctx);
+    assert.equal(confirms, 0);
+    assert.deepEqual(ui.asked, []);
+    assert.deepEqual(notes, [line]);
+    const task = (await readTask(root))!;
+    assert.equal(task.status, "implementing");
+    assert.ok(!notes.some((n) => n.includes(planText(task.plan!)) || /Steps:|Intent:/.test(n)));
+    assert.match(result.content[0].text, /^Plan recorded\./);
+    assert.doesNotMatch(result.content[0].text, /approved/);
+  }
+});
+
+test("a small plan still runs the gates", async () => {
+  const { commands, tools, ctxFor } = await setup(true, true);
   await commands.get("task").handler("Add fee", ctxFor([]).ctx);
-  const { ui, ctx } = ctxFor([]);
-  const result = await tools.get("task_plan").execute("1", plan(), undefined, undefined, ctx);
-  assert.equal(ui.asked.length, 0);
-  assert.equal((await readTask(root))?.status, "implementing");
-  assert.match(result.content[0].text, /Plan approved/);
+  const result = await tools.get("task_plan").execute("1", plan(), undefined, undefined, ctxFor([]).ctx);
   assert.match(result.content[0].text, /Do not change existing tests or the verify configuration/);
   assert.match(result.content[0].text, /## Skill: principles-implement/);
   assert.doesNotMatch(result.content[0].text, /## Skill: tdd/);
   const bad = plan([], { interface: [{ file: "src/fee.ts", exports: ["computeTotal"], source: "ticket" }] });
   await commands.get("task").handler("Add fee", ctxFor(["Replace it"]).ctx);
-  await assert.rejects(tools.get("task_plan").execute("1", bad, undefined, undefined, ctxFor([undefined]).ctx), /not approved/);
+  await assert.rejects(tools.get("task_plan").execute("1", bad, undefined, undefined, ctxFor([undefined]).ctx), /plan stops here/);
 });
 
-test("fast path is closed by size and by risk triggers", async () => {
+test("a plan is risky by size and by risk triggers", async () => {
   const { planRiskReasons } = await import("../src/risk.ts");
   const m: any = { review: {} };
   const base = { files: ["src/a.ts", "test/a.test.ts"], interface: [], decisions: [] };
@@ -474,29 +494,24 @@ test("a plan without an intent is refused before anything is asked", async () =>
   const { commands, tools, ctxFor, root } = await setup();
   await commands.get("task").handler("Add fee", ctxFor([]).ctx);
   for (const intent of ["", "   ", undefined]) {
-    const { ctx, ui } = ctxFor([true]);
+    const { ctx, ui } = ctxFor([]);
     await assert.rejects(tools.get("task_plan").execute("1", plan([], { intent }), undefined, undefined, ctx), /no intent/);
     assert.equal(ui.asked.length, 0);
   }
   assert.equal((await readTask(root))?.status, "planning");
 });
 
-test("the approval dialog shows the intent and each usage line, and the saved plan keeps them", async () => {
+test("the saved plan keeps the intent and each usage line for the commands that show it", async () => {
   const { commands, tools, ctxFor, root } = await setup();
   await commands.get("task").handler("Add fee", ctxFor([]).ctx);
-  const { ctx, ui } = ctxFor([true]);
-  const bodies: string[] = [];
-  const confirm = ui.confirm;
-  ui.confirm = ((title: string, body: string) => (bodies.push(body), confirm(title))) as any;
-  await tools.get("task_plan").execute("1", plan(), undefined, undefined, ctx);
-  assert.match(bodies[0], /Intent: Charge a fee on each payment[\s\S]*src\/fee\.ts: fee[\s\S]*usage: fee\(100\)/);
+  await tools.get("task_plan").execute("1", plan(), undefined, undefined, ctxFor([]).ctx);
   const saved = (await readTask(root))!.plan!;
   assert.equal(saved.intent, "Charge a fee on each payment");
   assert.equal(saved.interface[0].usage, "fee(100)");
   assert.match(planText(saved), /^Intent: Charge a fee/);
 });
 
-test("approving the plan runs no verify command, and the agent hears to keep implementing when tests cannot run here", async () => {
+test("recording the plan runs no verify command, and the agent hears to keep implementing when tests cannot run here", async () => {
   const runs: string[] = [];
   const h = fakePi(() => ({ code: 1, stdout: "FAIL old test 12" }));
   const base = h.pi.exec;
@@ -507,7 +522,7 @@ test("approving the plan runs no verify command, and the agent hears to keep imp
   const root = await tempProject({ "src/money.ts": "export const m = 1;\n" });
   await updateManifest(root, (m) => void ((m.setup = "done"), (m.review = { always: true }), (m.verify = ["fast check", "slow check"])));
   await h.commands.get("task").handler("Add fee", fakeCtx(root, []).ctx);
-  const result = await h.tools.get("task_plan").execute("1", plan(), undefined, undefined, fakeCtx(root, ["Accept the proposed names", true]).ctx);
+  const result = await h.tools.get("task_plan").execute("1", plan(), undefined, undefined, fakeCtx(root, ["Accept the proposed names"]).ctx);
   assert.deepEqual(runs, []);
   assert.equal(emitted.find((e) => e.name === VERIFY_EVENT), undefined);
   assert.equal((await readTask(root))!.status, "implementing");
@@ -644,7 +659,7 @@ test("without a UI, /task with a task already open says how to end it instead of
 test("plan check: one that did not run does not use up the budget", async () => {
   const { tools, verdicts, spawns, ctxFor, root } = await planCheckSetup();
   verdicts.push("no verdict here");
-  await tools.get("task_plan").execute("1", plan(), undefined, undefined, ctxFor([true]).ctx);
+  await tools.get("task_plan").execute("1", plan(), undefined, undefined, ctxFor([]).ctx);
   assert.equal(spawns.length, 1);
   assert.equal((await readTask(root))!.planChecks ?? 0, 0);
 });

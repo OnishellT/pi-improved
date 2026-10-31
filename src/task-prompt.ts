@@ -50,7 +50,7 @@ export function taskPrompt(title: string, ticket: string | undefined, tracker: s
     ...(related.length ? ["Similar past tasks:", ...related.map((r) => `- ${r}`), ""] : []),
     ...steps.map((s, i) => `${i + 1}. ${s}`),
     "",
-    "decisions: only real choices the code and docs leave open; if an ADR, doc or skill settles one, set source to its path (path#section allowed). 2-4 options, recommended first. Once the plan is approved, pi records each answered decision as an ADR in docs/adr/; you never write those.",
+    "decisions: only real choices the code and docs leave open; if an ADR, doc or skill settles one, set source to its path (path#section allowed). 2-4 options, recommended first. Once the plan is recorded, pi writes each answered decision as an ADR in docs/adr/; you never write those.",
     "intent: the ticket restated in your own words, one short paragraph. If you cannot, you have not understood it yet.",
     "interface: file and export names (and signatures) the tests import, a usage line for callables (the call a test would make, in the ticket's words) and a source ('ticket', or a doc/GLOSSARY.md/code path). Code checks every name appears literally in that source; otherwise it counts as invented and the user is asked. Names nobody gave: source 'user', never invent silently.",
     "Name new files like their siblings, after the ticket's noun; one module per noun. Copy argument shapes from the ticket or existing callers. Reuse existing helpers.",
