@@ -5,7 +5,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { ESCALATE_EVENT, REVIEW_EVENT, TASK_DONE_EVENT, VERIFY_EVENT, type EscalatePayload, type ReviewPayload, type TaskDonePayload, type VerifyPayload } from "./events.ts";
 import { checkContract, formatContract } from "./contract.ts";
 import { limitsOf } from "./config.ts";
-import { git } from "./git.ts";
+import { diffBase, fileChanges, git, type FileChange } from "./git.ts";
 import { recordUnderstanding } from "./telemetry.ts";
 import { readManifest, understandingOf, type Manifest } from "./manifest.ts";
 import { restoreModel, switchModel } from "./models.ts";
@@ -28,6 +28,12 @@ const TOUCHED_SHOWN = 10;
 /** The dialog lists what could have turned verify green or slipped past it, so the person sees it before accepting. */
 const listNote = (title: string, items: string[] = []) =>
   items.length ? `\n\n${title}:\n${items.slice(0, TOUCHED_SHOWN).map((f) => `- ${f}`).join("\n")}${items.length > TOUCHED_SHOWN ? `\n- and ${items.length - TOUCHED_SHOWN} more` : ""}` : "";
+const FILES_SHOWN = 30;
+/** One line per file: a name with a newline or another control character is quoted, so it cannot split the line. */
+const fileRow = (c: FileChange) => `- ${/[\u0000-\u001f\u007f]/.test(c.file) ? JSON.stringify(c.file) : c.file} (${c.status}${c.added !== undefined ? `, +${c.added} -${c.removed}` : c.binary ? ", binary" : ""})`;
+/** The done dialog lists every file the task wrote, so the person knows what to open before confirming. */
+const filesNote = (changes: FileChange[]) =>
+  changes.length ? `\n\nFiles changed (${changes.length}):\n${changes.slice(0, FILES_SHOWN).map(fileRow).join("\n")}${changes.length > FILES_SHOWN ? `\n…and ${changes.length - FILES_SHOWN} more` : ""}` : "";
 const dialogNotes = (risk?: { touched?: string[]; flagged?: string[] }) => `${listNote("Tests and verify setup changed (check before accepting)", risk?.touched)}${listNote("Quality check (look before accepting)", risk?.flagged)}`;
 /** Added to the escalation prompt when the same failure came back: the fixes so far share a wrong assumption. */
 const PREMISE = [
@@ -325,7 +331,9 @@ export function registerGate(pi: ExtensionAPI) {
     if (checking && !ctx.hasUI) return void ctx.ui.notify("The code changed during the understanding check and nobody can confirm it here. /task done closes the task.", "info");
     // Headless, a pass is the answer; with no verify steps nothing passed, so only a person can call it done.
     const title = unverified ? "No verify steps: nothing checked this change" : "Verification OK";
-    const done = ctx.hasUI ? await ctx.ui.confirm(title, `Is the task "${oneLine(task.title, 80)}" done?${dialogNotes(risk)}`) : !unverified;
+    const exec = pi.exec.bind(pi);
+    const changes = ctx.hasUI ? await fileChanges(exec, ctx.cwd, await diffBase(exec, ctx.cwd, task)) : [];
+    const done = ctx.hasUI ? await ctx.ui.confirm(title, `Is the task "${oneLine(task.title, 80)}" done?${filesNote(changes)}${dialogNotes(risk)}`) : !unverified;
     if (!done) {
       ctx.ui.notify(`The task stays open${ctx.hasUI ? "" : ": no verify steps checked it"}. /task done closes it.`, "info");
       return;

@@ -160,6 +160,25 @@ test("the completion dialog lists the pre-existing tests and verify files the ta
   assert.doesNotMatch(clean.ui.messages[0], /Tests and verify/);
 });
 
+test("the done dialog lists the changed files first, one sorted line each, capped with how many more", async () => {
+  const status = Array.from({ length: 33 }, (_, i) => `M\0src/f${String(i).padStart(2, "0")}.ts\0`).reverse().join("");
+  const t = await setup({ pass: true, task: true, answers: [true], status });
+  await t.run();
+  await t.settle();
+  const [question, list] = t.ui.messages[0].split("\n\n");
+  assert.equal(question, 'Is the task "Do it" done?');
+  const rows = list.split("\n");
+  assert.equal(rows[0], "Files changed (33):");
+  assert.deepEqual(rows.slice(1, 3), ["- src/f00.ts (modified)", "- src/f01.ts (modified)"]);
+  assert.equal(rows.length, 1 + 30 + 1);
+  assert.equal(rows.at(-1), "…and 3 more");
+  // A name with a newline is quoted, so it stays on its one line.
+  const odd = await setup({ pass: true, task: true, answers: [true], status: "A\0odd\nname.ts\0" });
+  await odd.run();
+  await odd.settle();
+  assert.match(odd.ui.messages[0], /\nFiles changed \(1\):\n- "odd\\nname\.ts" \(added\)$/);
+});
+
 test("a Nix build that fails is an infrastructure failure too: the user hears Nix's message, no retry, no escalation, nothing for the model", async () => {
   const msg = "Nix could not build bash: Could not resolve host. Check your network and disk space, then run /doctor.";
   const t = await setup({ nix: msg, answers: ["Stop here: I will fix it and finish again"] });
