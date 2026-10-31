@@ -32,6 +32,10 @@ export default function (pi: ExtensionAPI) {
   let config = resolveConfig(); // flags and config files apply at session_start
   let notifiedError: string | undefined;
   let forceFailed = false; // set when a forced compaction errors; cleared once usage leaves the force tier
+  // Scheduled compactions that failed in a row. At MAX_FAILURES pi stops scheduling them, until a compaction succeeds.
+  let failures = 0;
+  const MAX_FAILURES = 2;
+  const compactionOff = () => failures >= MAX_FAILURES;
   let lastTier = "below";
   let compacting = false;
   let activeContextWindow: number | undefined;
@@ -43,10 +47,12 @@ export default function (pi: ExtensionAPI) {
     return { ...usage, contextWindow, effectiveWindow: contextWindow - config.buffer };
   };
 
+  // A project's config file could put terminal escapes in a rejected value, which the error repeats.
+  const clean = (text: string) => text.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ");
+
   /** Shows an error in the UI, or on stderr when there is none (`pi -p`). */
   const report = (ctx: ExtensionContext, text: string) => {
-    // A project's config file could put terminal escapes in a rejected value, which the error repeats.
-    const safe = text.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ");
+    const safe = clean(text);
     if (ctx.hasUI) ctx.ui.notify(safe, "error");
     else console.error(`[self-compact] ${safe}`);
   };
@@ -122,15 +128,25 @@ export default function (pi: ExtensionAPI) {
     });
   };
 
-  /** Compacts with the note. Resolves true once pi has compacted, false when it failed or another compaction is running. */
-  const compact = (ctx: ExtensionContext, note?: string) => new Promise<boolean>((resolve) => {
-    if (compacting) return resolve(false);
+  // pi tells session_compact_failed whether a compaction was cancelled (Escape) before it calls onError.
+  let compactionAborted = false;
+  pi.on("session_compact_failed", (event) => {
+    if (compacting) compactionAborted = event.aborted;
+  });
+
+  /**
+   * Compacts with the note. Resolves "done" once pi has compacted, "busy" when another compaction is running,
+   * "aborted" when it was cancelled, or the error.
+   */
+  const compact = (ctx: ExtensionContext, note?: string) => new Promise<"done" | "busy" | "aborted" | { error: string }>((resolve) => {
+    if (compacting) return resolve("busy");
     compacting = true;
+    compactionAborted = false;
     ctx.compact({
       customInstructions: [config.prompt, note ? `Agent handoff note:\n${note}` : ""].filter(Boolean).join("\n\n"),
       onComplete: () => {
         compacting = false;
-        resolve(true);
+        resolve("done");
       },
       onError: (error) => {
         compacting = false;
@@ -139,7 +155,7 @@ export default function (pi: ExtensionAPI) {
         try {
           report(ctx, `Self-compaction failed: ${error.message}`);
         } catch {}
-        resolve(false);
+        resolve(compactionAborted ? "aborted" : { error: error.message });
       },
     });
   });
@@ -147,7 +163,8 @@ export default function (pi: ExtensionAPI) {
   // pi's ctx.compact() aborts the current run first, so a compaction the agent asks for waits until its run is over:
   // self_compact and the force threshold only schedule it, and the tool calls after that end the run (`terminate`).
   // `done` is set when pi compacted on its own (its auto-compaction) in the meantime, without the note.
-  // `resume` is set when the agent asked for it or a call of its was blocked: then pi sends it a message to go on.
+  // `resume` is set when the agent asked for it or a call of its was blocked: then pi sends it a message to go on, also
+  // when the compaction fails.
   // `followUp` is added to the resume message (setup's nudge, when setup is not finished).
   let pending: { note?: string; done?: boolean; resume: boolean; followUp?: string } | undefined;
   // Other modules (setup's nudge) must not continue a run that ends for a compaction, nor call it stopped.
@@ -190,6 +207,7 @@ export default function (pi: ExtensionAPI) {
     execute: async (_id, { note }) => {
       const text = (value: string) => [{ type: "text" as const, text: value }];
       if (compacting) return { content: text("Compaction is already in progress."), details: undefined };
+      if (compactionOff()) return { content: text("Not compacting: the last attempts failed. Continue with the next action."), details: undefined };
       if (justCompacted) return { content: text("The context was just compacted. Continue with the next action."), details: undefined };
       schedule({ ...pending, note: note ?? pending?.note, done: undefined, resume: true });
       return { content: text("Compaction scheduled. Pi compacts when this turn ends and then continues."), details: undefined, terminate: true };
@@ -198,17 +216,33 @@ export default function (pi: ExtensionAPI) {
 
   // agent_settled, not agent_end: pi has cleared the run here, so ctx.compact()'s abort has nothing to stop and its wait
   // for idle returns at once. pi awaits this handler, so `pi -p` does not exit before the compaction and the resumed run.
-  // On Escape (aborted) the scheduled compaction is dropped. A resume sent from here starts once the handlers are done.
+  // On Escape, before or during the compaction, it is dropped, with no resume. A resume sent from here starts once the
+  // handlers are done.
   pi.on("agent_settled", async (event, ctx) => {
     const request = pending;
     pending = undefined;
     if (!request) return;
-    const resumed = !event.aborted && (request.done || (await compact(ctx, request.note))) && request.resume;
-    if (resumed) {
-      const content = request.done && request.note
+    const outcome = event.aborted ? "aborted" : request.done ? "done" : await compact(ctx, request.note);
+    let content: string | undefined;
+    if (outcome === "done") {
+      failures = 0;
+      content = request.done && request.note
         ? `Pi compacted the context. Continue with the next action from your handoff note:\n${request.note}`
         : `Compaction done. Continue with the next action from the ${request.note ? "handoff note" : "summary"}.`;
-      pi.sendMessage({ customType: "self_compact_resume", content: [content, request.followUp].filter(Boolean).join("\n\n"), display: true }, { triggerTurn: true });
+    } else if (typeof outcome === "object") {
+      // The context is as it was, so the agent goes on. Failing again would only loop, so then pi stops compacting.
+      const error = clean(outcome.error).trim().replace(/\.+$/, "");
+      content = ++failures < MAX_FAILURES
+        ? `Compaction failed: ${error}. Continue with the next action; do not call self_compact again until the context grows.`
+        : `Compaction failed again: ${error}. Pi stops compacting until a compaction succeeds. Continue with the next action.`;
+    }
+    let resumed = request.resume && content !== undefined;
+    if (resumed) {
+      try {
+        pi.sendMessage({ customType: "self_compact_resume", content: [content, request.followUp].filter(Boolean).join("\n\n"), display: true }, { triggerTurn: true });
+      } catch {
+        resumed = false; // the session was replaced during the compaction, and its agent is gone
+      }
     }
     announce(false, resumed);
   });
@@ -231,7 +265,7 @@ export default function (pi: ExtensionAPI) {
     checkAfterCompaction(ctx, usage.tokens!, usage.effectiveWindow, state);
     if (state !== "force") forceFailed = false;
     if (state === "force") {
-      if (forceFailed) return;
+      if (forceFailed || compactionOff()) return;
       // No tool results: the agent gave its answer and the run ends here, so pi compacts after it, with no resume, like
       // pi's own threshold compaction. Otherwise the run goes on with the next response, which can call self_compact.
       const answered = event.toolResults.length === 0;
@@ -274,7 +308,7 @@ export default function (pi: ExtensionAPI) {
     if (!usage || compacting || checkThresholds(config, usage.effectiveWindow)) return;
     const state = thresholdState(usage.tokens!, usage.effectiveWindow, config);
     checkAfterCompaction(ctx, usage.tokens!, usage.effectiveWindow, state);
-    if (state !== "force" || forceFailed) return;
+    if (state !== "force" || forceFailed || compactionOff()) return;
     // No `terminate` on the first blocked call: the model gets one turn to call self_compact with a note. Later calls end the run.
     scheduleForce(true);
     return { block: true, reason: `Context is at the force threshold, so this call did not run: ${forceSteer}` };
@@ -311,6 +345,7 @@ export default function (pi: ExtensionAPI) {
     await configureForModel(event.model.provider, event.model.id, ctx);
     lastTier = "below";
     forceFailed = false;
+    failures = 0;
     installFooter(ctx);
   });
   pi.on("session_start", async (_event, ctx) => {
@@ -324,6 +359,7 @@ export default function (pi: ExtensionAPI) {
     lastTier = "below";
     compacting = false;
     forceFailed = false;
+    failures = 0;
     justCompacted = true;
     measureAfterCompaction = true;
     // Our own compaction runs after `pending` was taken, so this is pi's auto-compaction doing the scheduled one.

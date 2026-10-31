@@ -94,22 +94,71 @@ test("self_compact ends the turn, compacts with its note once the run is over, t
   assert.equal(s.compactions.length, 1, "a later run compacts nothing more");
 });
 
-test("a failed compaction is reported and the agent is not resumed", async () => {
+test("a failed compaction is reported, and the agent resumes with the error in the message", async () => {
   const s = await session();
   await s.selfCompactTool("note");
   const settling = s.settle();
   await tick();
-  s.compactions[0].options.onError(new Error("provider down"));
+  s.compactions[0].options.onError(new Error("Nothing to compact (session too small)\u001b[2J"));
   await settling;
-  assert.deepEqual(s.errors, ["Self-compaction failed: provider down"]);
-  assert.deepEqual(s.resumes, []);
+  assert.deepEqual(s.errors, ["Self-compaction failed: Nothing to compact (session too small) [2J"]);
+  assert.deepEqual(s.resumes, [{
+    message: {
+      customType: "self_compact_resume",
+      content: "Compaction failed: Nothing to compact (session too small) [2J. Continue with the next action; do not call self_compact again until the context grows.",
+      display: true,
+    },
+    options: { triggerTurn: true },
+  }]);
 });
 
-test("Escape drops the scheduled compaction", async () => {
+test("a second failure in a row resumes and turns compaction off until one succeeds", async () => {
+  const s = await session();
+  await s.call(91_000);
+  let settling = s.settle();
+  await tick();
+  s.compactions[0].options.onError(new Error("provider down."));
+  await settling;
+  assert.match(s.resumes[0].message.content, /^Compaction failed: provider down\. Continue with the next action/);
+
+  assert.equal(await s.call(92_000), undefined, "a failed forced compaction is not forced again");
+  assert.equal((await s.selfCompactTool("again")).terminate, true, "one failure does not stop self_compact");
+  settling = s.settle();
+  await tick();
+  s.compactions[1].options.onError(new Error("provider down"));
+  await settling;
+  assert.equal(s.resumes.length, 2);
+  assert.equal(s.resumes[1].message.content, "Compaction failed again: provider down. Pi stops compacting until a compaction succeeds. Continue with the next action.");
+
+  const off = await s.selfCompactTool("third");
+  assert.equal(off.terminate, undefined, "the run goes on");
+  assert.equal(off.content[0].text, "Not compacting: the last attempts failed. Continue with the next action.");
+  await s.at(50_000);
+  assert.equal(await s.call(91_000), undefined, "nothing is forced either, even after usage left the force tier");
+  assert.equal(await s.at(91_000, 1), undefined);
+  await s.settle();
+  assert.equal(s.compactions.length, 2);
+
+  s.h.commands.get("self-compact-now").handler("", s.ctx);
+  s.compactions[2].options.onComplete({});
+  await s.h.emit("session_compact", {}, s.ctx);
+  await s.call(20_000);
+  assert.equal((await s.selfCompactTool("later")).terminate, true, "a compaction that succeeds turns it back on");
+});
+
+test("Escape drops the scheduled compaction, before or during it, with no resume", async () => {
   const s = await session();
   await s.selfCompactTool("note");
   await s.settle(true);
   assert.equal(s.compactions.length, 0);
+  assert.deepEqual(s.resumes, []);
+
+  await s.selfCompactTool("note");
+  const settling = s.settle();
+  await tick();
+  await s.h.emit("session_compact_failed", { reason: "manual", aborted: true, willRetry: false, fromExtension: false }, s.ctx);
+  s.compactions[0].options.onError(new Error("Compaction cancelled"));
+  await settling;
   assert.deepEqual(s.resumes, []);
 });
 
@@ -189,6 +238,7 @@ test("a failed forced compaction is not forced again until usage leaves the forc
   s.compactions[0].options.onError(new Error("provider down"));
   await settling;
   assert.deepEqual(s.errors, ["Self-compaction failed: provider down"]);
+  assert.deepEqual(s.resumes, [], "the agent had given its answer");
   assert.equal(await s.at(92_000), undefined);
   assert.equal(await s.call(92_000), undefined, "tools are not blocked either");
   await s.settle();
@@ -287,16 +337,18 @@ test("during setup, an answer at the force threshold is compacted and then nudge
   assert.deepEqual(s.warnings, []);
 });
 
-test("during setup, a failed scheduled compaction still says setup stopped", async () => {
+test("during setup, a failed compaction at the answer resumes with the nudge, and setup is not called stopped", async () => {
   const s = await session({ setupRunning: true });
-  await s.selfCompactTool("next: step 4");
+  assert.equal(await s.at(91_000), undefined);
+  assert.equal(await s.h.emit("agent_before_settle", { outcome: "completed" }, s.ctx), undefined);
   const settling = s.settle();
   await tick();
   s.compactions[0].options.onError(new Error("provider down"));
   await settling;
-  await until(() => s.warnings.length > 0);
-  assert.match(s.warnings[0], /Setup stopped before finishing/);
-  assert.deepEqual(s.resumes, []);
+  assert.equal(s.resumes.length, 1);
+  assert.match(s.resumes[0].message.content, /^Compaction failed: provider down\. Continue with the next action; do not call self_compact again until the context grows\.\n\nSetup is not finished/);
+  await new Promise((resolve) => setTimeout(resolve, 50));
+  assert.deepEqual(s.warnings, []);
 });
 
 test("a buffer (\"1k\") that leaves no window turns enforcement off with one error", async () => {
