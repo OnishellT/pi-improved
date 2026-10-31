@@ -5,7 +5,7 @@ import { test } from "node:test";
 import { buildBrief, parseVerdict, reviewDiff, subagentCost } from "../src/review.ts";
 import { ownRuns } from "../src/subagent-view.ts";
 import type { Task } from "../src/task-state.ts";
-import { fakeSubagentExec, isSubagent, ok, tempDir, withEnv } from "./helpers.ts";
+import { fakeSubagentExec, fifo, isSubagent, ok, tempDir, withEnv } from "./helpers.ts";
 
 const task: Task = {
   id: "t1",
@@ -168,6 +168,19 @@ test("an untracked file over the budget is skipped without being read; small one
   await reviewDiff(exec, root, task, "p/m");
   assert.match(f.brief(), /- big\.bin \(read it directly\)/);
   assert.match(f.brief(), /### small\.ts\n```\nexport const a = 1;/);
+});
+
+test("a new link or FIFO is listed but never read into the brief", { timeout: 10_000 }, async (t) => {
+  const root = await tempDir("pi-review-");
+  await fs.writeFile(path.join(root, "secret.txt"), "token = 1");
+  fifo(t, path.join(root, "pipe"));
+  await fs.symlink("pipe", path.join(root, "to-pipe"));
+  await fs.symlink("secret.txt", path.join(root, "to-secret"));
+  const f = fakeExec({ wait: ok("VERDICT: APPROVED") });
+  const exec: any = (cmd: string, args: string[], o: any) => (cmd === "git" && args[0] === "ls-files" ? Promise.resolve(ok("pipe\0to-pipe\0to-secret\0")) : f.exec(cmd, args, o));
+  await reviewDiff(exec, root, task, "p/m");
+  for (const file of ["pipe", "to-pipe", "to-secret"]) assert.match(f.brief(), new RegExp(`- ${file} \\(read it directly\\)`));
+  assert.doesNotMatch(f.brief(), /token = 1/);
 });
 
 test("the review brief carries the plan's intent when there is one, and nothing when an old plan has none", () => {

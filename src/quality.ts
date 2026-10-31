@@ -1,6 +1,5 @@
-import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { git, untrackedFiles, type Exec } from "./git.ts";
+import { git, readRegular, untrackedFiles, type Exec } from "./git.ts";
 import type { Task } from "./task-state.ts";
 
 // Code-quality rules that a diff can show. Each one is a fact collector (the diff and the task) and a pure decision over those facts, so every combination can be tested.
@@ -53,9 +52,9 @@ export async function collectDiffs(exec: Exec, root: string, ref: string): Promi
   const text = await git(exec, root, ["-c", "core.quotepath=off", "diff", ref, "-U0", "--no-renames", "--", ".", ":(exclude).pi"]);
   const diffs = parseDiff(text ?? "");
   for (const file of await untrackedFiles(exec, root)) {
-    const stat = await fs.stat(path.join(root, file)).catch(() => undefined);
-    if (!stat?.isFile() || stat.size > 200_000) continue;
-    const body = await fs.readFile(path.join(root, file), "utf8").catch(() => "");
+    const read = await readRegular(path.join(root, file), 200_000);
+    if (!read?.whole) continue;
+    const body = read.bytes.toString("utf8");
     if (body && !body.includes("\0")) diffs.push({ file, added: body.split("\n"), removed: [] });
   }
   return diffs.filter((d) => !isGenerated(d.file));

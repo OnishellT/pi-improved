@@ -95,6 +95,17 @@ test("commitSubject: at most 72 characters, no trailing period or ellipsis, pref
   assert.equal(commitSubject(""), "");
 });
 
+test("collectDiffs reads a new file without following a link or blocking on a FIFO", { timeout: 10_000 }, async (t) => {
+  const { fifo, tempProject } = await import("./helpers.ts");
+  const fsp = await import("node:fs/promises");
+  const root = await tempProject({ "new.py": "y = 1\n", "outside/secret.py": "token = 1\n" });
+  fifo(t, `${root}/pipe`);
+  await fsp.symlink("pipe", `${root}/to-pipe`);
+  await fsp.symlink("outside/secret.py", `${root}/to-secret.py`);
+  const exec: any = async (_cmd: string, args: string[]) => ({ stdout: args[0] === "ls-files" ? "pipe\0to-pipe\0to-secret.py\0new.py\0" : "", stderr: "", code: 0, killed: false });
+  assert.deepEqual(await collectDiffs(exec, root, "HEAD"), [{ file: "new.py", added: ["y = 1", ""], removed: [] }]);
+});
+
 test("collectDiffs reads a real repo: changes, new files, no generated paths", async () => {
   const { execFileSync } = await import("node:child_process");
   const { tempProject } = await import("./helpers.ts");
