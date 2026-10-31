@@ -1,28 +1,41 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import selfCompact from "../src/self-compact/index.ts";
+import { updateManifest } from "../src/manifest.ts";
+import { registerSetup } from "../src/setup.ts";
 import { fakePi, tempProject } from "./helpers.ts";
 
 /**
  * The extension with defaults (75/85/90% of a 100k window) and a context whose usage the test sets.
  * Like pi, `ctx.compact` aborts the run that is going on: each compaction records whether a run was.
  */
-async function session() {
+async function session({ setupRunning = false } = {}) {
   const h = fakePi();
   h.pi.registerFlag = () => {};
   h.pi.getFlag = () => undefined;
   const resumes: { message: any; options: any }[] = [];
   h.pi.sendMessage = (message: any, options: any) => void resumes.push({ message, options });
+  const listeners = new Map<string, ((data: unknown) => void)[]>();
+  h.pi.events = {
+    emit: (channel: string, data: unknown) => listeners.get(channel)?.forEach((listener) => listener(data)),
+    on: (channel: string, listener: (data: unknown) => void) => void listeners.set(channel, [...(listeners.get(channel) ?? []), listener]),
+  };
+  const cwd = await tempProject({});
+  if (setupRunning) {
+    await updateManifest(cwd, (m) => void (m.setup = "running"));
+    registerSetup(h.pi); // before self-compact, as in package.json
+  }
   selfCompact(h.pi);
   const compactions: { options: any; duringRun: boolean }[] = [];
   const errors: string[] = [];
+  const warnings: string[] = [];
   const state = { tokens: 0, running: true };
   const ctx: any = {
-    cwd: await tempProject({}),
+    cwd,
     hasUI: true,
     mode: "print",
     model: { provider: "p", id: "m", contextWindow: 100_000 },
-    ui: { notify: (text: string) => void errors.push(text), setWidget() {}, setFooter() {} },
+    ui: { notify: (text: string, type: string) => void (type === "warning" ? warnings : errors).push(text), setWidget() {}, setFooter() {} },
     getContextUsage: () => ({ tokens: state.tokens, contextWindow: 100_000 }),
     compact: (options: any) => void compactions.push({ options, duringRun: state.running }),
   };
@@ -33,7 +46,7 @@ async function session() {
   const selfCompactTool = (note?: string) => h.tools.get("self_compact").execute("id", { note }, undefined, undefined, ctx);
   /** Ends the run: pi awaits the agent_settled handlers, which is what keeps `pi -p` from exiting early. */
   const settle = (aborted = false) => ((state.running = false), h.emit("agent_settled", { aborted }, ctx));
-  return { h, ctx, at, call, selfCompactTool, settle, compactions, errors, resumes };
+  return { h, ctx, at, call, selfCompactTool, settle, compactions, errors, warnings, resumes };
 }
 
 const notice = (result: any) => result?.entries?.[0]?.content as string | undefined;
@@ -235,6 +248,25 @@ test("/self-compact-now compacts at once and does not resume", async () => {
   s.compactions[0].options.onComplete({});
   await s.settle();
   assert.deepEqual(s.resumes, []);
+});
+
+test("during setup, a run that ends for self_compact is not nudged on nor called stopped, unless Escape drops it", async () => {
+  const s = await session({ setupRunning: true });
+  await s.selfCompactTool("next: step 4");
+  assert.equal(await s.h.emit("agent_before_settle", { outcome: "completed" }, s.ctx), undefined, "setup's nudge would continue the run");
+  const settling = s.settle();
+  await tick();
+  s.compactions[0].options.onComplete({});
+  await settling;
+  assert.equal(s.resumes.length, 1);
+  assert.deepEqual(s.warnings, []);
+
+  await s.h.emit("before_agent_start", { messageType: "custom" }, s.ctx);
+  await s.call(20_000);
+  await s.selfCompactTool("again");
+  await s.settle(true);
+  assert.match(s.warnings[0], /Setup stopped before finishing/);
+  assert.equal((await s.h.emit("agent_before_settle", { outcome: "completed" }, s.ctx))?.continue, true, "the nudge is back");
 });
 
 test("a buffer (\"1k\") that leaves no window turns enforcement off with one error", async () => {

@@ -40,3 +40,12 @@ export interface TaskDonePayload {
   /** The retro prompt is only sent to an interactive session. */
   hasUI?: boolean;
 }
+
+/** Emitted by self-compact when it schedules a compaction for the end of the run, and when that compaction is over. */
+export const SELF_COMPACT_EVENT = "pi-improved:self-compact";
+export interface SelfCompactPayload {
+  /** A compaction waits for the run to end, so nothing should continue the run. */
+  scheduled: boolean;
+  /** pi resumes the agent after the compaction (while scheduled), or has just sent the resume (once it is over). */
+  resume: boolean;
+}
