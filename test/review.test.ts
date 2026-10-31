@@ -183,6 +183,11 @@ test("a new link or FIFO is named for what it is, never read into the brief or s
   assert.doesNotMatch(f.brief(), /token = 1/);
 });
 
+test("a new file named like an object property is inlined, not mistaken for a note", () => {
+  const brief = buildBrief(task, { diff: "", truncated: false, untracked: ["constructor", "toString"], contents: { constructor: "x = 1" }, notes: {} });
+  assert.match(brief, /### constructor\n```\nx = 1\n```\n- toString \(read it directly\)/);
+});
+
 test("the review brief carries the plan's intent when there is one, and nothing when an old plan has none", () => {
   const diff = { diff: "", truncated: false, untracked: [] };
   assert.match(buildBrief({ ...task, plan: { ...task.plan, intent: "Let people log in" } } as any, diff), /Login form summary\nIntent \(the ticket, restated\): Let people log in\n### Steps/);
