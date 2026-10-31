@@ -56,6 +56,9 @@ async function collectDiff(exec: Exec, root: string, task?: Pick<Task, "baseComm
   return { diff: truncated ? diff.slice(0, MAX_DIFF) : diff, truncated, untracked, contents, notes, base };
 }
 
+/** A file's entry in a by-path record, never an inherited property: a new file may be named `constructor`. */
+const own = (record: Record<string, string> | undefined, file: string) => (record && Object.hasOwn(record, file) ? record[file] : undefined);
+
 export function buildBrief(task: Task, d: { diff: string; truncated: boolean; untracked: string[]; contents?: Record<string, string>; notes?: Record<string, string>; base?: string; warnings?: string[]; verify?: string[] }, skills = "") {
   const plan = task.plan;
   const list = (items: string[]) => (items.length ? items.map((i) => `- ${i}`).join("\n") : "- (none)");
@@ -81,7 +84,7 @@ export function buildBrief(task: Task, d: { diff: string; truncated: boolean; un
     "## Seams",
     ...(plan?.seams?.length ? plan.seams.map((x) => `- ${x.name} → ${x.testFile}: catches ${x.catches}${x.misses ? `; misses ${x.misses}` : ""}`) : ["- (none)"]),
     "## New files",
-    ...(d.untracked.length ? d.untracked.map((f) => (d.notes?.[f] ? `- ${f} (${d.notes[f]})` : d.contents?.[f] === undefined ? `- ${f} (read it directly)` : `### ${f}\n\`\`\`\n${d.contents[f]}\n\`\`\``)) : ["- (none)"]),
+    ...(d.untracked.length ? d.untracked.map((f) => (own(d.notes, f) ? `- ${f} (${own(d.notes, f)})` : own(d.contents, f) === undefined ? `- ${f} (read it directly)` : `### ${f}\n\`\`\`\n${own(d.contents, f)}\n\`\`\``)) : ["- (none)"]),
     ...(d.verify?.length ? ["## Verify", "The gate runs these commands on the real project in parallel with this review, and the task closes only if they pass. You cannot run them: do not claim you did.", ...d.verify.map((c) => `- \`${c}\``)] : []),
     ...(d.warnings?.length ? ["## Automated warnings", "Line scans of the added code. They are fuzzy: judge each one against the code, and block only on a real problem.", ...d.warnings] : []),
     `## Diff (git diff ${d.base ?? "HEAD"})${d.truncated ? `\nTRUNCATED to the first ${MAX_DIFF} characters; inspect the rest with your tools.` : ""}`,
