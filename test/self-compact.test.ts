@@ -134,6 +134,8 @@ test("a second failure in a row resumes and turns compaction off until one succe
   assert.equal(off.terminate, undefined, "the run goes on");
   assert.equal(off.content[0].text, "Not compacting: the last attempts failed. Continue with the next action.");
   await s.at(50_000);
+  assert.equal(await s.at(76_000), undefined, "no notice asks for self_compact");
+  assert.equal(await s.at(86_000), undefined, "nor a warning");
   assert.equal(await s.call(91_000), undefined, "nothing is forced either, even after usage left the force tier");
   assert.equal(await s.at(91_000, 1), undefined);
   await s.settle();
