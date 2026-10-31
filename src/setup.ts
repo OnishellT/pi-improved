@@ -3,6 +3,7 @@ import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { exists } from "./config.ts";
+import { SELF_COMPACT_EVENT, type SelfCompactPayload } from "./events.ts";
 import { CATALOG, connectorById, type ConnectorSignal } from "./connectors.ts";
 import { agentlintCheck, agentlintCmd, discover, hasAgentlintConfig, isProject, type Discovery, type Run } from "./discover.ts";
 import type { Exec } from "./git.ts";
@@ -286,19 +287,25 @@ export function registerSetup(pi: ExtensionAPI) {
     if (hints?.readOnlyHint !== true) return { block: true, reason: `During setup, ${server} can only be used to read. This tool can modify data.` };
   });
 
+  // A run that ends for a scheduled self-compaction must end, and is not stopped when pi resumes the agent after it.
+  let compaction: SelfCompactPayload = { scheduled: false, resume: false };
+  pi.events?.on(SELF_COMPACT_EVENT, (data) => void (compaction = data as SelfCompactPayload));
+
   // A cheap model often stops early. Push it back to the steps a bounded number of times.
   pi.on("before_agent_start", async (event) => {
     if (event.messageType === "user") nudges = 0;
+    if (!compaction.scheduled) compaction = { scheduled: false, resume: false };
   });
   pi.on("agent_before_settle", async (event, ctx) => {
-    if (event.outcome !== "completed" || nudges >= MAX_NUDGES || !(await setupRunning(ctx.cwd))) return;
+    if (event.outcome !== "completed" || nudges >= MAX_NUDGES || compaction.scheduled || !(await setupRunning(ctx.cwd))) return;
     nudges++;
     return { entries: [{ type: "custom_message", customType: "setup-nudge", content: SETUP_NUDGE, display: false }], continue: true };
   });
 
   // Escape, an error or a model that gave up after the nudges leaves setup "running"; say how to get out of it.
   // agent_settled, not agent_before_settle: pi skips the settle boundary on Escape.
-  pi.on("agent_settled", async (_event, ctx) => {
+  pi.on("agent_settled", async (event, ctx) => {
+    if (compaction.resume && !event.aborted) return; // self-compact drops its compaction on Escape
     if (ctx.hasUI && (await setupRunning(ctx.cwd))) ctx.ui.notify("Setup stopped before finishing. Run /setup to continue where it left off.", "warning");
   });
 
