@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@aurelienbbn/agentlint": "^0.9.1",
-    "@earendil-works/pi-subagent": "github:OnishellT/pi-subagent#d691149b0caa3e97c80d5a42b3aaedff27d91d43",
+    "@earendil-works/pi-subagent": "github:OnishellT/pi-subagent#bcab94f415801bf673a7b7570afdc4f40875d7e5",
     "@modelcontextprotocol/sdk": "^1.28.0",
     "zod": "^4.6.5"
   },
