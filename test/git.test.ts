@@ -43,18 +43,22 @@ test("file listings are NUL-separated, keep odd names and drop .pi/ state", asyn
   assert.deepEqual(await changedFiles(reply("x", 1), "/r", "HEAD"), []);
 });
 
-test("fileChanges never follows a symlink or reads a huge new file, and is undefined when git fails", { timeout: 10_000 }, async () => {
+test("fileChanges never follows a symlink or reads a huge new file past its limit, still tells a big binary, and is undefined when git fails", { timeout: 10_000 }, async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "file-changes-"));
   // A read through the link would block on the FIFO for good.
   execFileSync("mkfifo", [path.join(root, "pipe")]);
   await fs.symlink("pipe", path.join(root, "link"));
   await fs.writeFile(path.join(root, "big.txt"), "x".repeat((1 << 20) + 1));
+  await fs.writeFile(path.join(root, "big.bin"), Buffer.concat([Buffer.from([0]), Buffer.alloc(1 << 20, 1)]));
   await fs.writeFile(path.join(root, "small.txt"), "a\nb");
   const exec = (failing?: string): any => async (_cmd: string, args: string[]) =>
-    args.includes(failing ?? "none") ? { stdout: "", stderr: "fatal", code: 128, killed: false } : { stdout: args[0] === "ls-files" ? "link\0big.txt\0small.txt\0" : "", stderr: "", code: 0, killed: false };
+    args.includes(failing ?? "none") ? { stdout: "", stderr: "fatal", code: 128, killed: false } : { stdout: args[0] === "ls-files" ? "link\0pipe\0big.txt\0big.bin\0small.txt\0" : "", stderr: "", code: 0, killed: false };
   assert.deepEqual(await fileChanges(exec(), root, "HEAD"), [
+    { file: "big.bin", status: "added", binary: true },
     { file: "big.txt", status: "added" },
     { file: "link", status: "added" },
+    // A FIFO in the list itself (swapped in after git listed a file) is opened without blocking and not read.
+    { file: "pipe", status: "added" },
     { file: "small.txt", status: "added", added: 2, removed: 0 },
   ]);
   for (const failing of ["--name-status", "--numstat", "ls-files"]) assert.equal(await fileChanges(exec(failing), root, "HEAD"), undefined);

@@ -48,7 +48,7 @@ export const changedFiles = async (exec: Exec, root: string, base: string, paths
 export interface FileChange {
   file: string;
   status: "added" | "modified" | "deleted";
-  /** Line counts; absent for a binary file, and for a new file that is unreadable, too large or not a regular file. */
+  /** Line counts; absent for a binary file, and for a new file that is unreadable, over 1 MiB or not a regular file. */
   added?: number;
   removed?: number;
   binary?: boolean;
@@ -64,14 +64,29 @@ const lineCount = (bytes: Buffer) => {
 /** Largest new file whose lines are counted; a bigger one, a symlink or anything else that is not a regular file shows without counts. */
 const COUNT_LIMIT = 1 << 20;
 
-/** +/- lines of a new untracked file: never follows a symlink and never reads past `COUNT_LIMIT`, so a FIFO or a huge file cannot stall the dialog. */
+/**
+ * +/- lines of a new untracked file. It is opened without following a symlink and without blocking on a FIFO, the opened file is
+ * the one checked, and at most `COUNT_LIMIT` + 1 bytes are read, so nothing swapped in or grown meanwhile can stall the dialog.
+ */
 async function newFileCounts(file: string): Promise<Pick<FileChange, "added" | "removed" | "binary">> {
-  const stat = await fs.lstat(file).catch(() => undefined);
-  if (!stat?.isFile() || stat.size > COUNT_LIMIT) return {};
-  const bytes = await fs.readFile(file).catch(() => undefined);
-  if (!bytes) return {};
-  // git's own test: a NUL byte in the first 8000 bytes makes the file binary.
-  return bytes.subarray(0, 8000).includes(0) ? { binary: true } : { added: lineCount(bytes), removed: 0 };
+  const { O_RDONLY, O_NOFOLLOW = 0, O_NONBLOCK = 0 } = fs.constants;
+  const handle = await fs.open(file, O_RDONLY | O_NOFOLLOW | O_NONBLOCK).catch(() => undefined);
+  if (!handle) return {};
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile()) return {};
+    const bytes = Buffer.alloc(Math.min(stat.size, COUNT_LIMIT) + 1);
+    let size = 0;
+    for (let n = 1; n && size < bytes.length; size += n) n = (await handle.read(bytes, size, bytes.length - size, size)).bytesRead;
+    // git's own test: a NUL byte in the first 8000 bytes makes the file binary.
+    if (bytes.subarray(0, Math.min(size, 8000)).includes(0)) return { binary: true };
+    // A full buffer means more bytes than the limit, or than the file had when checked: no counts rather than wrong ones.
+    return size === bytes.length ? {} : { added: lineCount(bytes.subarray(0, size)), removed: 0 };
+  } catch {
+    return {};
+  } finally {
+    await handle.close().catch(() => {});
+  }
 }
 
 /**
