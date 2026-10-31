@@ -27,7 +27,8 @@ async function session() {
     compact: (options: any) => void compactions.push({ options, duringRun: state.running }),
   };
   await h.emit("session_start", {}, ctx);
-  const at = (tokens: number) => ((state.tokens = tokens), h.emit("turn_end", {}, ctx));
+  /** A turn ends; `tools` is how many tool results it had (none: the model gave its answer). */
+  const at = (tokens: number, tools = 0) => ((state.tokens = tokens), h.emit("turn_end", { toolResults: Array(tools).fill({}) }, ctx));
   const call = (tokens: number, toolName = "bash") => ((state.tokens = tokens), h.emit("tool_call", { toolName }, ctx));
   const selfCompactTool = (note?: string) => h.tools.get("self_compact").execute("id", { note }, undefined, undefined, ctx);
   /** Ends the run: pi awaits the agent_settled handlers, which is what keeps `pi -p` from exiting early. */
@@ -127,13 +128,35 @@ test("force: a model that ignores the steer has its next calls end the run, and 
   assert.equal(s.resumes[0].message.content, "Compaction done. Continue with the next action from the summary.");
 });
 
-test("force at a turn without tool calls asks for self_compact with one more turn, and compacts after the run", async () => {
+test("force after tool results asks the next response for self_compact, and compacts and resumes after the run", async () => {
   const s = await session();
-  const steer: any = await s.at(91_000);
-  assert.equal(steer.continue, true);
+  const steer: any = await s.at(91_000, 2);
   assert.match(notice(steer)!, /force threshold reached \(91,000 of 100,000 tokens\): call self_compact now/);
-  assert.equal(await s.at(92_000), undefined, "asked once");
+  assert.equal(steer.continue, undefined, "the run goes on by itself, and a continuation would override terminate");
+  assert.equal(await s.at(92_000, 1), undefined, "asked once");
   assert.equal(s.compactions.length, 0);
+  const settling = s.settle();
+  await tick();
+  s.compactions[0].options.onComplete({});
+  await settling;
+  assert.equal(s.resumes.length, 1);
+});
+
+test("force at the agent's answer compacts after the run and does not resume a finished agent", async () => {
+  const s = await session();
+  assert.equal(await s.at(91_000), undefined, "no extra turn");
+  const settling = s.settle();
+  await tick();
+  assert.equal(s.compactions[0].duringRun, false);
+  s.compactions[0].options.onComplete({});
+  await settling;
+  assert.deepEqual(s.resumes, []);
+});
+
+test("force at the answer, then a call that something else continued the run with: the call ends the run and the agent resumes", async () => {
+  const s = await session();
+  await s.at(91_000);
+  assert.equal(((await s.call(91_000)) as any).terminate, true);
   const settling = s.settle();
   await tick();
   s.compactions[0].options.onComplete({});
@@ -154,7 +177,7 @@ test("a failed forced compaction is not forced again until usage leaves the forc
   await s.settle();
   assert.equal(s.compactions.length, 1);
   await s.at(80_000);
-  assert.equal((await s.at(91_000) as any).continue, true);
+  assert.match(notice(await s.at(91_000, 1))!, /force threshold reached/);
 });
 
 test("when pi compacts on its own before the run settles, there is no second compaction and the agent still resumes", async () => {
@@ -168,13 +191,31 @@ test("when pi compacts on its own before the run settles, there is no second com
 
 test("pi compacting mid-run lets the agent go on by itself: no resume", async () => {
   const s = await session();
-  await s.at(91_000);
+  await s.at(91_000, 1);
   await s.h.emit("session_compact", {}, s.ctx);
   assert.equal(await s.call(30_000), undefined, "tools run again");
   assert.equal(await s.at(30_000), undefined);
   await s.settle();
   assert.equal(s.compactions.length, 0);
   assert.deepEqual(s.resumes, []);
+});
+
+test("a compaction that leaves usage at the force threshold does not force again, which would loop", async () => {
+  const s = await session();
+  await s.call(91_000);
+  const settling = s.settle();
+  await tick();
+  s.compactions[0].options.onComplete({});
+  await s.h.emit("session_compact", {}, s.ctx);
+  await settling;
+  assert.equal(s.resumes.length, 1);
+  assert.equal(await s.call(92_000), undefined, "the resumed agent's call runs");
+  assert.deepEqual(s.errors, ["Context is still at the force threshold after compaction (92,000 of 100,000 tokens), so it is not forced again until usage drops below it."]);
+  assert.equal(await s.at(92_000), undefined);
+  await s.settle();
+  assert.equal(s.compactions.length, 1);
+  await s.at(50_000);
+  assert.equal((await s.call(91_000) as any).block, true, "forcing is back once usage dropped below");
 });
 
 test("right after a compaction, self_compact does not schedule another one", async () => {
