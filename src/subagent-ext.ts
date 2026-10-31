@@ -6,7 +6,15 @@ import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-c
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-export const agentDir = () => process.env.PI_CODING_AGENT_DIR || path.join(os.homedir(), ".pi", "agent");
+/** The agent dir as pi and the bundled pi-subagent read it: PI_CODING_AGENT_DIR with `~` and a file:// URL expanded, or ~/.pi/agent. */
+export function agentDir(): string {
+  const dir = process.env.PI_CODING_AGENT_DIR;
+  if (!dir) return path.join(os.homedir(), ".pi", "agent");
+  if (dir === "~") return os.homedir();
+  if (dir.startsWith("~/")) return path.join(os.homedir(), dir.slice(2));
+  if (dir.startsWith("file://")) return fileURLToPath(dir);
+  return dir;
+}
 export const bundledExtension = () => path.join(root, ".bundled", "pi-subagent", "index.ts");
 
 /** pi-subagent installed the documented way (clone into extensions/) or as a pi package. */
