@@ -48,9 +48,9 @@ const READ_LIMIT = 16 << 20;
 export async function checkContract(root: string, plan: Plan): Promise<string[]> {
   const problems: string[] = [];
   for (const entry of plan.interface ?? []) {
-    // The plan names the path: read it with the safe reader, so a link is not followed and a FIFO cannot block the gate.
+    // The plan names the path: a symlinked source file is resolved first, then read with the safe reader, so a FIFO cannot block the gate.
     const file = path.join(root, entry.file);
-    const read = await readRegular(file, READ_LIMIT);
+    const read = await readRegular(await fs.realpath(file).catch(() => file), READ_LIMIT);
     if (!read?.whole) {
       const why = read ? "over 16 MiB, too big to check" : (await fs.lstat(file).catch(() => undefined)) ? "not a readable regular file" : "the file does not exist";
       problems.push(`${entry.file}: ${why}`);
