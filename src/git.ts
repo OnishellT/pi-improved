@@ -1,3 +1,5 @@
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import { isPiState, type Task } from "./task-state.ts";
 
 export type Exec = (command: string, args: string[], options: { cwd: string; timeout: number; signal?: AbortSignal }) => Promise<{ stdout: string; stderr: string; code: number; killed: boolean }>;
@@ -42,3 +44,44 @@ export const untrackedFiles = async (exec: Exec, root: string, paths: string[] =
 
 /** Tracked files that differ from `base`, outside the `.pi/` state; empty when git fails. `paths` limits it to those pathspecs. */
 export const changedFiles = async (exec: Exec, root: string, base: string, paths: string[] = []) => names(await git(exec, root, ["diff", "--name-only", "-z", base, ...(paths.length ? ["--", ...paths] : [])]));
+
+export interface FileChange {
+  file: string;
+  status: "added" | "modified" | "deleted";
+  /** Line counts; absent for a binary or unreadable file. */
+  added?: number;
+  removed?: number;
+  binary?: boolean;
+}
+
+/** Lines in a file's bytes the way git counts them: a final newline ends the last line, it does not start another. */
+const lineCount = (bytes: Buffer) => {
+  let n = 0;
+  for (const b of bytes) if (b === 10) n++;
+  return bytes.length && bytes[bytes.length - 1] !== 10 ? n + 1 : n;
+};
+
+/** Every file that differs from `base`: tracked changes plus new untracked files, outside the `.pi/` state, sorted by path, each with its status and +/- lines. Empty when git fails. */
+export async function fileChanges(exec: Exec, root: string, base: string): Promise<FileChange[]> {
+  const byFile = new Map<string, FileChange>();
+  // `--no-renames` lists a rename as delete + add, so both paths show.
+  const status = ((await git(exec, root, ["diff", "--name-status", "--no-renames", "-z", base])) ?? "").split("\0");
+  for (let i = 0; i + 1 < status.length; i += 2) {
+    const file = status[i + 1];
+    if (file && !isPiState(file)) byFile.set(file, { file, status: status[i] === "A" ? "added" : status[i] === "D" ? "deleted" : "modified" });
+  }
+  for (const row of ((await git(exec, root, ["diff", "--numstat", "--no-renames", "-z", base])) ?? "").split("\0")) {
+    const m = /^(\d+|-)\t(\d+|-)\t(.+)$/s.exec(row);
+    const change = m && byFile.get(m[3]);
+    if (!change) continue;
+    if (m[1] === "-") change.binary = true;
+    else Object.assign(change, { added: +m[1], removed: +m[2] });
+  }
+  for (const file of await untrackedFiles(exec, root)) {
+    const bytes = await fs.readFile(path.join(root, file)).catch(() => undefined);
+    // git's own test: a NUL byte in the first 8000 bytes makes the file binary.
+    const counts = !bytes ? {} : bytes.subarray(0, 8000).includes(0) ? { binary: true } : { added: lineCount(bytes), removed: 0 };
+    byFile.set(file, { file, status: "added", ...counts });
+  }
+  return [...byFile.values()].sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
+}
