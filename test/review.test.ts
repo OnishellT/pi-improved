@@ -176,10 +176,11 @@ test("a new link or FIFO is named for what it is, never read into the brief or s
   fifo(t, path.join(root, "pipe"));
   await fs.symlink("pipe", path.join(root, "to-pipe"));
   await fs.symlink("secret.txt", path.join(root, "to-secret"));
+  await fs.symlink("secret.txt", path.join(root, "__proto__"));
   const f = fakeExec({ wait: ok("VERDICT: APPROVED") });
-  const exec: any = (cmd: string, args: string[], o: any) => (cmd === "git" && args[0] === "ls-files" ? Promise.resolve(ok("pipe\0to-pipe\0to-secret\0")) : f.exec(cmd, args, o));
+  const exec: any = (cmd: string, args: string[], o: any) => (cmd === "git" && args[0] === "ls-files" ? Promise.resolve(ok("pipe\0to-pipe\0to-secret\0__proto__\0")) : f.exec(cmd, args, o));
   await reviewDiff(exec, root, task, "p/m");
-  assert.match(f.brief(), /- pipe \(not a regular file; do not read it\)\n- to-pipe \(a symlink to "pipe"; do not read it\)\n- to-secret \(a symlink to "secret\.txt"; do not read it\)/);
+  assert.match(f.brief(), /- pipe \(not a regular file; do not read it\)\n- to-pipe \(a symlink to "pipe"; do not read it\)\n- to-secret \(a symlink to "secret\.txt"; do not read it\)\n- __proto__ \(a symlink to "secret\.txt"; do not read it\)/);
   assert.doesNotMatch(f.brief(), /token = 1/);
 });
 
