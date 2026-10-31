@@ -47,7 +47,7 @@ export default function (pi: ExtensionAPI) {
     return { ...usage, contextWindow, effectiveWindow: contextWindow - config.buffer };
   };
 
-  // A project's config file could put terminal escapes in a rejected value, which the error repeats.
+  // Errors can carry terminal escapes: a project's config file in a rejected value, a provider in a compaction error.
   const clean = (text: string) => text.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ");
 
   /** Shows an error in the UI, or on stderr when there is none (`pi -p`). */
@@ -264,8 +264,9 @@ export default function (pi: ExtensionAPI) {
     const state = thresholdState(usage.tokens!, usage.effectiveWindow, config);
     checkAfterCompaction(ctx, usage.tokens!, usage.effectiveWindow, state);
     if (state !== "force") forceFailed = false;
+    if (compactionOff()) return; // self_compact would refuse, so no tier asks for it
     if (state === "force") {
-      if (forceFailed || compactionOff()) return;
+      if (forceFailed) return;
       // No tool results: the agent gave its answer and the run ends here, so pi compacts after it, with no resume, like
       // pi's own threshold compaction. Otherwise the run goes on with the next response, which can call self_compact.
       const answered = event.toolResults.length === 0;
