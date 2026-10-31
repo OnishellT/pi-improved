@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import { test } from "node:test";
 import { checkContract, formatContract, missingNames, relatesTo, stemTokens } from "../src/contract.ts";
-import { tempProject } from "./helpers.ts";
+import { fifo, tempProject } from "./helpers.ts";
 
 const plan = (iface: any[]) => ({ summary: "", steps: [], files: [], decisions: [], interface: iface, seams: [] });
 
@@ -36,6 +38,14 @@ test("checkContract reports missing files and names not present in their file", 
   assert.match(formatContract(problems), /Interface contract not met[\s\S]*- src\/fee\.ts: missing formatFee/);
   // `fee` alone must not satisfy `feeRate2`
   assert.deepEqual(await checkContract(root, plan([{ file: "src/fee.ts", exports: ["feeRate2"] }])), ["src/fee.ts: missing feeRate2"]);
+});
+
+test("checkContract reads a named file without following a link or blocking on a FIFO", { timeout: 10_000 }, async (t) => {
+  const root = await tempProject({ "src/a.ts": "export const a = 1;" });
+  fifo(t, path.join(root, "src/pipe.ts"));
+  await fs.symlink("a.ts", path.join(root, "src/link.ts"));
+  const problems = await checkContract(root, plan(["pipe.ts", "link.ts", "gone.ts"].map((f) => ({ file: `src/${f}`, exports: ["a"] }))));
+  assert.deepEqual(problems, ["src/pipe.ts: not a readable regular file", "src/link.ts: not a readable regular file", "src/gone.ts: the file does not exist"]);
 });
 
 test("relatesTo: the source shares a word of the question; short words and other topics do not count", () => {

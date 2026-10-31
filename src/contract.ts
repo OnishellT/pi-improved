@@ -1,5 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
+import { readRegular } from "./git.ts";
 import type { Plan } from "./task-state.ts";
 
 export type InterfaceEntry = Plan["interface"][number];
@@ -40,15 +41,22 @@ const COMMON = new Set(["should", "which", "what", "when", "where", "does", "wou
 /** True when the document shares a topic word (4+ letters, not a common question word) with the question: cheap proof that a cited source is about it. */
 export const relatesTo = (question: string, text: string) => (question.match(/[A-Za-z0-9]{4,}/g) ?? []).some((w) => !COMMON.has(w.toLowerCase()) && word(w, "i").test(text));
 
+/** Largest interface file read: far over any source file, still small enough to hold. */
+const READ_LIMIT = 16 << 20;
+
 /** Interface names the working copy does not expose yet: each export must appear as a word in its file (a qualified name: each segment). */
 export async function checkContract(root: string, plan: Plan): Promise<string[]> {
   const problems: string[] = [];
   for (const entry of plan.interface ?? []) {
-    const text = await fs.readFile(path.join(root, entry.file), "utf8").catch(() => undefined);
-    if (text === undefined) {
-      problems.push(`${entry.file}: the file does not exist`);
+    // The plan names the path: read it with the safe reader, so a link is not followed and a FIFO cannot block the gate.
+    const file = path.join(root, entry.file);
+    const read = await readRegular(file, READ_LIMIT);
+    if (!read?.whole) {
+      const why = read ? "over 16 MiB, too big to check" : (await fs.lstat(file).catch(() => undefined)) ? "not a readable regular file" : "the file does not exist";
+      problems.push(`${entry.file}: ${why}`);
       continue;
     }
+    const text = read.bytes.toString("utf8");
     const missing = entry.exports.filter((name) => !hasName(name, text));
     if (missing.length) problems.push(`${entry.file}: missing ${missing.join(", ")}`);
   }
