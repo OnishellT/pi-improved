@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import * as fs from "node:fs/promises";
+import * as os from "node:os";
+import * as path from "node:path";
 import { test } from "node:test";
-import { changedFiles, diffBase, EMPTY_TREE, git, gitHead, untrackedFiles } from "../src/git.ts";
+import { changedFiles, diffBase, EMPTY_TREE, fileChanges, git, gitHead, untrackedFiles } from "../src/git.ts";
 
 const reply = (stdout: string, code = 0, killed = false): any => async () => ({ stdout, stderr: "", code, killed });
 
@@ -37,4 +41,22 @@ test("file listings are NUL-separated, keep odd names and drop .pi/ state", asyn
   assert.deepEqual(await untrackedFiles(reply(out), "/r"), ["src/a b.ts", "café\nline.ts"]);
   assert.deepEqual(await changedFiles(reply(out), "/r", "HEAD"), ["src/a b.ts", "café\nline.ts"]);
   assert.deepEqual(await changedFiles(reply("x", 1), "/r", "HEAD"), []);
+});
+
+test("fileChanges never follows a symlink or reads a huge new file, and is undefined when git fails", { timeout: 10_000 }, async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "file-changes-"));
+  // A read through the link would block on the FIFO for good.
+  execFileSync("mkfifo", [path.join(root, "pipe")]);
+  await fs.symlink("pipe", path.join(root, "link"));
+  await fs.writeFile(path.join(root, "big.txt"), "x".repeat((1 << 20) + 1));
+  await fs.writeFile(path.join(root, "small.txt"), "a\nb");
+  const exec = (failing?: string): any => async (_cmd: string, args: string[]) =>
+    args.includes(failing ?? "none") ? { stdout: "", stderr: "fatal", code: 128, killed: false } : { stdout: args[0] === "ls-files" ? "link\0big.txt\0small.txt\0" : "", stderr: "", code: 0, killed: false };
+  assert.deepEqual(await fileChanges(exec(), root, "HEAD"), [
+    { file: "big.txt", status: "added" },
+    { file: "link", status: "added" },
+    { file: "small.txt", status: "added", added: 2, removed: 0 },
+  ]);
+  for (const failing of ["--name-status", "--numstat", "ls-files"]) assert.equal(await fileChanges(exec(failing), root, "HEAD"), undefined);
+  await fs.rm(root, { recursive: true, force: true });
 });

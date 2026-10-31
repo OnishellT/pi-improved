@@ -45,6 +45,7 @@ test("no change at all is not gated", async () => {
 test("the done dialog lists every file the task changed since its base: added, modified and deleted, with their line counts", async () => {
   const root = await tempProject({
     ".pi/workflow.json": JSON.stringify({ version: 1, setup: "done", verify: ["true"], connectors: [], understanding: "off" }),
+    ".gitignore": "local.env\n",
     "a.txt": "one\ntwo\n",
     "gone.txt": "x\ny\n",
     "kept.txt": "same\n",
@@ -61,9 +62,13 @@ test("the done dialog lists every file the task changed since its base: added, m
   const ctx: any = { cwd: root, hasUI: true, ui };
   await h.emit("before_agent_start", { messageType: "user" }, ctx);
   // A commit made during the task still counts; so do uncommitted edits, a deletion and new untracked files.
-  await sh(root, "printf 'one\\n2\\nthree\\n' > a.txt && git -c user.name=t -c user.email=t@t commit -qam 'model commit' && git rm -q gone.txt && printf 'n1\\nn2\\nn3\\n' > new.txt && printf 'b\\0in' > blob.bin && echo state > .pi/notes.txt");
+  await sh(root, "printf 'one\\n2\\nthree\\n' > a.txt && git -c user.name=t -c user.email=t@t commit -qam 'model commit' && git rm -q gone.txt && printf 'n1\\nn2\\nn3\\n' > new.txt && printf 'b\\0in' > blob.bin && echo state > .pi/notes.txt && echo secret > local.env");
+  // A new file too big to count, and a symlink, are listed without counts.
+  await fs.writeFile(path.join(root, "big.txt"), "x\n".repeat(600_000));
+  await sh(root, "ln -s a.txt link");
   await h.emit("agent_before_settle", { outcome: "completed" }, ctx);
   assert.equal(shown.length, 1);
-  assert.match(shown[0], /Files changed \(4\):\n- a\.txt \(modified, \+2 -1\)\n- blob\.bin \(added, binary\)\n- gone\.txt \(deleted, \+0 -2\)\n- new\.txt \(added, \+3 -0\)$/);
-  assert.doesNotMatch(shown[0], /kept\.txt|\.pi\//);
+  assert.match(shown[0], /Files changed \(6\):\n- a\.txt \(modified, \+2 -1\)\n- big\.txt \(added\)\n- blob\.bin \(added, binary\)\n- gone\.txt \(deleted, \+0 -2\)\n- link \(added\)\n- new\.txt \(added, \+3 -0\)\n\n/);
+  // Ignored files are left out, as in a commit.
+  assert.doesNotMatch(shown[0], /kept\.txt|\.pi\/|local\.env/);
 });

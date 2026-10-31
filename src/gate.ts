@@ -32,8 +32,8 @@ const FILES_SHOWN = 30;
 /** One line per file: a name with a newline or another control character is quoted, so it cannot split the line. */
 const fileRow = (c: FileChange) => `- ${/[\u0000-\u001f\u007f]/.test(c.file) ? JSON.stringify(c.file) : c.file} (${c.status}${c.added !== undefined ? `, +${c.added} -${c.removed}` : c.binary ? ", binary" : ""})`;
 /** The done dialog lists every file the task wrote, so the person knows what to open before confirming. */
-const filesNote = (changes: FileChange[]) =>
-  changes.length ? `\n\nFiles changed (${changes.length}):\n${changes.slice(0, FILES_SHOWN).map(fileRow).join("\n")}${changes.length > FILES_SHOWN ? `\n…and ${changes.length - FILES_SHOWN} more` : ""}` : "";
+const filesNote = (changes: FileChange[] | undefined) =>
+  !changes ? "\n\nFiles changed: unknown, git could not list them." : changes.length ? `\n\nFiles changed (${changes.length}):\n${changes.slice(0, FILES_SHOWN).map(fileRow).join("\n")}${changes.length > FILES_SHOWN ? `\n…and ${changes.length - FILES_SHOWN} more` : ""}` : "";
 const dialogNotes = (risk?: { touched?: string[]; flagged?: string[] }) => `${listNote("Tests and verify setup changed (check before accepting)", risk?.touched)}${listNote("Quality check (look before accepting)", risk?.flagged)}`;
 /** Added to the escalation prompt when the same failure came back: the fixes so far share a wrong assumption. */
 const PREMISE = [

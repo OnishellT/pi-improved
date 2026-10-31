@@ -22,7 +22,7 @@ const task = { id: "t1", title: "Do it", status: "implementing", allowedExtra: [
 /** The understanding outcome telemetry keeps for task t1: written only while the task is active. */
 const recorded = async (root: string) => JSON.parse(await fs.readFile(path.join(root, METRICS_DIR, "t1.json"), "utf8").catch(() => "{}")).understanding;
 
-async function setup(opts: { setup?: string; task?: boolean; pass?: boolean; answers?: unknown[]; review?: string; nix?: boolean | string; status?: string; understanding?: string } = {}) {
+async function setup(opts: { setup?: string; task?: boolean; pass?: boolean; answers?: unknown[]; review?: string; nix?: boolean | string; status?: string; understanding?: string; listFails?: boolean } = {}) {
   const files: Record<string, string> = { ".pi/workflow.json": manifest(opts.setup ?? "done", opts.understanding) };
   if (opts.review) files[".pi/workflow.json"] = JSON.stringify({ version: 1, setup: "done", verify: ["check"], connectors: [], models: { review: "p/m" }, review: { minLevel: "low" }, understanding: opts.understanding ?? "off" });
   if (opts.task) files[".pi/task.json"] = JSON.stringify(task);
@@ -33,6 +33,7 @@ async function setup(opts: { setup?: string; task?: boolean; pass?: boolean; ans
   const subagent: string[] = [];
   const h = fakePi((cmd, args) => {
     if (cmd === "git" && opts.nix !== undefined) return { code: 127, stderr: opts.nix === false ? installMessage() : String(opts.nix) };
+    if (cmd === "git" && opts.listFails && args.includes("--name-status")) return { code: 128, stderr: "fatal: bad object" };
     // rev-list: the commit before the task started, the diff base of a task without baseCommit.
     if (cmd === "git") return { code: 0, stdout: args.includes("--name-status") ? opts.status ?? "" : args[0] === "diff" ? diff : args[0] === "rev-list" ? "a".repeat(40) : args[0] === "ls-files" && untracked ? "new.ts\0link\0" : "" };
     if (isSubagent(cmd)) subagent.push(args[0]);
@@ -177,6 +178,11 @@ test("the done dialog lists the changed files first, one sorted line each, cappe
   await odd.run();
   await odd.settle();
   assert.match(odd.ui.messages[0], /\nFiles changed \(1\):\n- "odd\\nname\.ts" \(added\)$/);
+  // When git cannot list the files, the dialog says so instead of looking like nothing changed.
+  const failed = await setup({ pass: true, task: true, answers: [true], listFails: true });
+  await failed.run();
+  await failed.settle();
+  assert.equal(failed.ui.messages[0], 'Is the task "Do it" done?\n\nFiles changed: unknown, git could not list them.');
 });
 
 test("a Nix build that fails is an infrastructure failure too: the user hears Nix's message, no retry, no escalation, nothing for the model", async () => {

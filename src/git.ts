@@ -48,7 +48,7 @@ export const changedFiles = async (exec: Exec, root: string, base: string, paths
 export interface FileChange {
   file: string;
   status: "added" | "modified" | "deleted";
-  /** Line counts; absent for a binary or unreadable file. */
+  /** Line counts; absent for a binary file, and for a new file that is unreadable, too large or not a regular file. */
   added?: number;
   removed?: number;
   binary?: boolean;
@@ -61,27 +61,45 @@ const lineCount = (bytes: Buffer) => {
   return bytes.length && bytes[bytes.length - 1] !== 10 ? n + 1 : n;
 };
 
-/** Every file that differs from `base`: tracked changes plus new untracked files, outside the `.pi/` state, sorted by path, each with its status and +/- lines. Empty when git fails. */
-export async function fileChanges(exec: Exec, root: string, base: string): Promise<FileChange[]> {
-  const byFile = new Map<string, FileChange>();
+/** Largest new file whose lines are counted; a bigger one, a symlink or anything else that is not a regular file shows without counts. */
+const COUNT_LIMIT = 1 << 20;
+
+/** +/- lines of a new untracked file: never follows a symlink and never reads past `COUNT_LIMIT`, so a FIFO or a huge file cannot stall the dialog. */
+async function newFileCounts(file: string): Promise<Pick<FileChange, "added" | "removed" | "binary">> {
+  const stat = await fs.lstat(file).catch(() => undefined);
+  if (!stat?.isFile() || stat.size > COUNT_LIMIT) return {};
+  const bytes = await fs.readFile(file).catch(() => undefined);
+  if (!bytes) return {};
+  // git's own test: a NUL byte in the first 8000 bytes makes the file binary.
+  return bytes.subarray(0, 8000).includes(0) ? { binary: true } : { added: lineCount(bytes), removed: 0 };
+}
+
+/**
+ * Every file that differs from `base`: tracked changes plus new untracked files, outside the `.pi/` state, sorted by path, each
+ * with its status and +/- lines. Ignored files are left out, as in a commit. Undefined when git fails, so the caller can say the
+ * list is missing rather than show an empty one.
+ */
+export async function fileChanges(exec: Exec, root: string, base: string): Promise<FileChange[] | undefined> {
   // `--no-renames` lists a rename as delete + add, so both paths show.
-  const status = ((await git(exec, root, ["diff", "--name-status", "--no-renames", "-z", base])) ?? "").split("\0");
-  for (let i = 0; i + 1 < status.length; i += 2) {
-    const file = status[i + 1];
-    if (file && !isPiState(file)) byFile.set(file, { file, status: status[i] === "A" ? "added" : status[i] === "D" ? "deleted" : "modified" });
+  const [status, numstat, untracked] = await Promise.all([
+    git(exec, root, ["diff", "--name-status", "--no-renames", "-z", base]),
+    git(exec, root, ["diff", "--numstat", "--no-renames", "-z", base]),
+    git(exec, root, ["ls-files", "--others", "--exclude-standard", "-z"]),
+  ]);
+  if (status === undefined || numstat === undefined || untracked === undefined) return undefined;
+  const byFile = new Map<string, FileChange>();
+  const rows = status.split("\0");
+  for (let i = 0; i + 1 < rows.length; i += 2) {
+    const file = rows[i + 1];
+    if (file && !isPiState(file)) byFile.set(file, { file, status: rows[i] === "A" ? "added" : rows[i] === "D" ? "deleted" : "modified" });
   }
-  for (const row of ((await git(exec, root, ["diff", "--numstat", "--no-renames", "-z", base])) ?? "").split("\0")) {
+  for (const row of numstat.split("\0")) {
     const m = /^(\d+|-)\t(\d+|-)\t(.+)$/s.exec(row);
     const change = m && byFile.get(m[3]);
     if (!change) continue;
     if (m[1] === "-") change.binary = true;
     else Object.assign(change, { added: +m[1], removed: +m[2] });
   }
-  for (const file of await untrackedFiles(exec, root)) {
-    const bytes = await fs.readFile(path.join(root, file)).catch(() => undefined);
-    // git's own test: a NUL byte in the first 8000 bytes makes the file binary.
-    const counts = !bytes ? {} : bytes.subarray(0, 8000).includes(0) ? { binary: true } : { added: lineCount(bytes), removed: 0 };
-    byFile.set(file, { file, status: "added", ...counts });
-  }
+  for (const file of names(untracked)) byFile.set(file, { file, status: "added", ...(await newFileCounts(path.join(root, file))) });
   return [...byFile.values()].sort((a, b) => (a.file < b.file ? -1 : a.file > b.file ? 1 : 0));
 }
