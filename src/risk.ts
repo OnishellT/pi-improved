@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { isLaws } from "./bend.ts";
 import { limitsOf } from "./config.ts";
-import { diffBase, EMPTY_TREE, git, untrackedFiles, type Exec } from "./git.ts";
+import { diffBase, EMPTY_TREE, git, newFileCounts, untrackedFiles, type Exec } from "./git.ts";
 import { BREAK, collectDiffs, isDocs, isFixTask, isGenerated, qualityVerdict, weakenedNotes } from "./quality.ts";
 import { MANIFEST_PATH, type Manifest } from "./manifest.ts";
 import { inFiles, isLocalState, MEMORY_PATH, type Task } from "./task-state.ts";
@@ -71,6 +71,19 @@ function nameStatus(out: string | undefined, added = false) {
   return files;
 }
 
+/** About one source line: a file over the 1 MiB counting limit is estimated at 26k+ lines. */
+const BYTES_PER_LINE = 40;
+
+/**
+ * Lines for a new file that `newFileCounts` does not count, other than a binary (0, as `git diff --numstat` counts one once added).
+ * A regular file it could not read whole, mostly one over its limit, counts by its lstat size, so a big new file still makes the
+ * change big. Anything else, a symlink or a FIFO, counts 1, as git counts a link: its target is one line.
+ */
+const uncountedLines = async (file: string) => {
+  const stat = await fs.lstat(file).catch(() => undefined);
+  return stat?.isFile() ? Math.max(1, Math.ceil(stat.size / BYTES_PER_LINE)) : 1;
+};
+
 const threshold = (value: number | undefined, fallback: number) => (typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : fallback);
 
 /** Reasons that make `files` high risk whatever their size: dependencies, migrations, `review.paths`, sensitive zones. */
@@ -124,9 +137,9 @@ export async function assessRisk(exec: Exec, root: string, task: Task | undefine
     lines.set(m[3], (m[1] === "-" ? 0 : +m[1]) + (m[2] === "-" ? 0 : +m[2]));
   }
   for (const file of await untrackedFiles(exec, root)) {
-    const text = await fs.readFile(path.join(root, file), "utf8").catch(() => "");
-    // Like git, a final newline ends the last line; it does not start another.
-    lines.set(file, text ? text.split("\n").length - (text.endsWith("\n") ? 1 : 0) : 1);
+    const full = path.join(root, file);
+    const { added, binary } = await newFileCounts(full);
+    lines.set(file, added ?? (binary ? 0 : await uncountedLines(full)));
   }
   const files = [...lines.keys()];
   const total = [...lines.values()].reduce((a, b) => a + b, 0);

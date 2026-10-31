@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import { test } from "node:test";
 import { assessRisk, isTestFile, verifyFiles } from "../src/risk.ts";
 import type { Manifest } from "../src/manifest.ts";
@@ -36,6 +38,29 @@ test("a final newline does not count as one more line of an untracked file", asy
   const lines = async (n: number) => assessRisk(exec([], ["a.ts"]), await tempProject({ "a.ts": "x\n".repeat(n) }), task, base);
   assert.equal((await lines(200)).review, false);
   assert.match((await lines(201)).reasons[0], /201 lines/);
+});
+
+test("a new symlink, FIFO or binary never hangs the check and counts as git counts it; a text file too big to read still counts as big", { timeout: 10_000 }, async (t) => {
+  const { execFileSync } = await import("node:child_process");
+  const root = await tempProject({ "small.txt": "a\nb\n", "big.txt": "x".repeat((1 << 20) + 1) });
+  await fs.writeFile(path.join(root, "blob.bin"), Buffer.from("\0\n\n\n"));
+  // git lists the link; a read through it would block on the FIFO for good. The FIFO itself stands for one swapped in after git listed a file.
+  const pipe = path.join(root, "pipe");
+  execFileSync("mkfifo", [pipe]);
+  // A regression fails on the timeout without keeping the test run alive: a writer releases a read that blocked, and with the FIFO gone no other read can.
+  t.after(async () => {
+    const writer = await fs.open(pipe, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK).catch(() => undefined);
+    await fs.rm(pipe, { force: true });
+    await writer?.close();
+  });
+  await fs.symlink("pipe", path.join(root, "link"));
+  // `maxLines: 0` names the total in the reasons.
+  const every = { ...base, review: { minLevel: "low", maxLines: 0 } } as Manifest;
+  // small.txt 2 + link 1 + pipe 1 + blob.bin 0, like a binary in `git diff --numstat`.
+  assert.deepEqual((await assessRisk(exec([], ["small.txt", "link", "pipe", "blob.bin"]), root, task, every)).reasons, ["4 lines changed"]);
+  const big = await assessRisk(exec([], ["big.txt"]), root, task, base);
+  assert.equal(big.level, "high");
+  assert.match(big.reasons.join(), /\d{4,} lines changed/);
 });
 
 test("dependency manifests, lockfiles and migrations", async () => {
