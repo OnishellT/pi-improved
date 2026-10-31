@@ -51,6 +51,10 @@ async function session({ setupRunning = false } = {}) {
 
 const notice = (result: any) => result?.entries?.[0]?.content as string | undefined;
 const tick = () => new Promise((resolve) => setImmediate(resolve));
+/** Setup's warning after a compaction reads the manifest without being awaited. */
+const until = async (check: () => boolean) => {
+  for (let i = 0; i < 200 && !check(); i++) await new Promise((resolve) => setTimeout(resolve, 5));
+};
 
 test("notice, then warning, each once per tier", async () => {
   const s = await session();
@@ -265,8 +269,34 @@ test("during setup, a run that ends for self_compact is not nudged on nor called
   await s.call(20_000);
   await s.selfCompactTool("again");
   await s.settle(true);
+  await until(() => s.warnings.length > 0);
   assert.match(s.warnings[0], /Setup stopped before finishing/);
   assert.equal((await s.h.emit("agent_before_settle", { outcome: "completed" }, s.ctx))?.continue, true, "the nudge is back");
+});
+
+test("during setup, an answer at the force threshold is compacted and then nudged on with the resume", async () => {
+  const s = await session({ setupRunning: true });
+  assert.equal(await s.at(91_000), undefined);
+  assert.equal(await s.h.emit("agent_before_settle", { outcome: "completed" }, s.ctx), undefined, "no continuation before the compaction");
+  const settling = s.settle();
+  await tick();
+  s.compactions[0].options.onComplete({});
+  await settling;
+  assert.equal(s.resumes.length, 1);
+  assert.match(s.resumes[0].message.content, /^Compaction done\. Continue with the next action from the summary\.\n\nSetup is not finished/);
+  assert.deepEqual(s.warnings, []);
+});
+
+test("during setup, a failed scheduled compaction still says setup stopped", async () => {
+  const s = await session({ setupRunning: true });
+  await s.selfCompactTool("next: step 4");
+  const settling = s.settle();
+  await tick();
+  s.compactions[0].options.onError(new Error("provider down"));
+  await settling;
+  await until(() => s.warnings.length > 0);
+  assert.match(s.warnings[0], /Setup stopped before finishing/);
+  assert.deepEqual(s.resumes, []);
 });
 
 test("a buffer (\"1k\") that leaves no window turns enforcement off with one error", async () => {

@@ -6,7 +6,7 @@ import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { checkThresholds, profileForModel, resolveConfig, sanitizeStatus, thresholdState, thresholdTokens } from "./config.ts";
 import { globalPath, readGlobal } from "../config.ts";
-import { SELF_COMPACT_EVENT, type SelfCompactPayload } from "../events.ts";
+import { SELF_COMPACT_EVENT, SELF_COMPACT_RESUME_EVENT, type SelfCompactPayload, type SelfCompactResumePayload } from "../events.ts";
 import { migrateLegacy } from "../legacy-config.ts";
 import { readProjectManifest } from "../manifest.ts";
 import { checkProfileFile } from "./profile.ts";
@@ -148,13 +148,17 @@ export default function (pi: ExtensionAPI) {
   // self_compact and the force threshold only schedule it, and the tool calls after that end the run (`terminate`).
   // `done` is set when pi compacted on its own (its auto-compaction) in the meantime, without the note.
   // `resume` is set when the agent asked for it or a call of its was blocked: then pi sends it a message to go on.
-  let pending: { note?: string; done?: boolean; resume: boolean } | undefined;
+  // `followUp` is added to the resume message (setup's nudge, when setup is not finished).
+  let pending: { note?: string; done?: boolean; resume: boolean; followUp?: string } | undefined;
   // Other modules (setup's nudge) must not continue a run that ends for a compaction, nor call it stopped.
   const announce = (scheduled: boolean, resume: boolean) => pi.events?.emit(SELF_COMPACT_EVENT, { scheduled, resume } satisfies SelfCompactPayload);
   const schedule = (next: NonNullable<typeof pending>) => {
     pending = next;
     announce(true, next.resume);
   };
+  pi.events?.on(SELF_COMPACT_RESUME_EVENT, (data) => {
+    if (pending) schedule({ ...pending, resume: true, followUp: (data as SelfCompactResumePayload).message });
+  });
   let justCompacted = false; // no tool call since the last compaction: another one now would only summarize the summary
   const scheduled = "Compaction is scheduled, so this call did not run. Pi compacts when this turn ends and then continues.";
   const forceSteer = "call self_compact now with a handoff note, as the only call in your reply; pi then compacts and continues.";
@@ -187,7 +191,7 @@ export default function (pi: ExtensionAPI) {
       const text = (value: string) => [{ type: "text" as const, text: value }];
       if (compacting) return { content: text("Compaction is already in progress."), details: undefined };
       if (justCompacted) return { content: text("The context was just compacted. Continue with the next action."), details: undefined };
-      schedule({ note: note ?? pending?.note, resume: true });
+      schedule({ ...pending, note: note ?? pending?.note, done: undefined, resume: true });
       return { content: text("Compaction scheduled. Pi compacts when this turn ends and then continues."), details: undefined, terminate: true };
     },
   });
@@ -204,7 +208,7 @@ export default function (pi: ExtensionAPI) {
       const content = request.done && request.note
         ? `Pi compacted the context. Continue with the next action from your handoff note:\n${request.note}`
         : `Compaction done. Continue with the next action from the ${request.note ? "handoff note" : "summary"}.`;
-      pi.sendMessage({ customType: "self_compact_resume", content, display: true }, { triggerTurn: true });
+      pi.sendMessage({ customType: "self_compact_resume", content: [content, request.followUp].filter(Boolean).join("\n\n"), display: true }, { triggerTurn: true });
     }
     announce(false, resumed);
   });
