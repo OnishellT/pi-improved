@@ -35,20 +35,28 @@ async function collectDiff(exec: Exec, root: string, task?: Pick<Task, "baseComm
   const truncated = diff.length > MAX_DIFF;
   // New files are not in `git diff <base>`: inline them while the budget lasts so the reviewer does not spend turns reading them.
   const contents: Record<string, string> = {};
+  // A new link or special file is not read, by this code or the reviewer: the brief says what it is.
+  const notes: Record<string, string> = {};
   let budget = MAX_DIFF - Math.min(diff.length, MAX_DIFF);
   for (const file of untracked) {
     // At most `budget` + 1 bytes are read, so a huge file is not read just to drop it; a link or a FIFO is not read at all.
-    const read = await readRegular(path.join(root, file), budget);
-    if (!read?.whole) continue;
+    const abs = path.join(root, file);
+    const read = await readRegular(abs, budget);
+    if (!read?.whole) {
+      const stat = read ? undefined : await fs.lstat(abs).catch(() => undefined);
+      if (stat?.isSymbolicLink()) notes[file] = `a symlink to ${JSON.stringify(await fs.readlink(abs).catch(() => "?"))}; do not read it`;
+      else if (stat && !stat.isFile()) notes[file] = "not a regular file; do not read it";
+      continue;
+    }
     const text = read.bytes.toString("utf8");
     if (text.includes("\0")) continue;
     contents[file] = text;
     budget -= text.length;
   }
-  return { diff: truncated ? diff.slice(0, MAX_DIFF) : diff, truncated, untracked, contents, base };
+  return { diff: truncated ? diff.slice(0, MAX_DIFF) : diff, truncated, untracked, contents, notes, base };
 }
 
-export function buildBrief(task: Task, d: { diff: string; truncated: boolean; untracked: string[]; contents?: Record<string, string>; base?: string; warnings?: string[]; verify?: string[] }, skills = "") {
+export function buildBrief(task: Task, d: { diff: string; truncated: boolean; untracked: string[]; contents?: Record<string, string>; notes?: Record<string, string>; base?: string; warnings?: string[]; verify?: string[] }, skills = "") {
   const plan = task.plan;
   const list = (items: string[]) => (items.length ? items.map((i) => `- ${i}`).join("\n") : "- (none)");
   return [
@@ -73,7 +81,7 @@ export function buildBrief(task: Task, d: { diff: string; truncated: boolean; un
     "## Seams",
     ...(plan?.seams?.length ? plan.seams.map((x) => `- ${x.name} → ${x.testFile}: catches ${x.catches}${x.misses ? `; misses ${x.misses}` : ""}`) : ["- (none)"]),
     "## New files",
-    ...(d.untracked.length ? d.untracked.map((f) => (d.contents?.[f] === undefined ? `- ${f} (read it directly)` : `### ${f}\n\`\`\`\n${d.contents[f]}\n\`\`\``)) : ["- (none)"]),
+    ...(d.untracked.length ? d.untracked.map((f) => (d.notes?.[f] ? `- ${f} (${d.notes[f]})` : d.contents?.[f] === undefined ? `- ${f} (read it directly)` : `### ${f}\n\`\`\`\n${d.contents[f]}\n\`\`\``)) : ["- (none)"]),
     ...(d.verify?.length ? ["## Verify", "The gate runs these commands on the real project in parallel with this review, and the task closes only if they pass. You cannot run them: do not claim you did.", ...d.verify.map((c) => `- \`${c}\``)] : []),
     ...(d.warnings?.length ? ["## Automated warnings", "Line scans of the added code. They are fuzzy: judge each one against the code, and block only on a real problem.", ...d.warnings] : []),
     `## Diff (git diff ${d.base ?? "HEAD"})${d.truncated ? `\nTRUNCATED to the first ${MAX_DIFF} characters; inspect the rest with your tools.` : ""}`,

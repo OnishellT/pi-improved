@@ -170,7 +170,7 @@ test("an untracked file over the budget is skipped without being read; small one
   assert.match(f.brief(), /### small\.ts\n```\nexport const a = 1;/);
 });
 
-test("a new link or FIFO is listed but never read into the brief", { timeout: 10_000 }, async (t) => {
+test("a new link or FIFO is named for what it is, never read into the brief or sent to be read", { timeout: 10_000 }, async (t) => {
   const root = await tempDir("pi-review-");
   await fs.writeFile(path.join(root, "secret.txt"), "token = 1");
   fifo(t, path.join(root, "pipe"));
@@ -179,7 +179,7 @@ test("a new link or FIFO is listed but never read into the brief", { timeout: 10
   const f = fakeExec({ wait: ok("VERDICT: APPROVED") });
   const exec: any = (cmd: string, args: string[], o: any) => (cmd === "git" && args[0] === "ls-files" ? Promise.resolve(ok("pipe\0to-pipe\0to-secret\0")) : f.exec(cmd, args, o));
   await reviewDiff(exec, root, task, "p/m");
-  for (const file of ["pipe", "to-pipe", "to-secret"]) assert.match(f.brief(), new RegExp(`- ${file} \\(read it directly\\)`));
+  assert.match(f.brief(), /- pipe \(not a regular file; do not read it\)\n- to-pipe \(a symlink to "pipe"; do not read it\)\n- to-secret \(a symlink to "secret\.txt"; do not read it\)/);
   assert.doesNotMatch(f.brief(), /token = 1/);
 });
 
