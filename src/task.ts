@@ -17,7 +17,7 @@ import { phaseSkills, skillsBlock } from "./skills.ts";
 import { readManifest, understandingOf, type Manifest } from "./manifest.ts";
 import { inFiles, oneLine, readTask, resolveInside, updateTask, writeTask, type Decision, type Plan, type Task } from "./task-state.ts";
 import { recordUnderstanding } from "./telemetry.ts";
-import { QUESTION_NUDGE, TASK_NUDGE, assistantText, endsOnQuestion, planText, taskPrompt } from "./task-prompt.ts";
+import { QUESTION_NUDGE, TASK_NUDGE, assistantText, endsOnQuestion, taskPrompt } from "./task-prompt.ts";
 
 const MAX_NUDGES = 2; // "call task_plan" / "use ask_user" reminders per user message
 const MAX_TICKET_TEXT = 300_000; // characters of tracker output kept as evidence
@@ -67,7 +67,7 @@ const readInside = async (root: string, rel: string) => {
 };
 
 type PlanParams = Omit<Plan, "decisions" | "intent"> & { intent: string; decisions: { question: string; options: string[]; source?: string }[] };
-/** An ADR is only written once the user approves the plan. */
+/** An ADR is only written once the plan passes its gates and is recorded. */
 type PendingAdr = { decision: Decision; adr: AdrInput };
 
 export function registerTask(pi: ExtensionAPI) {
@@ -102,7 +102,7 @@ export function registerTask(pi: ExtensionAPI) {
     const known = answers.get(key);
     if (known !== undefined) return known;
     const answer = await selectOrType(ctx, question, options);
-    if (answer === undefined) throw new Error(`The user cancelled the ${what} question, so the plan is not approved. Stop and wait for the user.`);
+    if (answer === undefined) throw new Error(`The user cancelled the ${what} question, so the plan stops here. Stop and wait for the user.`);
     answers.set(key, answer);
     return answer;
   };
@@ -180,18 +180,15 @@ export function registerTask(pi: ExtensionAPI) {
     } else ctx.ui.notify("Plan check: OK.", "info");
   };
 
-  /** Fast path: a small plan with no risk trigger already passed the same deterministic gates; the dialog adds only cost. */
-  const approve = async (ctx: any, plan: Plan, manifest: Manifest) => {
+  /** No approval dialog: the person confirms at the end, with every file written. One line says the plan is in, with its risk reasons; task.json keeps the plan. */
+  const announce = (ctx: any, plan: Plan, manifest: Manifest) => {
     const risk = planRiskReasons(plan, manifest);
-    if (!risk.length) return void ctx.ui.notify(`Small plan, gates passed: no approval needed.\n\n${planText(plan)}`, "info");
-    ctx.ui.notify(`Plan needs your approval: ${risk.join("; ")}.`, "info");
-    if (await ctx.ui.confirm("Approve the plan?", planText(plan))) return;
-    const feedback = await ctx.ui.input("What should change?");
-    throw new Error(`The user did not approve the plan. Feedback: ${feedback || "(none)"}. Revise it and call task_plan again.`);
+    const count = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+    ctx.ui.notify(`Plan recorded: ${count(plan.steps.length, "step")}, ${count(plan.files.length, "file")}. Implementing.${risk.length ? ` Risk: ${risk.join("; ")}.` : ""}`, "info");
   };
 
   pi.registerCommand("task", {
-    description: "Start a task: the agent investigates and proposes a plan, you approve it. /task done or /task cancel ends it",
+    description: "Start a task: the agent plans and implements it, you confirm the files it wrote at the end. /task done or /task cancel ends it",
     handler: async (args, ctx) => {
       const root = ctx.cwd;
       const arg = args.trim();
@@ -247,7 +244,7 @@ export function registerTask(pi: ExtensionAPI) {
   pi.registerTool({
     name: "task_plan",
     label: "Task plan",
-    description: "Submit the plan for the active task. Code resolves undocumented decisions with the user and asks for approval. Call it once exploration is done.",
+    description: "Submit the plan for the active task. Code resolves undocumented decisions with the user, records the plan and starts implementing. Call it once exploration is done.",
     parameters: Type.Object({
       intent: Type.String({ minLength: 1, description: "The ticket restated in your own words, one short paragraph" }),
       summary: Type.String(),
@@ -296,7 +293,6 @@ export function registerTask(pi: ExtensionAPI) {
 
       const manifest = await readManifest(root);
       await runPlanCheck(ctx, root, task, plan, evidence, manifest, signal);
-      await approve(ctx, plan, manifest);
 
       const baseCommit = task.baseCommit ?? (await gitHead(pi.exec.bind(pi), root));
       for (const { decision, adr } of pending) decision.source = await writeAdr(root, adr);
@@ -306,6 +302,7 @@ export function registerTask(pi: ExtensionAPI) {
         if (baseCommit) t.baseCommit = baseCommit;
       });
       ticketText.delete(root);
+      announce(ctx, plan, manifest);
       const decided = plan.decisions.filter((d) => d.answer).map((d) => `- ${d.question} -> ${d.answer}${d.source ? ` (${d.source})` : ""}`);
       const settled = decided.length
         ? `\n\nDecisions already made by the user (do not ask again):\n${decided.join("\n")}\npi wrote each one as an ADR at the path shown. They belong to this change and go in the PR: keep them, do not rewrite or delete them, and do not write ADRs for these yourself.`
@@ -313,7 +310,7 @@ export function registerTask(pi: ExtensionAPI) {
       // Implementation starts here; skills the plan block already loaded are not sent twice.
       const skills = await skillsBlock(root, "implement", await phaseSkills(root, "plan"));
       return {
-        content: [{ type: "text", text: "Plan approved. First write the tests at the agreed seams in the listed test files and run ONLY those test files to see them fail; then implement until they pass. Change only the listed files, use the agreed interface names and follow the decisions (read the ADRs they cite). Do not change existing tests or the verify configuration (test scripts, verify commands) to make verify pass, unless the ticket asks for it: a failing existing test means the code is wrong. Do not run the full verify; it runs automatically. If the new tests or a service they need cannot run here, keep implementing: verify runs at the end and reports what did not run." + settled + (skills ? `\n\n${skills}` : "") }],
+        content: [{ type: "text", text: "Plan recorded. First write the tests at the agreed seams in the listed test files and run ONLY those test files to see them fail; then implement until they pass. Change only the listed files, use the agreed interface names and follow the decisions (read the ADRs they cite). Do not change existing tests or the verify configuration (test scripts, verify commands) to make verify pass, unless the ticket asks for it: a failing existing test means the code is wrong. Do not run the full verify; it runs automatically. If the new tests or a service they need cannot run here, keep implementing: verify runs at the end and reports what did not run." + settled + (skills ? `\n\n${skills}` : "") }],
         details: { plan },
       };
     },

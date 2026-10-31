@@ -127,7 +127,7 @@ export interface Limits {
   verifyEvery: number;
   /** Changed lines in one change (lockfiles, generated and vendored paths not counted) above which the diff is high risk, so the review checks that it has one purpose. */
   changeCap: number;
-  /** Largest plan that skips the approval dialog. */
+  /** Largest plan the "Plan recorded" notice calls small; above it, the size is listed as a risk reason. */
   fastPath: { files: number; interface: number; decisions: number };
 }
 

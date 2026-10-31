@@ -48,7 +48,7 @@ export const minLevelOf = (rule: ReviewPolicy | undefined) => rule?.minLevel ?? 
 const globRegex = (glob: string) =>
   new RegExp(`^${glob.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*\*\/|\*\*/g, (m) => (m.endsWith("/") ? "\u0000" : "\u0001")).replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]").replace(/\u0000/g, "(?:.*/)?").replace(/\u0001/g, ".*")}$`);
 
-/** Why a plan is not small enough to skip approval; empty = fast path. A small plan (up to `limits.fastPath` files, interface entries and decisions) with no risk trigger skips the human approval dialog. Cheap: counts and regexes on the planned paths. */
+/** Why a plan is risky: bigger than `limits.fastPath` (files, interface entries, decisions) or touching a risk trigger. The "Plan recorded" notice lists them; empty = small, low-risk plan. Cheap: counts and regexes on the planned paths. */
 export function planRiskReasons(plan: { files: string[]; interface: unknown[]; decisions: unknown[] }, manifest: Manifest): string[] {
   const reasons: string[] = [];
   const small = limitsOf(manifest).fastPath;
@@ -108,7 +108,7 @@ export interface RiskAssessment {
 export async function assessRisk(exec: Exec, root: string, task: Task | undefined, manifest: Manifest): Promise<RiskAssessment> {
   const rule = manifest.review;
   const ref = await diffBase(exec, root, task);
-  // Only a file that existed before the task (changed or deleted, `M`/`D`) can have been weakened to turn verify green. Files the approved plan names are meant to change.
+  // Only a file that existed before the task (changed or deleted, `M`/`D`) can have been weakened to turn verify green. Files the plan names are meant to change.
   const planned = (f: string) => !!task?.plan && (inFiles(task.plan.files, f) || task.plan.seams.some((x) => x.testFile === f));
   const watched = new Set(verifyFiles(manifest.verify));
   // Without a base, nothing tells which files existed before the task: every test and verify file counts.
