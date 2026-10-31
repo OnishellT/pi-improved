@@ -34,9 +34,10 @@ async function collectDiff(exec: Exec, root: string, task?: Pick<Task, "baseComm
   const untracked = await untrackedFiles(exec, root);
   const truncated = diff.length > MAX_DIFF;
   // New files are not in `git diff <base>`: inline them while the budget lasts so the reviewer does not spend turns reading them.
-  const contents: Record<string, string> = {};
+  // Null-prototype records, so a file named `__proto__` is stored like any other.
+  const contents: Record<string, string> = Object.create(null);
   // A new link or special file is not read, by this code or the reviewer: the brief says what it is.
-  const notes: Record<string, string> = {};
+  const notes: Record<string, string> = Object.create(null);
   let budget = MAX_DIFF - Math.min(diff.length, MAX_DIFF);
   for (const file of untracked) {
     // At most `budget` + 1 bytes are read, so a huge file is not read just to drop it; a link or a FIFO is not read at all.
