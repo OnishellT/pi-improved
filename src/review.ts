@@ -6,7 +6,7 @@ import { resolveBin } from "./bin.ts";
 import { ownRuns } from "./subagent-view.ts";
 import { oneLine, type Task } from "./task-state.ts";
 import { agentDir, ensureTrusted } from "./subagent-ext.ts";
-import { diffBase, git, untrackedFiles, type Exec } from "./git.ts";
+import { diffBase, git, readRegular, untrackedFiles, type Exec } from "./git.ts";
 import { collectDiffs, reviewWarnings } from "./quality.ts";
 import { isTestFile } from "./risk.ts";
 
@@ -37,11 +37,11 @@ async function collectDiff(exec: Exec, root: string, task?: Pick<Task, "baseComm
   const contents: Record<string, string> = {};
   let budget = MAX_DIFF - Math.min(diff.length, MAX_DIFF);
   for (const file of untracked) {
-    // stat first: do not read a huge file just to drop it.
-    const stat = await fs.stat(path.join(root, file)).catch(() => undefined);
-    if (!stat?.isFile() || stat.size > budget) continue;
-    const text = await fs.readFile(path.join(root, file), "utf8").catch(() => undefined);
-    if (text === undefined || text.length > budget || text.includes("\0")) continue;
+    // At most `budget` + 1 bytes are read, so a huge file is not read just to drop it; a link or a FIFO is not read at all.
+    const read = await readRegular(path.join(root, file), budget);
+    if (!read?.whole) continue;
+    const text = read.bytes.toString("utf8");
+    if (text.includes("\0")) continue;
     contents[file] = text;
     budget -= text.length;
   }

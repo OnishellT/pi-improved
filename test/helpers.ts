@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
@@ -30,6 +31,16 @@ export async function tempProject(files: Record<string, string>) {
     await fs.writeFile(path.join(root, name), content);
   }
   return root;
+}
+
+/** A FIFO at `file`, removed when test `t` ends. Its writer first releases a read that blocked on it, so a regression fails on the test's timeout without keeping the run alive; with the FIFO gone no other read can block. */
+export function fifo(t: { after: (fn: () => Promise<void>) => void }, file: string) {
+  execFileSync("mkfifo", [file]);
+  t.after(async () => {
+    const writer = await fs.open(file, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK).catch(() => undefined);
+    await fs.rm(file, { force: true });
+    await writer?.close();
+  });
 }
 
 /** Set env vars for `run` (undefined deletes), then put the previous values back. */

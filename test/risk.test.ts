@@ -4,7 +4,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { assessRisk, isTestFile, verifyFiles } from "../src/risk.ts";
 import type { Manifest } from "../src/manifest.ts";
-import { tempProject } from "./helpers.ts";
+import { fifo, tempProject } from "./helpers.ts";
 
 const base: Manifest = { version: 1, setup: "done", verify: [], connectors: [], review: { minLevel: "low" } };
 const plan = { summary: "", steps: [], files: [], decisions: [] as any[], interface: [], seams: [] };
@@ -41,18 +41,10 @@ test("a final newline does not count as one more line of an untracked file", asy
 });
 
 test("a new symlink, FIFO or binary never hangs the check and counts as git counts it; a text file too big to read still counts as big", { timeout: 10_000 }, async (t) => {
-  const { execFileSync } = await import("node:child_process");
   const root = await tempProject({ "small.txt": "a\nb\n", "big.txt": "x".repeat((1 << 20) + 1) });
   await fs.writeFile(path.join(root, "blob.bin"), Buffer.from("\0\n\n\n"));
   // git lists the link; a read through it would block on the FIFO for good. The FIFO itself stands for one swapped in after git listed a file.
-  const pipe = path.join(root, "pipe");
-  execFileSync("mkfifo", [pipe]);
-  // A regression fails on the timeout without keeping the test run alive: a writer releases a read that blocked, and with the FIFO gone no other read can.
-  t.after(async () => {
-    const writer = await fs.open(pipe, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK).catch(() => undefined);
-    await fs.rm(pipe, { force: true });
-    await writer?.close();
-  });
+  fifo(t, path.join(root, "pipe"));
   await fs.symlink("pipe", path.join(root, "link"));
   // `maxLines: 0` names the total in the reasons.
   const every = { ...base, review: { minLevel: "low", maxLines: 0 } } as Manifest;
