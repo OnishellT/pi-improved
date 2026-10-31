@@ -146,13 +146,24 @@ export default function (pi: ExtensionAPI) {
   // pi's ctx.compact() aborts the current run first, so a compaction the agent asks for waits until its run is over:
   // self_compact and the force threshold only schedule it, and the tool calls after that end the run (`terminate`).
   // `done` is set when pi compacted on its own (its auto-compaction) in the meantime, without the note.
-  let pending: { note?: string; done?: boolean } | undefined;
+  // `resume` is set when the agent asked for it or a call of its was blocked: then pi sends it a message to go on.
+  let pending: { note?: string; done?: boolean; resume: boolean } | undefined;
   let justCompacted = false; // no tool call since the last compaction: another one now would only summarize the summary
   const scheduled = "Compaction is scheduled, so this call did not run. Pi compacts when this turn ends and then continues.";
   const forceSteer = "call self_compact now with a handoff note, as the only call in your reply; pi then compacts and continues.";
-  const scheduleForce = () => {
-    pending = {};
+  const scheduleForce = (resume: boolean) => {
+    pending = { resume };
     lastTier = "below";
+  };
+  // pi knows the usage again at the first response after a compaction. If it is still at the force threshold, forcing would
+  // only compact and resume in a loop, so it stops as after a failed compaction, until usage drops below the threshold.
+  let measureAfterCompaction = false;
+  const checkAfterCompaction = (ctx: ExtensionContext, tokens: number, effectiveWindow: number, state: string) => {
+    if (!measureAfterCompaction) return;
+    measureAfterCompaction = false;
+    if (state !== "force") return;
+    forceFailed = true;
+    report(ctx, `Context is still at the force threshold after compaction (${tokens.toLocaleString()} of ${effectiveWindow.toLocaleString()} tokens), so it is not forced again until usage drops below it.`);
   };
 
   pi.registerTool({
@@ -169,7 +180,7 @@ export default function (pi: ExtensionAPI) {
       const text = (value: string) => [{ type: "text" as const, text: value }];
       if (compacting) return { content: text("Compaction is already in progress."), details: undefined };
       if (justCompacted) return { content: text("The context was just compacted. Continue with the next action."), details: undefined };
-      pending = { note: note ?? pending?.note };
+      pending = { note: note ?? pending?.note, resume: true };
       return { content: text("Compaction scheduled. Pi compacts when this turn ends and then continues."), details: undefined, terminate: true };
     },
   });
@@ -182,6 +193,7 @@ export default function (pi: ExtensionAPI) {
     pending = undefined;
     if (!request || event.aborted) return;
     if (!request.done && !(await compact(ctx, request.note))) return;
+    if (!request.resume) return;
     const content = request.done && request.note
       ? `Pi compacted the context. Continue with the next action from your handoff note:\n${request.note}`
       : `Compaction done. Continue with the next action from the ${request.note ? "handoff note" : "summary"}.`;
@@ -192,7 +204,7 @@ export default function (pi: ExtensionAPI) {
     if (event.messageType === "user") justCompacted = false;
   });
 
-  pi.on("turn_end", (_event, ctx) => {
+  pi.on("turn_end", (event, ctx) => {
     if (pending?.done) pending = undefined; // pi compacted during the run and the agent went on by itself
     // A continuation from here would override the `terminate` that ends the run before the scheduled compaction.
     if (pending) return;
@@ -200,11 +212,15 @@ export default function (pi: ExtensionAPI) {
     if (!usage || compacting) return;
     if (configProblem(ctx, usage.effectiveWindow)) return;
     const state = thresholdState(usage.tokens!, usage.effectiveWindow, config);
+    checkAfterCompaction(ctx, usage.tokens!, usage.effectiveWindow, state);
     if (state !== "force") forceFailed = false;
     if (state === "force") {
       if (forceFailed) return;
-      // The turn made no tool call (they would have been blocked): give the model one turn to write a handoff note.
-      scheduleForce();
+      // No tool results: the agent gave its answer and the run ends here, so pi compacts after it, with no resume, like
+      // pi's own threshold compaction. Otherwise the run goes on with the next response, which can call self_compact.
+      const answered = event.toolResults.length === 0;
+      scheduleForce(!answered);
+      if (answered) return;
       return {
         entries: [{
           type: "custom_message",
@@ -212,7 +228,6 @@ export default function (pi: ExtensionAPI) {
           content: `Context force threshold reached (${usage.tokens!.toLocaleString()} of ${usage.effectiveWindow.toLocaleString()} tokens): ${forceSteer}`,
           display: true,
         }],
-        continue: true,
       };
     }
     if (state !== lastTier && (state === "notice" || state === "warning")) {
@@ -235,12 +250,17 @@ export default function (pi: ExtensionAPI) {
   pi.on("tool_call", (event, ctx) => {
     if (event.toolName === "self_compact") return;
     justCompacted = false;
-    if (pending && !pending.done) return { block: true, terminate: true, reason: scheduled };
+    if (pending && !pending.done) {
+      pending.resume = true; // the agent had more to do
+      return { block: true, terminate: true, reason: scheduled };
+    }
     const usage = usageFor(ctx);
-    if (!usage || forceFailed || compacting || checkThresholds(config, usage.effectiveWindow)) return;
-    if (thresholdState(usage.tokens!, usage.effectiveWindow, config) !== "force") return;
+    if (!usage || compacting || checkThresholds(config, usage.effectiveWindow)) return;
+    const state = thresholdState(usage.tokens!, usage.effectiveWindow, config);
+    checkAfterCompaction(ctx, usage.tokens!, usage.effectiveWindow, state);
+    if (state !== "force" || forceFailed) return;
     // No `terminate` on the first blocked call: the model gets one turn to call self_compact with a note. Later calls end the run.
-    scheduleForce();
+    scheduleForce(true);
     return { block: true, reason: `Context is at the force threshold, so this call did not run: ${forceSteer}` };
   });
 
@@ -289,6 +309,7 @@ export default function (pi: ExtensionAPI) {
     compacting = false;
     forceFailed = false;
     justCompacted = true;
+    measureAfterCompaction = true;
     // Our own compaction runs after `pending` was taken, so this is pi's auto-compaction doing the scheduled one.
     if (pending) pending.done = true;
   });
