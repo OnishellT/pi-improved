@@ -55,6 +55,8 @@ const tick = () => new Promise((resolve) => setImmediate(resolve));
 const until = async (check: () => boolean) => {
   for (let i = 0; i < 200 && !check(); i++) await new Promise((resolve) => setTimeout(resolve, 5));
 };
+/** Gives that warning time to show up, to check that it does not. */
+const quiet = () => new Promise((resolve) => setTimeout(resolve, 50));
 
 test("notice, then warning, each once per tier", async () => {
   const s = await session();
@@ -349,8 +351,26 @@ test("during setup, a failed compaction at the answer resumes with the nudge, an
   await settling;
   assert.equal(s.resumes.length, 1);
   assert.match(s.resumes[0].message.content, /^Compaction failed: provider down\. Continue with the next action; do not call self_compact again until the context grows\.\n\nSetup is not finished/);
-  await new Promise((resolve) => setTimeout(resolve, 50));
+  await quiet();
   assert.deepEqual(s.warnings, []);
+});
+
+test("during setup, a failed self_compact resumes the agent without the nudge, and setup nudges the resumed run when it stops", async () => {
+  const s = await session({ setupRunning: true });
+  await s.selfCompactTool("next: step 4");
+  assert.equal(await s.h.emit("agent_before_settle", { outcome: "completed" }, s.ctx), undefined, "the agent asked to go on");
+  const settling = s.settle();
+  await tick();
+  s.compactions[0].options.onError(new Error("provider down"));
+  await settling;
+  assert.deepEqual(s.resumes.map((r) => r.message.content), ["Compaction failed: provider down. Continue with the next action; do not call self_compact again until the context grows."]);
+  await quiet();
+  assert.deepEqual(s.warnings, []);
+
+  await s.h.emit("before_agent_start", { messageType: "custom" }, s.ctx);
+  const nudge: any = await s.h.emit("agent_before_settle", { outcome: "completed" }, s.ctx);
+  assert.equal(nudge?.entries?.[0]?.customType, "setup-nudge");
+  assert.equal(nudge?.continue, true);
 });
 
 test("a buffer (\"1k\") that leaves no window turns enforcement off with one error", async () => {
