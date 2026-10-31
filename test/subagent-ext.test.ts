@@ -3,6 +3,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
+import { pathToFileURL } from "node:url";
 import extension from "../src/index.ts";
 import { agentDir, ensureTrusted, hasGlobalSubagent, loadBundledSubagent } from "../src/subagent-ext.ts";
 import { fakePi, tempProject, withEnv } from "./helpers.ts";
@@ -34,6 +35,18 @@ test("ensureTrusted leaves a corrupt trust file untouched and trusts nothing", a
 test("hasGlobalSubagent accepts object entries in settings packages", async () => {
   const dir = await tempProject({ "settings.json": JSON.stringify({ packages: [{ source: "npm:@earendil-works/pi-subagent" }] }) });
   assert.equal(hasGlobalSubagent(dir), true);
+});
+
+test("a ~ or file:// agent dir is expanded the way pi does, so a global pi-subagent there is found", async () => {
+  const home = await tempProject({ "agent/extensions/subagent/index.ts": "" });
+  await withEnv({ HOME: home, PI_CODING_AGENT_DIR: "~/agent" }, async () => {
+    assert.equal(agentDir(), path.join(home, "agent"));
+    assert.equal(hasGlobalSubagent(), true);
+  });
+  await withEnv({ PI_CODING_AGENT_DIR: pathToFileURL(path.join(home, "agent")).href }, async () => {
+    assert.equal(agentDir(), path.join(home, "agent"));
+    assert.equal(hasGlobalSubagent(), true);
+  });
 });
 
 test("tests run against a temp agent dir, never the real one", () => {
