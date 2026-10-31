@@ -121,12 +121,16 @@ export default function (pi: ExtensionAPI) {
     });
   };
 
-  const compact = (ctx: ExtensionContext, note?: string) => {
-    if (compacting) return;
+  /** Compacts with the note. Resolves true once pi has compacted, false when it failed or another compaction is running. */
+  const compact = (ctx: ExtensionContext, note?: string) => new Promise<boolean>((resolve) => {
+    if (compacting) return resolve(false);
     compacting = true;
     ctx.compact({
       customInstructions: [config.prompt, note ? `Agent handoff note:\n${note}` : ""].filter(Boolean).join("\n\n"),
-      onComplete: () => { compacting = false; },
+      onComplete: () => {
+        compacting = false;
+        resolve(true);
+      },
       onError: (error) => {
         compacting = false;
         forceFailed = true;
@@ -134,38 +138,82 @@ export default function (pi: ExtensionAPI) {
         try {
           report(ctx, `Self-compaction failed: ${error.message}`);
         } catch {}
+        resolve(false);
       },
     });
+  });
+
+  // pi's ctx.compact() aborts the current run first, so a compaction the agent asks for waits until its run is over:
+  // self_compact and the force threshold only schedule it, and the tool calls after that end the run (`terminate`).
+  // `done` is set when pi compacted on its own (its auto-compaction) in the meantime, without the note.
+  let pending: { note?: string; done?: boolean } | undefined;
+  let justCompacted = false; // no tool call since the last compaction: another one now would only summarize the summary
+  const scheduled = "Compaction is scheduled, so this call did not run. Pi compacts when this turn ends and then continues.";
+  const forceSteer = "call self_compact now with a handoff note, as the only call in your reply; pi then compacts and continues.";
+  const scheduleForce = () => {
+    pending = {};
+    lastTier = "below";
   };
 
   pi.registerTool({
     name: "self_compact",
     label: "Self-compact",
-    description: "Compact the conversation now. Add an optional handoff note with the goal, decisions, current state, and next action to preserve across compaction.",
-    promptSnippet: "self_compact: preserve progress and continue after context compaction",
+    description: "End your turn so pi compacts the conversation and then continues. Add an optional handoff note with the goal, decisions, current state, and next action to preserve across compaction.",
+    promptSnippet: "self_compact: end the turn, compact the context, and continue from a handoff note",
     promptGuidelines: [
       "Use self_compact when context nears the warning threshold, between steps: once a step is finished and checked (tests pass, a commit is made), not in the middle of an edit or while you still need a tool's output. In the handoff note, give the next action and what must not be redone.",
+      "Calling self_compact ends your turn: pi compacts, then sends you a message to continue. Make it the last and only call in its reply.",
     ],
     parameters: Type.Object({ note: Type.Optional(Type.String({ description: "Continuation state to preserve in the compaction summary" })) }),
-    execute: async (_id, { note }, _signal, _update, ctx) => {
-      const running = compacting;
-      compact(ctx, note);
-      return { content: [{ type: "text", text: running ? "Compaction is already in progress." : "Compaction requested. Continue from the summary and handoff note." }], details: undefined };
+    execute: async (_id, { note }) => {
+      const text = (value: string) => [{ type: "text" as const, text: value }];
+      if (compacting) return { content: text("Compaction is already in progress."), details: undefined };
+      if (justCompacted) return { content: text("The context was just compacted. Continue with the next action."), details: undefined };
+      pending = { note: note ?? pending?.note };
+      return { content: text("Compaction scheduled. Pi compacts when this turn ends and then continues."), details: undefined, terminate: true };
     },
   });
 
+  // agent_settled, not agent_end: pi has cleared the run here, so ctx.compact()'s abort has nothing to stop and its wait
+  // for idle returns at once. pi awaits this handler, so `pi -p` does not exit before the compaction and the resumed run.
+  // On Escape (aborted) the scheduled compaction is dropped. A resume sent from here starts once the handlers are done.
+  pi.on("agent_settled", async (event, ctx) => {
+    const request = pending;
+    pending = undefined;
+    if (!request || event.aborted) return;
+    if (!request.done && !(await compact(ctx, request.note))) return;
+    const content = request.done && request.note
+      ? `Pi compacted the context. Continue with the next action from your handoff note:\n${request.note}`
+      : `Compaction done. Continue with the next action from the ${request.note ? "handoff note" : "summary"}.`;
+    pi.sendMessage({ customType: "self_compact_resume", content, display: true }, { triggerTurn: true });
+  });
+
+  pi.on("before_agent_start", (event) => {
+    if (event.messageType === "user") justCompacted = false;
+  });
+
   pi.on("turn_end", (_event, ctx) => {
+    if (pending?.done) pending = undefined; // pi compacted during the run and the agent went on by itself
+    // A continuation from here would override the `terminate` that ends the run before the scheduled compaction.
+    if (pending) return;
     const usage = usageFor(ctx);
     if (!usage || compacting) return;
     if (configProblem(ctx, usage.effectiveWindow)) return;
     const state = thresholdState(usage.tokens!, usage.effectiveWindow, config);
     if (state !== "force") forceFailed = false;
     if (state === "force") {
-      if (!forceFailed) {
-        compact(ctx);
-        lastTier = "below";
-      }
-      return;
+      if (forceFailed) return;
+      // The turn made no tool call (they would have been blocked): give the model one turn to write a handoff note.
+      scheduleForce();
+      return {
+        entries: [{
+          type: "custom_message",
+          customType: "self_compact_threshold",
+          content: `Context force threshold reached (${usage.tokens!.toLocaleString()} of ${usage.effectiveWindow.toLocaleString()} tokens): ${forceSteer}`,
+          display: true,
+        }],
+        continue: true,
+      };
     }
     if (state !== lastTier && (state === "notice" || state === "warning")) {
       lastTier = state;
@@ -185,11 +233,15 @@ export default function (pi: ExtensionAPI) {
   });
 
   pi.on("tool_call", (event, ctx) => {
+    if (event.toolName === "self_compact") return;
+    justCompacted = false;
+    if (pending && !pending.done) return { block: true, terminate: true, reason: scheduled };
     const usage = usageFor(ctx);
-    if (!usage || event.toolName === "self_compact" || forceFailed || checkThresholds(config, usage.effectiveWindow)) return;
+    if (!usage || forceFailed || compacting || checkThresholds(config, usage.effectiveWindow)) return;
     if (thresholdState(usage.tokens!, usage.effectiveWindow, config) !== "force") return;
-    compact(ctx);
-    return { block: true, terminate: true, reason: "Forced self-compaction at the configured context threshold." };
+    // No `terminate` on the first blocked call: the model gets one turn to call self_compact with a note. Later calls end the run.
+    scheduleForce();
+    return { block: true, reason: `Context is at the force threshold, so this call did not run: ${forceSteer}` };
   });
 
   const configureForModel = async (provider: string | undefined, modelId: string | undefined, ctx: ExtensionContext) => {
@@ -236,6 +288,9 @@ export default function (pi: ExtensionAPI) {
     lastTier = "below";
     compacting = false;
     forceFailed = false;
+    justCompacted = true;
+    // Our own compaction runs after `pending` was taken, so this is pi's auto-compaction doing the scheduled one.
+    if (pending) pending.done = true;
   });
   pi.on("session_shutdown", (_event, ctx) => {
     ctx.ui.setFooter(undefined);
@@ -258,6 +313,7 @@ export default function (pi: ExtensionAPI) {
 
   pi.registerCommand("self-compact-now", {
     description: "Compact now, optionally preserving a handoff note",
-    handler: async (args, ctx) => compact(ctx, args.trim() || undefined),
+    // The user's own command: no resume afterwards, as with `/compact`.
+    handler: async (args, ctx) => void compact(ctx, args.trim() || undefined),
   });
 }
