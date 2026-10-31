@@ -49,3 +49,9 @@ export interface SelfCompactPayload {
   /** pi resumes the agent after the compaction (while scheduled), or has just sent the resume (once it is over). */
   resume: boolean;
 }
+
+/** Sent to self-compact to have the agent resumed after the scheduled compaction, with `message` added to the resume. */
+export const SELF_COMPACT_RESUME_EVENT = "pi-improved:self-compact-resume";
+export interface SelfCompactResumePayload {
+  message: string;
+}
