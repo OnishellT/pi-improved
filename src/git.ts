@@ -61,32 +61,40 @@ const lineCount = (bytes: Buffer) => {
   return bytes.length && bytes[bytes.length - 1] !== 10 ? n + 1 : n;
 };
 
-/** Largest new file whose lines are counted; a bigger one, a symlink or anything else that is not a regular file shows without counts. */
-const COUNT_LIMIT = 1 << 20;
-
 /**
- * +/- lines of a new untracked file. It is opened without following a symlink and without blocking on a FIFO, the opened file is
- * the one checked, and at most `COUNT_LIMIT` + 1 bytes are read, so nothing swapped in or grown meanwhile can stall the dialog.
+ * A file's bytes, read without following a symlink and without blocking on a FIFO: the opened file is the one checked, and at most
+ * `limit` + 1 bytes are read, so nothing swapped in or grown meanwhile can stall the caller. Undefined when it cannot be opened or is
+ * not a regular file. `whole` is false when it has more than `limit` bytes, or more than it had when checked; `bytes` is then the start.
  */
-async function newFileCounts(file: string): Promise<Pick<FileChange, "added" | "removed" | "binary">> {
+export async function readRegular(file: string, limit: number): Promise<{ bytes: Buffer; whole: boolean } | undefined> {
   const { O_RDONLY, O_NOFOLLOW = 0, O_NONBLOCK = 0 } = fs.constants;
   const handle = await fs.open(file, O_RDONLY | O_NOFOLLOW | O_NONBLOCK).catch(() => undefined);
-  if (!handle) return {};
+  if (!handle) return undefined;
   try {
     const stat = await handle.stat();
-    if (!stat.isFile()) return {};
-    const bytes = Buffer.alloc(Math.min(stat.size, COUNT_LIMIT) + 1);
+    if (!stat.isFile()) return undefined;
+    const bytes = Buffer.alloc(Math.min(stat.size, limit) + 1);
     let size = 0;
     for (let n = 1; n && size < bytes.length; size += n) n = (await handle.read(bytes, size, bytes.length - size, size)).bytesRead;
-    // git's own test: a NUL byte in the first 8000 bytes makes the file binary.
-    if (bytes.subarray(0, Math.min(size, 8000)).includes(0)) return { binary: true };
-    // A full buffer means more bytes than the limit, or than the file had when checked: no counts rather than wrong ones.
-    return size === bytes.length ? {} : { added: lineCount(bytes.subarray(0, size)), removed: 0 };
+    return { bytes: bytes.subarray(0, size), whole: size < bytes.length };
   } catch {
-    return {};
+    return undefined;
   } finally {
     await handle.close().catch(() => {});
   }
+}
+
+/** Largest new file whose lines are counted; a bigger one, a symlink or anything else that is not a regular file shows without counts. */
+const COUNT_LIMIT = 1 << 20;
+
+/** +/- lines of a new untracked file, read with `readRegular`. */
+export async function newFileCounts(file: string): Promise<Pick<FileChange, "added" | "removed" | "binary">> {
+  const read = await readRegular(file, COUNT_LIMIT);
+  if (!read) return {};
+  // git's own test: a NUL byte in the first 8000 bytes makes the file binary.
+  if (read.bytes.subarray(0, 8000).includes(0)) return { binary: true };
+  // Not whole: more bytes than the limit, or than the file had when checked. No counts rather than wrong ones.
+  return read.whole ? { added: lineCount(read.bytes), removed: 0 } : {};
 }
 
 /**
