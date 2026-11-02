@@ -6,8 +6,9 @@ import { resolveBin } from "./bin.ts";
 import { desktopMissing } from "./computer/desktop.ts";
 import { which } from "./computer/which.ts";
 import { bundledExtension, hasGlobalSubagent } from "./subagent-ext.ts";
-import { checkLimits, PREFERENCE_KEYS, readGlobal } from "./config.ts";
+import { checkLimits, isObject, PREFERENCE_KEYS, readGlobal } from "./config.ts";
 import { configFiles, readManifest, readProjectManifest, UNDERSTANDING, type Manifest } from "./manifest.ts";
+import { checkProfileFile } from "./self-compact/profile.ts";
 import { listSkills } from "./skills.ts";
 import { chromeHeadless, credentialStatus, hasNix, installMessage, NIXPKGS, nixPackage, type CredentialStatus } from "./nix.ts";
 
@@ -72,6 +73,59 @@ async function nixChecks(nix: NixProbe, loggedIn: () => Promise<boolean>): Promi
 /** The `.bundled/` folder is made by the package's postinstall, which a package manager may skip. */
 export const extensionDetail = (ext: string | undefined) => ext ?? "missing: without it the review never finishes. Run `npm install` in the package folder (`npm run postinstall` when npm skips install scripts)";
 
+/** Project-file keys that are state, written by /setup and /task (`mode` is a legacy key nothing reads; it is tolerated). */
+const STATE_KEYS = ["version", "setup", "language", "startedAt", "completedAt", "verify", "agentlint", "agentlintStep", "connectors", "mode"];
+
+type KeyCheck = (value: unknown) => string | undefined;
+const shown = (value: unknown) => JSON.stringify(value);
+const listed = (allowed: readonly string[]) => allowed.map((a) => `"${a}"`).join(", ").replace(/, ([^,]*)$/, " or $1");
+const oneOf = (allowed: readonly string[]): KeyCheck => (v) => (allowed.includes(v as string) ? undefined : `${shown(v)} is not valid: use ${listed(allowed)}`);
+const bool: KeyCheck = (v) => (typeof v === "boolean" ? undefined : `${shown(v)} is not valid: use true or false`);
+const atLeast = (min: number): KeyCheck => (v) => (typeof v === "number" && Number.isFinite(v) && v >= min ? undefined : `must be a number >= ${min}, not ${shown(v)}`);
+const object: KeyCheck = (v) => (isObject(v) ? undefined : `must be an object, not ${shown(v)}`);
+type Rule = (value: unknown, key: string) => string[];
+/** A rule from a check of the value alone. */
+const scalar = (check: KeyCheck): Rule => (v, key) => {
+  const problem = check(v);
+  return problem ? [`${key}: ${problem}`] : [];
+};
+/** An object whose known sub-keys each have a check; an unknown sub-key is reported. */
+const fields = (checks: Record<string, KeyCheck>): Rule => (value, key) =>
+  !isObject(value)
+    ? scalar(object)(value, key)
+    : Object.entries(value).flatMap(([sub, v]) => (v === null ? [] : Object.hasOwn(checks, sub) ? scalar(checks[sub])(v, `${key}.${sub}`) : [`${key}.${sub} is not a known key`]));
+const modelId: KeyCheck = (v) => (typeof v === "string" && /^[^/]+\/.+/.test(v) ? undefined : `must be "provider/model-id", not ${shown(v)}`);
+const globs: KeyCheck = (v) => (Array.isArray(v) && v.every((p) => typeof p === "string") ? undefined : `must be a list of globs, not ${shown(v)}`);
+const choice = ["ask", "always", "never"];
+
+/** Per preference key, what is wrong with a value; the code reads anything else as the default without a word. `limits` has its own check, `mode` is legacy. */
+const KEY_CHECKS: Record<string, Rule> = {
+  models: fields({ setup: modelId, implement: modelId, review: modelId, escalate: modelId }),
+  skills: scalar(object),
+  skillsOnDemand: scalar(object),
+  basePrompt: scalar(bool),
+  useAgentlint: scalar(oneOf(choice)),
+  useBend: scalar(oneOf(choice)),
+  maxReport: scalar(atLeast(200)),
+  contextWarn: scalar(atLeast(0)),
+  understanding: scalar(oneOf(UNDERSTANDING)),
+  subagentPanes: scalar(oneOf(["tern"])),
+  computer: scalar(object),
+  review: fields({ paths: globs, always: bool, never: bool, plan: bool, minLevel: oneOf(["off", "low", "high"]), maxLines: atLeast(0), maxFiles: atLeast(0), highLines: atLeast(0), highFiles: atLeast(0) }),
+  selfCompact: (v, key) => {
+    try {
+      checkProfileFile(v);
+      return [];
+    } catch (error: any) {
+      return [`${key}: ${error.message}`];
+    }
+  },
+};
+
+/** What is wrong with the preferences of one config file (a `null` means "unset" and is fine). */
+export const settingProblems = (config: Record<string, any>): string[] =>
+  PREFERENCE_KEYS.flatMap((key) => (config[key] === undefined || config[key] === null || !KEY_CHECKS[key] ? [] : KEY_CHECKS[key](config[key], key)));
+
 /** Environment checks. Never throws. `nix.resolve` is left out at session start: the first build downloads hundreds of MB, so nothing that needs Nix runs then. */
 export async function runDoctor(pi: ExtensionAPI, ctx: ExtensionContext, version = process.versions.node, nix: NixProbe = realNix): Promise<Check[]> {
   const probe = async (cmd: string, args: string[]) => {
@@ -111,6 +165,8 @@ export async function runDoctor(pi: ExtensionAPI, ctx: ExtensionContext, version
   if (globalError) notes.push(`${globalError}: the global file is ignored until it is fixed`);
   const notRead = Object.keys(globalConfig).filter((key) => !PREFERENCE_KEYS.includes(key));
   if (notRead.length) notes.push(`Not read from the global file (state or unknown keys): ${notRead.join(", ")}`);
+  const unknown = Object.keys(project ?? {}).filter((key) => !PREFERENCE_KEYS.includes(key) && !STATE_KEYS.includes(key));
+  if (unknown.length) notes.push(`Not read from the project file (unknown keys): ${unknown.join(", ")}`);
   const projectOnly = ["computer", "subagentPanes"].filter((key) => project && Object.hasOwn(project, key));
   if (projectOnly.length) notes.push(`${files.project.file} sets ${projectOnly.join(", ")}: ignored, these are read from the global file only`);
   checks.push({
@@ -123,6 +179,11 @@ export async function runDoctor(pi: ExtensionAPI, ctx: ExtensionContext, version
     ...checkLimits(project?.limits).problems.map((p) => `${files.project.file}: ${p}`),
   ];
   if (problems.length) checks.push({ name: "Limits", ok: false, detail: problems.join("; ") });
+  const settings = [
+    ...settingProblems(globalConfig).map((p) => `${files.global.file}: ${p}`),
+    ...settingProblems(project ?? {}).map((p) => `${files.project.file}: ${p}`),
+  ];
+  if (settings.length) checks.push({ name: "Settings", ok: false, detail: settings.join("; ") });
   // agentlint matters only to a project whose verify or policy runs it.
   if (manifest?.agentlint || manifest?.verify?.some((c) => c.includes("agentlint"))) {
     // The project's own command, as verify and the policy run it, only when the user runs /doctor: a repo's command never runs at session start.
@@ -143,19 +204,6 @@ export async function runDoctor(pi: ExtensionAPI, ctx: ExtensionContext, version
   if (globalConfig.computer?.desktop === "on") {
     const missing = desktopMissing();
     checks.push({ name: "Desktop", ok: !missing.length, detail: missing.length ? `on, but needs: ${missing.join(", ")}` : "on" });
-  }
-  // The code compares these with fixed values, so anything else acts as one of them without a word.
-  const choices: [string, unknown, string[]][] = [
-    ["mode", manifest?.mode, ["direct", "flow"]],
-    ["review.minLevel", manifest?.review?.minLevel, ["off", "low", "high"]],
-    ["useAgentlint", manifest?.useAgentlint, ["ask", "always", "never"]],
-    ["useBend", manifest?.useBend, ["ask", "always", "never"]],
-    ["understanding", manifest?.understanding, [...UNDERSTANDING]],
-  ];
-  for (const [name, value, allowed] of choices) {
-    if (value === undefined) continue;
-    const ok = allowed.includes(value as string);
-    checks.push({ name, ok, detail: ok ? String(value) : `${JSON.stringify(value)} is not valid: use ${allowed.map((a) => `"${a}"`).join(", ").replace(/, ([^,]*)$/, " or $1")}` });
   }
   // Skill lists drop unknown names silently: name them here.
   const known = await listSkills();
@@ -185,7 +233,14 @@ export function registerDoctor(pi: ExtensionAPI, nix: NixProbe = realNix) {
   pi.registerCommand("doctor", {
     description: "Check that the environment has everything pi-improved needs (the first run downloads the Nix packages)",
     handler: async (_args, ctx) => {
-      const checks = await runDoctor(pi, ctx, undefined, nix);
+      // The first run builds or downloads the Nix packages, which takes minutes: say so while it runs.
+      ctx.ui.setStatus?.("doctor", "doctor: checking... the first run downloads tmux, git, gh, bash and the headless browser (minutes)");
+      let checks: Check[];
+      try {
+        checks = await runDoctor(pi, ctx, undefined, nix);
+      } finally {
+        ctx.ui.setStatus?.("doctor", undefined);
+      }
       ctx.ui.notify(checks.map((c) => `${c.ok ? "✓" : "✗"} ${c.name}: ${c.detail}`).join("\n"), checks.every((c) => c.ok) ? "info" : "warning");
     },
   });

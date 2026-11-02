@@ -9,10 +9,11 @@ const models = [{ provider: "anthropic", id: "opus" }];
 const setup = async (exec: (cmd: string, args: string[]) => any, hasUI = true, mode?: string, extra = {}, nix: NixProbe = { has: async () => true, resolve: async (attr) => `/nix/store/x-${attr}` }) => {
   const root = await tempProject({ ".pi/workflow.json": JSON.stringify({ version: 1, setup: "done", verify: [], connectors: [], mode, models: { implement: "anthropic/opus", review: "openai/gpt-5" }, ...extra }) });
   const notes: { msg: string; level: string }[] = [];
-  const ctx: any = { cwd: root, hasUI, modelRegistry: { getAvailable: () => models }, ui: { notify: (msg: string, level: string) => notes.push({ msg, level }) } };
+  const status: (string | undefined)[] = [];
+  const ctx: any = { cwd: root, hasUI, modelRegistry: { getAvailable: () => models }, ui: { notify: (msg: string, level: string) => notes.push({ msg, level }), setStatus: (key: string, text?: string) => key === "doctor" && status.push(text) } };
   const h = fakePi(exec);
   registerDoctor(h.pi, nix);
-  return { ...h, ctx, notes };
+  return { ...h, ctx, notes, status };
 };
 
 test("node version gate", () => {
@@ -57,13 +58,11 @@ test("session_start never runs a command through Nix: no subagent probe, no buil
   assert.ok(!t.notes.some((n) => /subagent/.test(n.msg)), t.notes.map((n) => n.msg).join("|"));
 });
 
-test("/doctor validates mode: absent and valid pass, anything else fails", async () => {
-  for (const [mode, ok] of [[undefined, true], ["direct", true], ["flow", true], ["turbo", false]] as const) {
+test("/doctor tolerates the legacy mode key: no check, not reported as unknown", async () => {
+  for (const mode of ["direct", "turbo"]) {
     const t = await setup(() => ({ code: 0 }), true, mode);
     await t.commands.get("doctor").handler("", t.ctx);
-    const msg = t.notes[0].msg;
-    assert.equal(/✗ mode:/.test(msg), !ok, String(mode));
-    if (mode === "turbo") assert.match(msg, /"direct" or "flow"/);
+    assert.doesNotMatch(t.notes[0].msg, /mode/, mode);
   }
 });
 
@@ -71,11 +70,44 @@ test("/doctor flags option values the code would read as another value, and unkn
   const t = await setup(() => ({ code: 0 }), true, undefined, { review: { minLevel: "medium" }, useAgentlint: "Never", useBend: "never", understanding: "plan", skills: { plan: ["no-such-skill"], review: "pstack-review" } });
   await t.commands.get("doctor").handler("", t.ctx);
   const msg = t.notes[0].msg;
-  assert.match(msg, /✗ review\.minLevel: "medium" is not valid: use "off", "low" or "high"/);
-  assert.match(msg, /✗ useAgentlint: "Never" is not valid/);
-  assert.match(msg, /✓ useBend: never/);
-  assert.match(msg, /✗ understanding: "plan" is not valid: use "off", "end" or "plan\+end"/);
+  assert.match(msg, /✗ Settings: [^\n]*workflow\.json: review\.minLevel: "medium" is not valid: use "off", "low" or "high"/);
+  assert.match(msg, /workflow\.json: useAgentlint: "Never" is not valid/);
+  assert.doesNotMatch(msg, /useBend/);
+  assert.match(msg, /workflow\.json: understanding: "plan" is not valid: use "off", "end" or "plan\+end"/);
   assert.match(msg, /✗ Skills: skills\.plan: unknown skill "no-such-skill"; skills\.review is not a list/);
+});
+
+test("/doctor checks types and ranges in both files and names unknown project keys", async () => {
+  const empty = await tempProject({});
+  await withEnv({ PI_CODING_AGENT_DIR: path.join(empty, "agent") }, async () => {
+    await fs.mkdir(path.join(empty, "agent"), { recursive: true });
+    await fs.writeFile(path.join(empty, "agent", "pi-improved.json"), JSON.stringify({ maxReport: 100, models: { review: "gpt-5" }, subagentPanes: "Tern" }));
+    const t = await setup(() => ({ code: 0 }), true, undefined, { basePrompt: "false", modles: {}, review: { highLines: "800", typo: true }, selfCompact: { default: { bogus: 1 } }, models: { implement: null } });
+    await t.commands.get("doctor").handler("", t.ctx);
+    const settings = t.notes[0].msg.split("\n").find((l) => l.startsWith("✗ Settings"))!;
+    assert.match(settings, /pi-improved\.json: maxReport: must be a number >= 200, not 100/);
+    assert.match(settings, /pi-improved\.json: models\.review: must be "provider\/model-id", not "gpt-5"/);
+    assert.match(settings, /pi-improved\.json: subagentPanes: "Tern" is not valid: use "tern"/);
+    assert.match(settings, /workflow\.json: basePrompt: "false" is not valid: use true or false/);
+    assert.match(settings, /workflow\.json: review\.highLines: must be a number >= 0, not "800"/);
+    assert.match(settings, /workflow\.json: review\.typo is not a known key/);
+    assert.match(settings, /workflow\.json: selfCompact: Unknown setting default\.bogus/);
+    assert.doesNotMatch(settings, /implement/, "null unsets a value");
+    assert.match(t.notes[0].msg, /✗ Config: [^\n]*Not read from the project file \(unknown keys\): modles/);
+  });
+  const fine = await setup(() => ({ code: 0 }), true, undefined, { basePrompt: false, maxReport: 500, review: { paths: ["db/**"], minLevel: "low" } });
+  await fine.commands.get("doctor").handler("", fine.ctx);
+  assert.doesNotMatch(fine.notes[0].msg, /Settings|unknown keys/);
+});
+
+test("/doctor shows a status while it runs and clears it after, even when a check throws", async () => {
+  const t = await setup(() => ({ code: 0 }));
+  await t.commands.get("doctor").handler("", t.ctx);
+  assert.match(t.status[0]!, /checking.*first run downloads.*minutes/);
+  assert.equal(t.status.at(-1), undefined);
+  const broken = await setup(() => ({ code: 0 }), true, undefined, {}, { has: async () => { throw new Error("boom"); } });
+  await assert.rejects(broken.commands.get("doctor").handler("", broken.ctx), /boom/);
+  assert.deepEqual([broken.status.length, broken.status.at(-1)], [2, undefined]);
 });
 
 test("the agentlint check runs the project's own command", async () => {
