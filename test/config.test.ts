@@ -268,16 +268,21 @@ test("verifyRetries and failuresBeforeEscalation drive the gate", async () => {
     const root = await tempProject({ ".pi/workflow.json": JSON.stringify({ version: 1, setup: "done", verify: ["check"], connectors: [], models: { escalate: "p/strong" }, limits }) });
     const h = fakePi((cmd, args) => (cmd === "git" ? { code: 0, stdout: args[0] === "diff" ? "changed" : "" } : { code: 1, stdout: "boom" }));
     h.pi.events = { emit() {} };
-    h.pi.setModel = async () => true;
+    const switched: string[] = [];
+    h.pi.setModel = async (m: any) => (switched.push(`${m.provider}/${m.id}`), true);
     h.pi.getThinkingLevel = () => "off";
     registerGate(h.pi);
     const ui = fakeUI(["Leave it as is"]);
-    const ctx: any = { cwd: root, hasUI: true, ui, model: { provider: "p", id: "cheap" }, modelRegistry: { find: () => ({ provider: "p", id: "strong" }) } };
+    const ctx: any = { cwd: root, hasUI: true, ui, model: { provider: "p", id: "cheap" }, modelRegistry: { find: () => ({ provider: "p", id: "strong" }), getAvailable: () => [{ provider: "p", id: "strong" }] } };
     await h.emit("before_agent_start", { messageType: "user" }, ctx);
     await h.emit("tool_result", { toolName: "write" }, ctx);
     const results = [];
-    for (let i = 0; i < settles; i++) results.push(await h.emit("agent_before_settle", { outcome: "completed" }, ctx));
-    return { results, asked: ui.asked };
+    const switchedAt: number[] = [];
+    for (let i = 0; i < settles; i++) {
+      results.push(await h.emit("agent_before_settle", { outcome: "completed" }, ctx));
+      if (switched.length && !switchedAt.length) switchedAt.push(i + 1);
+    }
+    return { results, asked: ui.asked, switched, switchedAt };
   };
   const none = await run({ verifyRetries: 0 }, 1);
   assert.equal(none.results[0], undefined, "no retries: it asks at once and the answer stops it");
@@ -289,6 +294,7 @@ test("verifyRetries and failuresBeforeEscalation drive the gate", async () => {
   const defaults = await run({}, 3);
   assert.equal(defaults.asked.length, 0, "no 'keep trying?' before the escalation");
   assert.equal(defaults.results[2]?.entries[0].customType, "verify-diagnose");
+  assert.deepEqual([defaults.switched, defaults.switchedAt], [["p/strong"], [3]], "the escalate model takes the third failure");
 });
 
 test("planChecks sets the paid plan checks per task; 0 turns them off", async () => {
