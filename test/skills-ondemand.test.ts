@@ -99,7 +99,7 @@ async function run(root: string, answers: unknown[]): Promise<string[][]> {
 
 test("/skills toggles on-demand per phase", async () => {
   const root = await tempProject({});
-  const seen = await run(root, ["No changes", "◇ retro (on request)", "Done", "No changes", "No changes", "No changes", "No changes"]);
+  const seen = await run(root, ["Plan", "◇ retro (on request)", "Back", "Done"]);
   assert.deepEqual((await readManifest(root)).skillsOnDemand, { plan: ["how", "architect", "codebase-design", "retro"] });
   assert.ok(seen[1].includes("◇ retro (on request)") && seen[1].includes("· retro"));
 });
@@ -107,7 +107,7 @@ test("/skills toggles on-demand per phase", async () => {
 test("/skills moves a skill between inject and on request", async () => {
   const root = await tempProject({});
   await updateManifest(root, (m) => void ((m.skills = { plan: ["tdd", "retro"] }), (m.skillsOnDemand = { plan: ["grilling"] })));
-  await run(root, ["No changes", "◇ retro (on request)", "· tdd", "· tdd", "Done", "No changes", "No changes", "No changes", "No changes"]);
+  await run(root, ["Plan", "◇ retro (on request)", "· tdd", "· tdd", "Back", "Done"]);
   const m = await readManifest(root);
   assert.deepEqual(m.skills, { plan: ["tdd"] });
   assert.deepEqual(m.skillsOnDemand, { plan: ["grilling", "retro"] });
@@ -116,7 +116,7 @@ test("/skills moves a skill between inject and on request", async () => {
 test("/skills Defaults clears both overrides", async () => {
   const root = await tempProject({});
   await updateManifest(root, (m) => void ((m.skills = { plan: ["retro"] }), (m.skillsOnDemand = { plan: ["grilling"] })));
-  await run(root, ["No changes", "Defaults", "No changes", "No changes", "No changes", "No changes", "No changes"]);
+  await run(root, ["Plan", "Defaults", "Done"]);
   const m = await readManifest(root);
   assert.equal(m.skills, undefined);
   assert.equal(m.skillsOnDemand, undefined);
@@ -124,7 +124,7 @@ test("/skills Defaults clears both overrides", async () => {
 
 test("opt-in skills carry a marker in the /skills list and are not in any default list", async () => {
   const root = await tempProject({});
-  const seen = await run(root, ["No changes", "No changes", "No changes", "No changes", "No changes", "No changes"]);
+  const seen = await run(root, [...["Setup", "Plan", "Implement", "Diagnose", "Review", "Learn"].flatMap((p) => [p, "Back"]), "Done"]);
   assert.ok(seen.every((options) => options.every((o) => !/\[opt-in\]/.test(o) || OPT_IN.some((s) => o.includes(s)))));
   for (const names of Object.values(DEFAULT_ON_DEMAND)) for (const s of OPT_IN) assert.ok(!names.includes(s));
 });
