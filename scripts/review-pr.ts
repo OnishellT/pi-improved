@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { homedir, tmpdir } from "node:os";
 import { parseEnv } from "node:util";
 import { dirname, join, resolve } from "node:path";
-import { parseArgs, reviewConfig, usageLine } from "./review/config.ts";
+import { parseArgs, remainingMs, reviewConfig, usageLine } from "./review/config.ts";
 import { checkContextSize, contextDocs, linkedIssueBodies, skipsMarkdownOnly } from "./review/context.ts";
 import {
   changedLines,
@@ -61,6 +61,8 @@ const piEnv: Record<string, string> = {
   PI_TELEMETRY: "0",
 };
 let promptFile = resolve(import.meta.dirname, "review", "prompt.md");
+// When the review as a whole runs out of time (REVIEW_TIMEOUT_MS from the first reviewer run).
+let deadline = Infinity;
 // Home of the reviewer process: an empty scratch directory, not the owner's.
 let reviewerHome = tmpdir();
 
@@ -101,10 +103,10 @@ const usageText = `${usageLine}
 
 Reviews a pull request with the local reviewer and posts one review (inline comments,
 summary, confidence 1-5). --dry-run prints the review instead of posting it. A head that already
-has a local review is skipped, and from the fourth round by the same reviewer model on the run stops
-unless its last review had confidence 4 or more; --force overrides both, and --dry-run ignores both.
-A run is stopped after REVIEW_TIMEOUT_MS in total (default 60 min) or REVIEW_IDLE_MS without
-output (default 120 s).
+has a local review is skipped. A fourth round by the same reviewer model stops the run unless that
+model's last review had confidence 4 or more; rounds by other models do not count. --force overrides
+both, and --dry-run ignores both. The review stops after REVIEW_TIMEOUT_MS in total, retries
+included (default 60 min), or after REVIEW_IDLE_MS without output (default 120 s).
 Env: REVIEW_PROVIDER, REVIEW_MODEL, REVIEW_THINKING, REVIEW_TIMEOUT_MS, REVIEW_IDLE_MS, REVIEW_PI_DIR,
 PI_MAIN_DIR (default PI_CODING_AGENT_DIR, then ~/.pi/agent). See README.md.`;
 
@@ -347,8 +349,10 @@ function localSecrets(clone: string): string[] {
 }
 
 // Runs pi while streaming its JSON events: prints one progress line per turn, and kills the
-// process when no event arrives for idleMs or the total time passes timeoutMs.
+// process when no event arrives for idleMs or the review's deadline passes.
 async function runPi(args: string[], cwd: string): Promise<Run & RunOutcome> {
+  const budget = remainingMs(deadline, Date.now());
+  if (budget === 0) return { code: -1, out: "", err: "", killed: "total" };
   const [file = "", ...rest] = args;
   const env = { ...piEnv, HOME: reviewerHome };
   const proc = spawn(file, rest, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
@@ -358,7 +362,7 @@ async function runPi(args: string[], cwd: string): Promise<Run & RunOutcome> {
     killed = reason;
     proc.kill("SIGKILL");
   };
-  const total = setTimeout(() => kill("total"), timeoutMs);
+  const total = setTimeout(() => kill("total"), budget);
   const idle = setInterval(() => {
     if (Date.now() - lastEvent > idleMs) kill("idle");
   }, 5000);
@@ -405,8 +409,8 @@ async function runPi(args: string[], cwd: string): Promise<Run & RunOutcome> {
 
 const usage = { tokens: 0, costUsd: 0 };
 
-// One reviewer run. A failure is retried once, except a usage limit or the total timeout,
-// which a second try would hit again.
+// One reviewer run. A failure is retried once, except a usage limit, which a second try would
+// hit again, or the review's total timeout.
 async function runReviewer(
   worktree: string,
   contextFile: string,
@@ -562,6 +566,7 @@ async function main() {
     const openThreads = new Map(
       data.threads.filter((thread) => !thread.isResolved).map((thread) => [thread.id, thread]),
     );
+    deadline = Date.now() + timeoutMs;
     const rawReview = await reviewWithRetry(worktree, contextFile, [...openThreads.keys()]);
 
     const threadInfos = data.threads.map((thread) => ({

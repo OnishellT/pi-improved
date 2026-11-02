@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { parseArgs, reviewConfig } from "../scripts/review/config.ts";
+import { parseArgs, remainingMs, reviewConfig } from "../scripts/review/config.ts";
 
 test("defaults: openai, gpt-6.1-terra, xhigh, profiles under ~/.pi", () => {
   const config = reviewConfig({}, "/h");
@@ -43,4 +43,9 @@ test("parseArgs names an unknown single-dash or double-dash option", () => {
   assert.throws(() => parseArgs(["19", "-f"]), /unknown option: -f/);
   assert.throws(() => parseArgs(["-n", "5"]), /unknown option: -n/);
   assert.throws(() => parseArgs(["5", "--fast"]), /unknown option: --fast/);
+});
+
+test("the time left for a reviewer run counts down from one deadline and never goes below zero", () => {
+  assert.equal(remainingMs(10_000, 4_000), 6_000);
+  assert.equal(remainingMs(10_000, 12_000), 0);
 });
