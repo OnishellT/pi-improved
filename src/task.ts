@@ -380,14 +380,14 @@ export function registerTask(pi: ExtensionAPI) {
     const given = ((event as any).details?.answers ?? []) as { question: string; answer: string }[];
     // Answers come back in question order; a cancel drops the rest and pauses the plan.
     if (!(event as any).isError && given.length < questions.length) pause(ctx, questions[given.length].question);
+    // The approach round is done only when every open question in it got an answer.
+    const open = questions.flatMap((q, i) => (q.options ? [] : [i]));
+    if (open.length && open.every((i) => i < given.length)) approached = true;
     let recorded = 0;
     for (const [i, a] of given.entries()) {
       // An open question asks for the user's reasoning (their approach), not a choice: the plan builds on it, no ADR records it.
       const options = questions[i]?.options;
-      if (!options) {
-        approached = true;
-        continue;
-      }
+      if (!options) continue;
       recorded++;
       asked.set(a.question, { question: a.question, options, answer: a.answer });
       answers.set(JSON.stringify([a.question, options]), a.answer);

@@ -801,11 +801,16 @@ test("while paused, task_plan is refused; a cancelled ask_user round pauses plan
   assert.deepEqual(failed.notes, []);
 });
 
-test("continuing after the approach question itself was cancelled asks for the approach again", async () => {
+test("continuing after an approach question was cancelled, even one of two, asks for the approach again", async () => {
   const { commands, ctxFor, emit, sent } = await setup();
   await commands.get("task").handler("Add fee", ctxFor([]).ctx);
   const input = { questions: [{ question: "How would you store the fee?" }] };
   await emit("tool_result", { toolName: "ask_user", input, details: { answers: [] }, content: [] }, ctxFor([]).ctx);
   await commands.get("task").handler("continue", ctxFor([]).ctx);
   assert.ok(sent[1].includes(APPROACH_FIRST));
+  // one of two open questions answered: the round is not done
+  const two = { questions: [{ question: "How would you store the fee?" }, { question: "How would you round it?" }] };
+  await emit("tool_result", { toolName: "ask_user", input: two, details: { answers: [{ question: "How would you store the fee?", answer: "cents" }] }, content: [] }, ctxFor([]).ctx);
+  await commands.get("task").handler("continue", ctxFor([]).ctx);
+  assert.ok(sent[2].includes(APPROACH_FIRST));
 });
