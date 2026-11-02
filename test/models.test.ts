@@ -126,7 +126,7 @@ test("/models: a project `models: null` keeps hiding the global phases it does n
   await updateManifest(root, (x) => void (x.models = null as any));
   const t = await models(root, [row("Setup", "session model"), "openai/gpt-6-astra", "Done"], { global: { models: { review: "openai/gpt-6-luna", setup: "openai/gpt-6-luna" } } });
   assert.deepEqual(t.global, { models: { review: "openai/gpt-6-luna", setup: "openai/gpt-6-luna" } }, "the global file is untouched");
-  assert.deepEqual(JSON.parse(await fs.readFile(path.join(root, MANIFEST_PATH), "utf8")).models, { setup: "openai/gpt-6-astra", review: null });
+  assert.deepEqual(JSON.parse(await fs.readFile(path.join(root, MANIFEST_PATH), "utf8")).models, { setup: "openai/gpt-6-astra", implement: null, review: null, escalate: null }, "every other phase stays hidden, even one the global file adds later");
   assert.deepEqual(t.merged, { setup: "openai/gpt-6-astra" });
 });
 
