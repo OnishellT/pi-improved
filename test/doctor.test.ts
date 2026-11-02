@@ -224,3 +224,16 @@ test("/doctor without Nix says the subagent needs Nix first, not npm install", a
   assert.match(line, /needs? Nix|without Nix/);
   assert.doesNotMatch(line, /npm install/);
 });
+
+test("/doctor shortens the path of a global file that is not valid JSON", async () => {
+  const root = await tempProject({});
+  await withEnv({ PI_CODING_AGENT_DIR: path.join(root, "agent") }, async () => {
+    await fs.mkdir(path.join(root, "agent"), { recursive: true });
+    await fs.writeFile(path.join(root, "agent", "pi-improved.json"), "{");
+    const ctx: any = { cwd: root, hasUI: true, ui: { notify() {} } };
+    const checks = await runDoctor(fakePi(() => ({ code: 0 })).pi, ctx, undefined, { has: async () => true });
+    const config = checks.find((c) => c.name === "Config")!;
+    assert.match(config.detail, /agent\/pi-improved\.json is not valid JSON/);
+    assert.ok(!config.detail.includes(root), config.detail);
+  });
+});

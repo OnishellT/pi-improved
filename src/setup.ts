@@ -25,7 +25,6 @@ const NONE = "No more";
 const DECLINE = "Don't ask again";
 /** Files listed in the approval dialog; the rest is counted. */
 const MAX_LISTED = 40;
-// Survives the reload that ends /setup: the reloaded copy of this file shows it once the chat is rebuilt.
 export const REPEAT_WARNING = "Repeating it reruns the interview and the docs on the strong setup model, which costs far more than a normal task. Do it only if the project changed a lot. Update it?";
 
 /** Returns what is missing from the setup output; empty means complete. */
