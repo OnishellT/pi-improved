@@ -26,10 +26,12 @@ Scripts in `scripts/`:
 - The reviewer reads the PR head in a throwaway worktree, read-only, with an empty home and no secrets in its environment.
 - Its context is `README.md`, `docs/*.md`, any `CLAUDE.md`, `AGENTS.md` and `CONTRIBUTING.md`, the PR text, the linked issue, earlier review threads and the diff.
 - Follow-up rounds judge only what changed since the last reviewed commit. A rebase onto a newer base or a rewritten history makes the round a full review, and the summary says so.
-- A head that already has a review is skipped. A fourth round needs `--force`, unless the last review had confidence 4 or more.
+- A head that already has a review is skipped. A fourth round by the same reviewer model needs `--force`, unless that model's last review had confidence 4 or more. Rounds by another model do not count, so switching `REVIEW_PROVIDER` or `REVIEW_MODEL` starts a fresh count. Reviews posted before the model was recorded count for no model.
 - Markdown-only PRs are skipped by design, since there is no code to review, unless an earlier review is waiting on code changed since.
 - `--dry-run` prints the review instead of posting it, and ignores both gates.
 
-It needs pi signed in to the reviewer's provider. Defaults: provider `openai`, model `gpt-6.1-terra`, thinking `xhigh`. Override them with `REVIEW_PROVIDER`, `REVIEW_MODEL` and `REVIEW_THINKING`. A run is killed after `REVIEW_TIMEOUT_MS` (10 minutes) or `REVIEW_IDLE_MS` without output (2 minutes).
+It needs pi signed in to the reviewer's provider. Defaults: provider `openai`, model `gpt-6.1-terra`, thinking `xhigh`. Override them with `REVIEW_PROVIDER`, `REVIEW_MODEL` and `REVIEW_THINKING`. The review stops after `REVIEW_TIMEOUT_MS` in total, retries included (60 minutes), or after `REVIEW_IDLE_MS` without output (2 minutes). The message names both variables.
+
+When the reviewer gets no answer, the run reports the provider's error text. A usage, quota or billing limit fails at once, with no retry: wait for the limit to reset, or pick another reviewer with `REVIEW_PROVIDER` and `REVIEW_MODEL`. A run stopped by the total limit is not retried either. Other failures, such as another provider error, an empty answer or the idle limit, are retried once.
 
 It keeps its own pi profile in `~/.pi/reviewer-pi-improved` (`REVIEW_PI_DIR`), rebuilt from `scripts/review/pi-settings.json`. `auth.json` (and `models-store.json` when present) is symlinked from the main pi dir: `PI_MAIN_DIR`, else `PI_CODING_AGENT_DIR`, else `~/.pi/agent`. A context over 1,000,000 characters stops the run before the model is called. The prompt and settings are read from the PR's base branch, so a PR cannot change the reviewer that judges it.
