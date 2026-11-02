@@ -138,7 +138,7 @@ test("/models and /skills keep values from the global file out of the repo", asy
 
     const s = fakePi();
     registerSkills(s.pi);
-    await s.commands.get("skills").handler("", { cwd: root, ui: fakeUI(["No changes", "· retro", "Done", "No changes", "No changes", "No changes", "No changes"]) });
+    await s.commands.get("skills").handler("", { cwd: root, ui: fakeUI(["Plan", "· retro", "Back", "Done"]) });
     assert.deepEqual((await read(path.join(root, MANIFEST_PATH))).skills, { plan: ["tdd", "contract-first", "retro"] });
   });
 });

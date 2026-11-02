@@ -71,8 +71,8 @@ test("/skills saves a per-phase selection", async () => {
   const root = await tempProject({});
   const { pi, commands } = fakePi();
   registerSkills(pi);
-  // setup: keep; plan: toggle retro then done; the other four phases: keep.
-  const ui = fakeUI(["No changes", "· retro", "Done", "No changes", "No changes", "No changes", "No changes"]);
+  // pick Plan, toggle retro, back to the phase list, done.
+  const ui = fakeUI(["Plan", "· retro", "Back", "Done"]);
   await commands.get("skills").handler("", { cwd: root, ui });
   assert.deepEqual((await readManifest(root)).skills, { plan: ["tdd", "contract-first", "retro"] });
 });
@@ -102,11 +102,11 @@ test("a phase block claims only the skills it injects are included", async () =>
   assert.match(await skillsBlock(root, "setup"), /referenced skill pstack-create-verification-skill|## Skill: pstack-create-verification-skill/);
 });
 
-test("/skills Escape after a toggle restores the phase and saves nothing", async () => {
+test("/skills Escape after a toggle leaves the command and saves nothing", async () => {
   const root = await tempProject({});
   const { pi, commands } = fakePi();
   registerSkills(pi);
-  const ui = fakeUI(["No changes", "· retro", undefined, "No changes", "No changes", "No changes", "No changes"]);
+  const ui = fakeUI(["Plan", "· retro", undefined]);
   await commands.get("skills").handler("", { cwd: root, ui });
   assert.equal((await readManifest(root)).skills, undefined);
 });
@@ -115,7 +115,7 @@ test("/skills toggling back to the defaults stores no explicit override", async 
   const root = await tempProject({});
   const { pi, commands } = fakePi();
   registerSkills(pi);
-  const ui = fakeUI(["No changes", "· retro", "✓ retro", "Done", "No changes", "No changes", "No changes", "No changes"]);
+  const ui = fakeUI(["Plan", "· retro", "✓ retro", "Back", "Done"]);
   await commands.get("skills").handler("", { cwd: root, ui });
   assert.equal((await readManifest(root)).skills, undefined);
 });
@@ -140,4 +140,23 @@ test("interrogate starts each adversary in its own copy, not the real tree", asy
 
 test("benchmark-checklist flips the run order so neither side always runs second", async () => {
   assert.match((await loadSkill("benchmark-checklist")).body, /\(A, B, B, A, …\)/);
+});
+
+test("/skills picks a phase first, saves on Done with one summary, and Escape on the phase list drops every edit", async () => {
+  const root = await tempProject({});
+  const { pi, commands } = fakePi();
+  registerSkills(pi);
+  const notes: string[] = [];
+  const ui = { ...fakeUI(["Implement", "· retro", "Back", "Plan", "· retro", "Back", undefined]), notify: (m: string) => void notes.push(m) };
+  await commands.get("skills").handler("", { cwd: root, ui });
+  assert.equal((await readManifest(root)).skills, undefined);
+  assert.deepEqual(notes, ["Skills unchanged."]);
+  assert.match(ui.asked[0], /^Skills per phase\. Pick one to change; Esc leaves without saving\.\nSetup: /);
+
+  notes.length = 0;
+  const save = { ...fakeUI(["Implement", "· retro", "Back", "Done"]), notify: (m: string) => void notes.push(m) };
+  await commands.get("skills").handler("", { cwd: root, ui: save });
+  assert.deepEqual((await readManifest(root)).skills, { implement: [...DEFAULT_SKILLS.implement, "retro"] });
+  assert.equal(notes.length, 1);
+  assert.match(notes[0], /^Skills saved\.\nSetup: [\s\S]*Implement: [^\n]*retro/);
 });

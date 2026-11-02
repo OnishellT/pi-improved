@@ -7,7 +7,7 @@ import { exists } from "./config.ts";
 import { DEFAULT_ON_DEMAND, DEFAULT_SKILLS, globalMap, OPT_IN, patchMap, readManifest, updateManifest, type Phase } from "./manifest.ts";
 
 const MAX_BODY = 12_000;
-const KEEP = "No changes";
+const BACK = "Back";
 const DEFAULTS = "Defaults";
 const DONE = "Done";
 const MAX_DESC = 160;
@@ -132,50 +132,38 @@ async function onDemandIndex(names: string[]): Promise<string> {
 
 export function registerSkills(pi: ExtensionAPI) {
   pi.registerCommand("skills", {
-    description: "Pick the skills each phase includes: setup, plan, implement, diagnose, review and learn",
+    description: "Pick the skills a phase includes (setup, plan, implement, diagnose, review, learn); Esc leaves without saving",
     handler: async (_args, ctx: ExtensionContext) => {
       const root = ctx.cwd;
       const all = await listSkills();
       const manifest = await readManifest(root);
       const current = manifest.skills ?? {};
       const currentOD = manifest.skillsOnDemand ?? {};
-      const now = (phase: Phase, source: Partial<Record<Phase, string[]>>) => (source[phase] ?? DEFAULT_SKILLS[phase]).join(", ") || "none";
-      const nowOD = (phase: Phase, source: Partial<Record<Phase, string[]>>) => (source[phase] ?? DEFAULT_ON_DEMAND[phase]).join(", ");
-      const show = (skills: Partial<Record<Phase, string[]>>, onDemand: Partial<Record<Phase, string[]>>) =>
-        PHASES.map(([key, name]) => `${name}: ${now(key, skills)}${nowOD(key, onDemand) ? ` (on request: ${nowOD(key, onDemand)})` : ""}`).join("\n");
-      ctx.ui.notify(show(current, currentOD), "info");
-
       const next = { ...current };
       const nextOD = { ...currentOD };
+      const now = (phase: Phase) => (next[phase] ?? DEFAULT_SKILLS[phase]).join(", ") || "none";
+      const nowOD = (phase: Phase) => (nextOD[phase] ?? DEFAULT_ON_DEMAND[phase]).join(", ");
+      const show = () => PHASES.map(([key, name]) => `${name}: ${now(key)}${nowOD(key) ? ` (on request: ${nowOD(key)})` : ""}`).join("\n");
       const tag = (s: string) => (OPT_IN.includes(s) ? `${s} [opt-in]` : s);
-      for (const [key, name] of PHASES) {
+      let changed = false;
+
+      /** Edits one phase in `next`/`nextOD`; false when the user pressed Escape. */
+      const editPhase = async (key: Phase, name: string) => {
         let chosen = [...(next[key] ?? DEFAULT_SKILLS[key])];
         let onDemand = [...(nextOD[key] ?? DEFAULT_ON_DEMAND[key])];
-        const start = { chosen: [...chosen], onDemand: [...onDemand] };
-        let changed = false;
         for (;;) {
           const options = [
-            changed ? DONE : KEEP,
+            BACK,
             DEFAULTS,
             ...all.map((s) => `${chosen.includes(s) ? "✓" : "·"} ${tag(s)}`),
             ...all.map((s) => `${onDemand.includes(s) ? "◆" : "◇"} ${tag(s)} (on request)`),
           ];
           const pick = await ctx.ui.select(`${name} (now: ${chosen.join(", ") || "none"}; on request: ${onDemand.join(", ") || "none"})`, options);
-          if (!pick) {
-            // Escape cancels this phase's edits.
-            chosen = start.chosen;
-            onDemand = start.onDemand;
-            changed = false;
-            break;
-          }
-          if (pick === KEEP || pick === DONE) break;
-          changed = true;
+          if (!pick) return false;
+          if (pick === BACK) break;
           if (pick === DEFAULTS) {
-            delete next[key];
-            delete nextOD[key];
             chosen = [...DEFAULT_SKILLS[key]];
             onDemand = [...DEFAULT_ON_DEMAND[key]];
-            changed = false;
             break;
           }
           const skill = pick.slice(2).replace(/ \(on request\)$/, "").replace(/ \[opt-in\]$/, "");
@@ -187,13 +175,23 @@ export function registerSkills(pi: ExtensionAPI) {
             onDemand = onDemand.filter((s) => s !== skill);
           }
         }
-        if (changed) {
-          if (chosen.join() !== DEFAULT_SKILLS[key].join()) next[key] = chosen;
-          else delete next[key];
-          if (onDemand.join() !== DEFAULT_ON_DEMAND[key].join()) nextOD[key] = onDemand;
-          else delete nextOD[key];
-        }
+        const before = [now(key), nowOD(key)].join();
+        if (chosen.join() !== DEFAULT_SKILLS[key].join()) next[key] = chosen;
+        else delete next[key];
+        if (onDemand.join() !== DEFAULT_ON_DEMAND[key].join()) nextOD[key] = onDemand;
+        else delete nextOD[key];
+        if ([now(key), nowOD(key)].join() !== before) changed = true;
+        return true;
+      };
+
+      // Pick a phase, edit it, come back; Done saves, Escape anywhere leaves without saving.
+      for (;;) {
+        const pick = await ctx.ui.select(`Skills per phase. Pick one to change; Esc leaves without saving.\n${show()}`, [DONE, ...PHASES.map(([, name]) => name)]);
+        const phase = PHASES.find(([, name]) => name === pick);
+        if (pick === DONE) break;
+        if (!phase || !(await editPhase(...phase))) return ctx.ui.notify("Skills unchanged.", "info");
       }
+      if (!changed) return ctx.ui.notify("Skills unchanged.", "info");
       // Only what was changed goes into the project file; lists that come from the global file stay there.
       await updateManifest(root, (m) => {
         const own = patchMap(m.skills, current, next, globalMap("skills"));
@@ -203,7 +201,7 @@ export function registerSkills(pi: ExtensionAPI) {
         if (ownOD) m.skillsOnDemand = ownOD;
         else delete m.skillsOnDemand;
       });
-      ctx.ui.notify(show(next, nextOD), "info");
+      ctx.ui.notify(`Skills saved.\n${show()}`, "info");
     },
   });
 }
