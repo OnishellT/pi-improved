@@ -1,14 +1,17 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { globalMap, patchMap, readManifest, updateManifest, type PhaseModels } from "./manifest.ts";
+import { globalPath, isObject, updateGlobal } from "./config.ts";
+import { globalMap, MANIFEST_PATH, patchMap, readManifest, readProjectManifest, updateManifest, type PhaseModels } from "./manifest.ts";
 
+/** Each phase: its key, its row in /models, and what an unset value means. Review has no session fallback: unset means no review and no plan check. */
 const PHASES = [
-  ["setup", "Setup"],
-  ["implement", "Implement"],
-  ["review", "Review"],
-  ["escalate", "When verify gets stuck"],
-] as const satisfies readonly (readonly [keyof PhaseModels, string])[];
+  ["setup", "Setup", "session model"],
+  ["implement", "Implement (plan and code)", "session model"],
+  ["review", "Review and plan check (no model: no review)", "off"],
+  ["escalate", "Escalate (when verify keeps failing)", "review model, else setup model"],
+] as const satisfies readonly (readonly [keyof PhaseModels, string, string])[];
 const SESSION = "Use the session model";
-const KEEP = "No changes";
+const OFF = "Off: no review and no plan check";
+const DONE = "Done";
 const MAX_FLAT = 15;
 
 const idOf = (m: { provider: string; id: string }) => `${m.provider}/${m.id}`;
@@ -67,42 +70,70 @@ export async function restoreModel(pi: ExtensionAPI, ctx: ExtensionContext, id: 
   if (model) await pi.setModel(model).catch(() => false);
 }
 
-async function pickModel(ctx: ExtensionContext, label: string, ids: string[]) {
+/** The model picked for a phase, `null` to unset it, or undefined on Esc (back to the phase list). */
+async function pickModel(ctx: ExtensionContext, key: keyof PhaseModels, label: string, ids: string[]): Promise<string | null | undefined> {
+  const unset = key === "review" ? OFF : SESSION;
   let list = ids;
   if (ids.length > MAX_FLAT) {
     const providers = [...new Set(ids.map((id) => id.split("/")[0]))];
-    const provider = await ctx.ui.select(`${label}: which provider?`, [KEEP, SESSION, ...providers]);
-    if (!provider || provider === KEEP || provider === SESSION) return provider;
+    const provider = await ctx.ui.select(`${label}: which provider?`, [unset, ...providers]);
+    if (!provider || provider === unset) return provider ? null : undefined;
     list = ids.filter((id) => id.startsWith(`${provider}/`));
   }
-  return ctx.ui.select(`${label}: which model?`, [KEEP, SESSION, ...list]);
+  const pick = await ctx.ui.select(`${label}: which model?`, [unset, ...list]);
+  return pick === unset ? null : (pick ?? undefined);
 }
+
+const rows = (models: PhaseModels) => PHASES.map(([key, name, unset]) => `${name}: ${models[key] ?? unset}`);
 
 export function registerModels(pi: ExtensionAPI) {
   pi.registerCommand("models", {
-    description: "Pick the model for each phase: setup, implement, review and escalate",
-    handler: async (_args, ctx) => {
+    description: "Pick the model per phase (setup, implement, review, escalate); saved for all projects, `/models project` for this project only",
+    handler: async (args, ctx) => {
       const root = ctx.cwd;
+      const projectOnly = args.trim() === "project";
       const current = (await readManifest(root)).models ?? {};
       const available = ctx.modelRegistry?.getAvailable().map(idOf).sort() ?? [];
       if (!available.length) return ctx.ui.notify("No models available. Log in with /login.", "error");
-      const summary = PHASES.map(([key, name]) => `${name}: ${current[key] ?? "session model"}`).join("\n");
-      ctx.ui.notify(summary, "info");
 
       const next: PhaseModels = { ...current };
-      for (const [key, name] of PHASES) {
-        const pick = await pickModel(ctx, `${name} (now: ${current[key] ?? "session model"})`, available);
-        if (!pick || pick === KEEP) continue;
-        if (pick === SESSION) delete next[key];
-        else next[key] = pick;
+      for (;;) {
+        const lines = rows(next);
+        const row = await ctx.ui.select("Which phase to change?", [...lines, DONE]);
+        if (!row) return ctx.ui.notify("Models: nothing saved.", "info");
+        if (row === DONE) break;
+        const [key, name] = PHASES[lines.indexOf(row)];
+        const pick = await pickModel(ctx, key, name, available);
+        if (pick === null) delete next[key];
+        else if (pick) next[key] = pick;
       }
-      // Only what was changed goes into the project file; models that come from the global file stay there.
-      await updateManifest(root, (m) => {
-        const own = patchMap(m.models, current, next, globalMap("models"));
-        if (own) m.models = own;
-        else delete m.models;
-      });
-      ctx.ui.notify(PHASES.map(([key, name]) => `${name}: ${next[key] ?? "session model"}`).join("\n"), "info");
+      const changed = PHASES.map(([key]) => key).filter((key) => next[key] !== current[key]);
+      if (!changed.length) return ctx.ui.notify("Models: no changes.", "info");
+
+      // A phase the project file sets is changed there (it wins over the global file); the rest goes to the global file, unless asked for this project only.
+      const own = (await readProjectManifest(root)).models ?? {};
+      const inProject = changed.filter((key) => projectOnly || Object.hasOwn(own, key));
+      const inGlobal = changed.filter((key) => !inProject.includes(key));
+      const pick = (models: PhaseModels, keys: (keyof PhaseModels)[]) => Object.fromEntries(keys.filter((k) => models[k] !== undefined).map((k) => [k, models[k]])) as PhaseModels;
+      try {
+        if (inGlobal.length)
+          updateGlobal((c) => {
+            const models: Record<string, unknown> = isObject(c.models) ? { ...c.models } : {};
+            for (const key of inGlobal) next[key] === undefined ? delete models[key] : (models[key] = next[key]);
+            if (Object.keys(models).length) c.models = models;
+            else delete c.models;
+          });
+        if (inProject.length)
+          await updateManifest(root, (m) => {
+            const models = patchMap(m.models, pick(current, inProject), pick(next, inProject), globalMap("models"));
+            if (models) m.models = models;
+            else delete m.models;
+          });
+      } catch (error: any) {
+        return ctx.ui.notify(`Models not saved: ${error.message}. Fix the file and run /models again.`, "error");
+      }
+      const where = [inGlobal.length ? globalPath() : "", inProject.length ? MANIFEST_PATH : ""].filter(Boolean).join(" and ");
+      ctx.ui.notify(`${rows(next).join("\n")}\nSaved in ${where}.`, "info");
     },
   });
 }
