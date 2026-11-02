@@ -27,7 +27,7 @@ export interface PrFacts {
   gh: boolean;
   origin?: string;
   template?: string;
-  /** Files under `.pi/evidence/`, for the preview only: they are not pushed. */
+  /** Files under the repository's `.pi/evidence/`, for the preview only: /pr leaves them out of its commit. */
   evidence: string[];
 }
 
@@ -101,10 +101,21 @@ export function buildBody({ task, facts, verify, risk }: BodyInput): string {
   return `${scrub(body)}\n`;
 }
 
-/** Files under `.pi/evidence/`, relative to the repo, sorted. */
-async function listEvidence(root: string): Promise<string[]> {
-  const all = await fs.readdir(path.join(root, EVIDENCE_DIR), { recursive: true, withFileTypes: true }).catch(() => []);
-  return all.filter((e) => e.isFile()).map((e) => path.relative(root, path.join(e.parentPath, e.name))).sort();
+/** Files under `.pi/evidence/` of the repository at `top`, relative to it, sorted. */
+async function listEvidence(top: string): Promise<string[]> {
+  const all = await fs.readdir(path.join(top, EVIDENCE_DIR), { recursive: true, withFileTypes: true }).catch(() => []);
+  return all.filter((e) => e.isFile()).map((e) => path.relative(top, path.join(e.parentPath, e.name))).sort();
+}
+
+/** The evidence part of the preview: local files to attach, and a warning for any the branch already commits (those do go out). */
+export function evidenceNote(facts: Pick<PrFacts, "evidence" | "changes">): string {
+  const committed = facts.changes.map((row) => row.split(/\s+/).at(-1) ?? "").filter((f) => f.startsWith(`${EVIDENCE_DIR}/`));
+  const local = facts.evidence.filter((f) => !committed.includes(f));
+  const list = (files: string[]) => `${files.slice(0, 20).join("\n")}${files.length > 20 ? `\n…and ${files.length - 20} more` : ""}`;
+  return [
+    local.length ? `\nEvidence in ${EVIDENCE_DIR}/ (left out of the PR; attach what reviewers need):\n${list(local)}\n` : "",
+    committed.length ? `\nWarning: this branch already commits evidence files, so they will be pushed. Remove them from the commits if they must stay private:\n${list(committed)}\n` : "",
+  ].join("");
 }
 
 const lines = (text: string) => text.split("\n").map((l) => l.trim()).filter(Boolean);
@@ -149,7 +160,8 @@ export async function gatherFacts(exec: Exec, root: string, wanted?: string): Pr
     gh: (await run("gh", ["--version"])) !== undefined,
     origin: (await run("git", ["remote", "get-url", "origin"]))?.trim() || undefined,
     template,
-    evidence: await listEvidence(root),
+    // pi may run in a subfolder: the evidence folder is at the repository root.
+    evidence: await listEvidence((await run("git", ["rev-parse", "--show-toplevel"]))?.trim() || root),
   };
 }
 
@@ -216,9 +228,7 @@ export async function runPr(exec: Exec, root: string, ui: Pick<ExtensionContext[
 
   const title = prTitle(task, facts.commits);
   const body = buildBody({ task, facts: { ...facts, branch }, verify, risk });
-  const evidence = facts.evidence.length
-    ? `\nEvidence in ${EVIDENCE_DIR}/ (not pushed; attach what reviewers need to the PR):\n${facts.evidence.slice(0, 20).join("\n")}${facts.evidence.length > 20 ? `\n…and ${facts.evidence.length - 20} more` : ""}\n`
-    : "";
+  const evidence = evidenceNote(facts);
   ui.notify(`${title}\n\n${body}${facts.dirty.length ? `\nNot in the PR until committed:\n${facts.dirty.join("\n")}\n` : ""}${evidence}`, "info");
 
   if (!facts.gh || !facts.origin) return { status: "shown", detail: `${facts.gh ? "" : "gh is not installed. "}${facts.origin ? "" : "There is no origin remote. "}Push and open the PR yourself with the title and body above.` };
