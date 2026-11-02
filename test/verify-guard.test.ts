@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import { test } from "node:test";
 import { agentlintCheck } from "../src/discover.ts";
 import { registerGate } from "../src/gate.ts";
@@ -108,12 +110,47 @@ test("/task saves the verify steps when the task starts", async () => {
   assert.deepEqual((await readTask(root))?.savedVerify, ["check", "lint"]);
 });
 
-test("setup_finish refreshes the active task's saved list with the steps it writes", async () => {
-  const root = await tempProject({ "AGENTS.md": "# App\n", "GLOSSARY.md": "# G\n", ".pi/skills/domain-billing/SKILL.md": "---\nname: domain-billing\ndescription: Billing rules\n---\n# Billing\n", ...VERIFY_APP });
-  await updateManifest(root, (m) => void ((m.setup = "running"), (m.verify = ["old"])));
+const startSetup = async (root: string, h: ReturnType<typeof fakePi>) => {
+  await updateManifest(root, (m) => void ((m.setup = "pending"), (m.verify = ["old"]), (m.language = "English"), (m.connectors = []), (m.useAgentlint = "never")));
   await writeTask(root, { id: "t1", title: "Do it", status: "implementing", allowedExtra: [], savedVerify: ["old"], startedAt: "2026-10-01T00:00:00.000Z" });
-  const h = fakePi();
   registerSetup(h.pi);
-  await h.tools.get("setup_finish").execute("1", { verify: ["new"], summary: "s" }, undefined, undefined, fakeCtx(root, [true]).ctx);
+};
+const finish = (h: ReturnType<typeof fakePi>, root: string) => h.tools.get("setup_finish").execute("1", { verify: ["new"], summary: "s" }, undefined, undefined, fakeCtx(root, [true]).ctx);
+
+test("setup_finish of a /setup the user started refreshes the active task's saved list", async () => {
+  const root = await tempProject({ "AGENTS.md": "# App\n", "GLOSSARY.md": "# G\n", ".pi/skills/domain-billing/SKILL.md": "---\nname: domain-billing\ndescription: Billing rules\n---\n# Billing\n", "package.json": "{}", ...VERIFY_APP });
+  const h = fakePi();
+  await startSetup(root, h);
+  await h.commands.get("setup").handler("", fakeCtx(root, ["No more"]).ctx);
+  await finish(h, root);
   assert.deepEqual((await readTask(root))?.savedVerify, ["new"]);
+});
+
+test("setup_finish with no /setup started here leaves the saved list, so the gate still asks", async () => {
+  const root = await tempProject({ "AGENTS.md": "# App\n", "GLOSSARY.md": "# G\n", ".pi/skills/domain-billing/SKILL.md": "---\nname: domain-billing\ndescription: Billing rules\n---\n# Billing\n", "package.json": "{}", ...VERIFY_APP });
+  const h = fakePi();
+  await startSetup(root, h);
+  // What bash can do: mark setup running, then call the tool with weaker steps.
+  await updateManifest(root, (m) => void (m.setup = "running"));
+  await finish(h, root);
+  assert.deepEqual((await readTask(root))?.savedVerify, ["old"]);
+});
+
+test("a saved list rewritten in task.json by bash does not fool the gate in the same process", async () => {
+  const t = await setup({ saved: ["check"], verify: ["check"], hasUI: false, pass: false, extra: { limits: { verifyRetries: 3, failuresBeforeEscalation: 9 } } });
+  const [error, code] = [console.error, process.exitCode];
+  console.error = () => {};
+  try {
+    await t.settle();
+    assert.deepEqual(t.ran, ["check"]);
+    const task = JSON.parse(await fs.readFile(path.join(t.root, ".pi/task.json"), "utf8"));
+    await fs.writeFile(path.join(t.root, ".pi/task.json"), JSON.stringify({ ...task, savedVerify: ["true"] }));
+    await updateManifest(t.root, (m) => void (m.verify = ["true"]));
+    const second: any = await t.settle();
+    assert.match(second.entries[0].content, /verify steps changed during the task[\s\S]*- check/);
+    assert.deepEqual(t.ran, ["check"]);
+  } finally {
+    console.error = error;
+    process.exitCode = code;
+  }
 });

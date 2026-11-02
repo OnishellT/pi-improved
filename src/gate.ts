@@ -15,7 +15,7 @@ import { resolvePolicyFailure } from "./policy.ts";
 import { reviewDiff } from "./review.ts";
 import { skillsBlock, skillsDir } from "./skills.ts";
 import { assistantText, endsOnQuestion, understandingCheck } from "./task-prompt.ts";
-import { oneLine, readTask, updateTask, type Task } from "./task-state.ts";
+import { oneLine, readTask, savedVerifyOf, saveVerify, updateTask, type Task } from "./task-state.ts";
 import { type Signature, failureSignature, agentlintStepOf, verifySteps, formatVerify, infraFailure, isPolicyFailure, runVerify, sameFailure, validCap } from "./verify.ts";
 
 export const UNREADABLE = "unreadable";
@@ -262,12 +262,12 @@ export function registerGate(pi: ExtensionAPI) {
     let restore = "";
     let refused: string[] | undefined;
     if (task?.status === "implementing") {
-      const saved = task.savedVerify;
+      const saved = savedVerifyOf(ctx.cwd, task);
       // A task from before the list was saved: this gate saves it and checks from the next one on.
-      if (!saved) await updateTask(ctx.cwd, (t) => void (t.savedVerify = steps)).catch(() => {});
+      if (!saved) await updateTask(ctx.cwd, (t) => saveVerify(ctx.cwd, t, steps)).catch(() => {});
       else if (JSON.stringify(saved) !== JSON.stringify(steps)) {
         const use = ctx.hasUI && (await ctx.ui.select(STEPS_CHANGED, ["Use the new ones", "Keep the old ones"])) === "Use the new ones";
-        if (use) await updateTask(ctx.cwd, (t) => void (t.savedVerify = steps));
+        if (use) await updateTask(ctx.cwd, (t) => saveVerify(ctx.cwd, t, steps));
         else if (ctx.hasUI) {
           steps = saved;
           restore = `The user kept the verify steps the task started with (${saved.map((v) => `\`${v}\``).join(", ")}): put them back in ${MANIFEST_PATH}.`;

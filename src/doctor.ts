@@ -263,7 +263,7 @@ export function registerDoctor(pi: ExtensionAPI, nix: NixProbe = realNix) {
       }
       // A heading first: the notice level's prefix ("Warning:") lands on it, not on the first check.
       const bad = checks.filter((c) => !c.ok).length;
-      const heading = `pi-improved doctor: ${bad ? `${bad} problem${bad === 1 ? "" : "s"}` : "all checks pass"}`;
+      const heading = `pi-improved doctor: ${bad ? `${bad} check${bad === 1 ? " fails" : "s fail"}` : "all checks pass"}`;
       ctx.ui.notify([heading, ...checks.map((c) => `${c.ok ? "✓" : "✗"} ${c.name}: ${c.detail}`)].join("\n"), bad ? "warning" : "info");
     },
   });

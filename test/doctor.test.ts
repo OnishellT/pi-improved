@@ -28,7 +28,7 @@ test("/doctor lists missing models with a login hint and failing CLIs", async ()
   const { msg, level } = t.notes[0];
   assert.equal(level, "warning");
   // The level's prefix lands on a heading, not on the first check.
-  assert.match(msg, /^pi-improved doctor: \d+ problems?\n/);
+  assert.match(msg, /^pi-improved doctor: \d+ checks? fails?\n/);
   assert.match(msg, /✗ subagent/);
   assert.match(msg, /✓ git/);
   assert.match(msg, /openai\/gpt-5[\s\S]*\/login <provider>[^\n]*openai/);
