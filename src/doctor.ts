@@ -261,7 +261,10 @@ export function registerDoctor(pi: ExtensionAPI, nix: NixProbe = realNix) {
       } finally {
         ctx.ui.setStatus?.("doctor", undefined);
       }
-      ctx.ui.notify(checks.map((c) => `${c.ok ? "✓" : "✗"} ${c.name}: ${c.detail}`).join("\n"), checks.every((c) => c.ok) ? "info" : "warning");
+      // A heading first: the notice level's prefix ("Warning:") lands on it, not on the first check.
+      const bad = checks.filter((c) => !c.ok).length;
+      const heading = `pi-improved doctor: ${bad ? `${bad} problem${bad === 1 ? "" : "s"}` : "all checks pass"}`;
+      ctx.ui.notify([heading, ...checks.map((c) => `${c.ok ? "✓" : "✗"} ${c.name}: ${c.detail}`)].join("\n"), bad ? "warning" : "info");
     },
   });
   pi.on("session_start", async (_event, ctx) => {
