@@ -129,9 +129,9 @@ const sameFinding = (r: any, f: CheckedFinding) =>
   !!r?.fingerprint?.digest && r.fingerprint.digest === f.fingerprint?.digest && ["standardId", "detectorId", "bindingId"].every((k) => r.source?.[k] === f.source?.[k]);
 
 /**
- * One acceptance record in plain words: rule, place, reason and who accepted it.
- * agentlint's records hold no file or line: the place comes from the finding of its last check with the same identity.
- * Without one, the detector and a short fingerprint tell two exceptions under one rule apart. A line that is not a record is shown as is.
+ * One acceptance record in plain words: rule, detector and short fingerprint (what the record itself says), reason and who accepted it.
+ * agentlint's records hold no file or line, so the place comes from its last check, as a hint after the record's own identity:
+ * the model can write that cache, so it never replaces what the record says. A line that is not a record is shown as is.
  */
 export function describeAcceptance(line: string, checked: CheckedFinding[] = []): string {
   let r: any;
@@ -142,13 +142,12 @@ export function describeAcceptance(line: string, checked: CheckedFinding[] = [])
   }
   if (!r || typeof r !== "object" || typeof r.reason !== "string") return line;
   const found = checked.find((f) => sameFinding(r, f));
-  const rule = found?.ruleId ?? r.ruleId ?? r.source?.standardId ?? r.source?.detectorId ?? "agentlint rule";
-  const file = found?.file ?? r.file;
-  const lineNo = found?.line ?? r.line;
+  const rule = r.ruleId ?? r.source?.standardId ?? r.source?.detectorId ?? "agentlint rule";
   const id = [r.source?.standardId && r.source?.detectorId, r.fingerprint?.digest && `#${String(r.fingerprint.digest).slice(0, 8)}`].filter(Boolean).join(" ");
-  const where = file ? ` at ${file}${lineNo ? `:${lineNo}` : ""}` : id ? ` (${id})` : "";
+  const place = (file?: string, line?: number) => (file ? ` at ${file}${line ? `:${line}` : ""}` : "");
+  const hint = found?.file ? `; last check: ${found.ruleId ?? rule}${place(found.file, found.line)}` : "";
   const reason = r.reason.replace(/\s+/g, " ").trim();
-  return `- ${rule}${where}: "${reason.length > 200 ? `${reason.slice(0, 199)}…` : reason}" (by ${r.actor ?? r.authority ?? "unknown"})`;
+  return `- ${rule}${id ? ` (${id})` : ""}${place(r.file, r.line)}: "${reason.length > 200 ? `${reason.slice(0, 199)}…` : reason}" (by ${r.actor ?? r.authority ?? "unknown"})${hint}`;
 }
 
 /**
