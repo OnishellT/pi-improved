@@ -8,8 +8,8 @@ import { agentDir } from "./subagent-ext.ts";
 export const GLOBAL_FILE = "pi-improved.json";
 export const globalPath = (dir = agentDir()) => path.join(dir, GLOBAL_FILE);
 
-/** Preferences the global file may hold (the project file may hold the same ones). */
-export const PREFERENCE_KEYS = ["mode", "models", "skills", "skillsOnDemand", "basePrompt", "useAgentlint", "useBend", "maxReport", "contextWarn", "review", "limits", "computer", "subagentPanes", "selfCompact", "understanding"];
+/** Preferences the global file may hold (the project file may hold the same ones). `language` in the global file is the default for every new /setup. */
+export const PREFERENCE_KEYS = ["language", "models", "skills", "skillsOnDemand", "basePrompt", "useAgentlint", "useBend", "maxReport", "review", "limits", "computer", "subagentPanes", "selfCompact", "understanding"];
 
 export const isObject = (value: unknown): value is Record<string, any> => Boolean(value) && typeof value === "object" && !Array.isArray(value);
 

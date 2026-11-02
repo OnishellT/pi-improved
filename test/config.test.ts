@@ -38,11 +38,11 @@ test("merge: objects go key by key, arrays and scalars are replaced, __proto__ i
 });
 
 test("readManifest: the project wins over the global file, plain objects merge deeply", async () => {
-  const global = { mode: "flow", maxReport: 900, models: { implement: "a/cheap", review: "a/strong" }, review: { paths: ["src/**"], minLevel: "low" }, skills: { plan: ["tdd"], review: ["code-review"] }, limits: { retroEvery: 3, fastPath: { files: 4 } } };
+  const global = { language: "English", maxReport: 900, models: { implement: "a/cheap", review: "a/strong" }, review: { paths: ["src/**"], minLevel: "low" }, skills: { plan: ["tdd"], review: ["code-review"] }, limits: { retroEvery: 3, fastPath: { files: 4 } } };
   await withGlobal(global, async () => {
     const root = await tempProject({ ".pi/workflow.json": JSON.stringify({ version: 1, setup: "done", verify: ["x"], connectors: [], maxReport: 500, models: { review: "b/other" }, review: { paths: ["lib/**"] }, skills: { plan: ["contract-first"] }, limits: { fastPath: { decisions: 1 } } }) });
     const m = await readManifest(root);
-    assert.equal(m.mode, "flow", "only the global file sets it");
+    assert.equal(m.language, "English", "only the global file sets it");
     assert.equal(m.maxReport, 500, "scalar: project wins");
     assert.deepEqual(m.models, { implement: "a/cheap", review: "b/other" });
     assert.deepEqual(m.review, { paths: ["lib/**"], minLevel: "low" }, "arrays are replaced, not joined");
@@ -79,12 +79,14 @@ test("readManifest: an old setup with agentlint only inside a script gets the st
   });
 });
 
-test("state keys are project-only: the global file cannot set them", async () => {
-  await withGlobal({ setup: "done", verify: ["rm -rf /"], connectors: [{ id: "github" }], language: "English", agentlint: "x", mode: "flow" }, async () => {
+test("state keys are project-only: the global file cannot set them; language is a default there, and the dead mode key is not read", async () => {
+  await withGlobal({ setup: "done", verify: ["rm -rf /"], connectors: [{ id: "github" }], declinedConnectors: ["jira"], agentlint: "x", mode: "flow", contextWarn: 1, language: "English" }, async () => {
     const m = await readManifest(await tempProject({}));
     assert.equal(m.setup, "pending");
-    assert.deepEqual([m.verify, m.connectors, m.language, m.agentlint], [[], [], undefined, undefined]);
-    assert.equal(m.mode, "flow");
+    assert.deepEqual([m.verify, m.connectors, m.declinedConnectors, m.agentlint], [[], [], undefined, undefined]);
+    assert.deepEqual([m.mode, (m as any).contextWarn], [undefined, undefined]);
+    assert.equal(m.language, "English");
+    assert.equal((await readManifest(await tempProject({ ".pi/workflow.json": JSON.stringify({ language: "Español" }) }))).language, "Español", "the project wins");
   });
 });
 
@@ -92,26 +94,26 @@ test("an unreadable global file is a readable error naming the file; readManifes
   await withGlobal("{broken", async (dir) => {
     assert.throws(() => readGlobal(), new RegExp(`${path.join(dir, "pi-improved.json").replaceAll(".", "\\.")} is not valid JSON`));
     assert.match(globalProblem()!, /is not valid JSON/);
-    const root = await tempProject({ ".pi/workflow.json": JSON.stringify({ version: 1, setup: "done", verify: ["t"], connectors: [], mode: "flow" }) });
+    const root = await tempProject({ ".pi/workflow.json": JSON.stringify({ version: 1, setup: "done", verify: ["t"], connectors: [], useBend: "never" }) });
     const m = await readManifest(root);
-    assert.deepEqual([m.verify, m.mode], [["t"], "flow"], "the project file still applies");
+    assert.deepEqual([m.verify, m.useBend], [["t"], "never"], "the project file still applies");
   });
   await withGlobal("[1]", async () => assert.throws(() => readGlobal(), /is not a JSON object/));
   await withGlobal(undefined, async () => assert.equal(globalProblem(), undefined));
 });
 
 test("updateManifest writes the project's own content only, never global values", async () => {
-  await withGlobal({ mode: "flow", models: { review: "a/strong" }, limits: { retroEvery: 3 } }, async () => {
+  await withGlobal({ useBend: "never", models: { review: "a/strong" }, limits: { retroEvery: 3 } }, async () => {
     const root = await tempProject({ ".pi/workflow.json": JSON.stringify({ version: 1, setup: "done", verify: ["t"], connectors: [], maxReport: 500 }) });
     const returned = await updateManifest(root, (m) => {
-      assert.equal(m.mode, undefined, "the callback gets the raw project object");
+      assert.equal(m.useBend, undefined, "the callback gets the raw project object");
       assert.equal(m.models, undefined);
       m.language = "English";
     });
-    assert.equal(returned.mode, undefined);
+    assert.equal(returned.useBend, undefined);
     assert.deepEqual(await read(path.join(root, MANIFEST_PATH)), { version: 1, setup: "done", verify: ["t"], connectors: [], maxReport: 500, language: "English" });
-    assert.equal((await readManifest(root)).mode, "flow", "and the merged view still has it");
-    assert.equal((await readProjectManifest(root)).mode, undefined);
+    assert.equal((await readManifest(root)).useBend, "never", "and the merged view still has it");
+    assert.equal((await readProjectManifest(root)).useBend, undefined);
   });
 });
 
@@ -351,8 +353,8 @@ test("at startup /computer moves computer.json once and says so on the first ses
   });
 });
 
-test("/setup builds its prompt from the merged view: global interview numbers and mode apply, and mode is not pinned in the project file", async () => {
-  await withGlobal({ mode: "flow", limits: { interviewQuestions: 5, agentlintRules: 1 } }, async () => {
+test("/setup builds its prompt from the merged view: global interview numbers apply, and setup writes no mode", async () => {
+  await withGlobal({ limits: { interviewQuestions: 5, agentlintRules: 1 } }, async () => {
     const root = await tempProject({ "package.json": "{}", "pnpm-lock.yaml": "" });
     const { pi, commands, sent } = fakePi();
     registerSetup(pi);
@@ -360,16 +362,14 @@ test("/setup builds its prompt from the merged view: global interview numbers an
     assert.match(sent[0], /max ~5 questions/);
     assert.match(sent[0], /at most 1 to start/);
     const own = await read(path.join(root, MANIFEST_PATH));
-    assert.equal(own.mode, undefined, "the global mode is not copied into the repo");
-    assert.equal(own.limits, undefined);
-    assert.equal((await readManifest(root)).mode, "flow");
+    assert.equal(own.limits, undefined, "global values are not copied into the repo");
   });
   await withGlobal(undefined, async () => {
     const root = await tempProject({ "package.json": "{}" });
     const { pi, commands } = fakePi();
     registerSetup(pi);
     await commands.get("setup").handler("", fakeCtx(root, ["Español", "No more", "No"], { mode: "tui", reload: async () => {} }).ctx);
-    assert.equal((await read(path.join(root, MANIFEST_PATH))).mode, "direct", "with no mode anywhere it is pinned to direct, as before");
+    assert.equal((await read(path.join(root, MANIFEST_PATH))).mode, undefined, "mode is a dead key: setup no longer writes it");
   });
 });
 

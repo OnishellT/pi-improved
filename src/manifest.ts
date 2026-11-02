@@ -1,8 +1,9 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { agentlintCheck, agentlintCmd } from "./discover.ts";
-import { globalPath, globalPreferences, merge, readGlobal, withValidLimits, writeFileAtomicAsync, type Limits } from "./config.ts";
+import { globalPath, globalPreferences, isObject, merge, readGlobal, withValidLimits, writeFileAtomic, writeFileAtomicAsync, type Limits } from "./config.ts";
+import { agentDir } from "./subagent-ext.ts";
 import type { ProfileFile } from "./self-compact/config.ts";
 
 export type SetupStatus = "pending" | "running" | "done" | "declined";
@@ -55,8 +56,12 @@ export interface Manifest {
   /** The verify step setup itself added for agentlint. Opting out removes this step and nothing else. */
   agentlintStep?: string;
   connectors: EnabledConnector[];
-  /** Working mode. `direct` (default when absent): the agent works from AGENTS.md and skills, /task is optional. `flow`: /task with its gates is the recommended route. */
-  mode?: "direct" | "flow";
+  /** Connector ids the user said no to in /setup; it does not ask about them again. */
+  declinedConnectors?: string[];
+  /** True when the user said no to agentlint rules in /setup; it does not ask again (`useAgentlint` "always" still adds them). */
+  agentlintDeclined?: boolean;
+  /** Legacy and ignored: older setups wrote it, nothing reads it. Tolerated so old files still load. */
+  mode?: string;
   /** Model per phase as "provider/model-id"; a missing phase keeps the session model. */
   models?: PhaseModels;
   /** Bundled skill names per phase; a missing phase uses DEFAULT_SKILLS. */
@@ -190,4 +195,28 @@ export function patchMap<T extends object>(own: T | undefined, before: T, after:
 export function configFiles(root: string, dir?: string) {
   const files = { global: globalPath(dir), project: path.join(root, MANIFEST_PATH) };
   return Object.fromEntries(Object.entries(files).map(([name, file]) => [name, { file, exists: existsSync(file) }])) as Record<"global" | "project", { file: string; exists: boolean }>;
+}
+
+/** Per-user state kept out of every repo: `<agent dir>/pi-improved-state.json`. */
+export const USER_STATE_FILE = "pi-improved-state.json";
+const userStatePath = (dir = agentDir()) => path.join(dir, USER_STATE_FILE);
+
+function readUserState(dir?: string): { setupDeclined?: string[] } {
+  try {
+    const parsed = JSON.parse(readFileSync(userStatePath(dir), "utf8"));
+    return isObject(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+/** Whether this user said "Don't ask again" to the setup offer for `root`. */
+export const setupDeclined = (root: string, dir?: string) => (readUserState(dir).setupDeclined ?? []).includes(path.resolve(root));
+
+/** Records the user's "Don't ask again" for `root` in their own state file, never in the project. */
+export function declineSetup(root: string, dir?: string) {
+  const state = readUserState(dir);
+  const list = Array.isArray(state.setupDeclined) ? state.setupDeclined : [];
+  const here = path.resolve(root);
+  if (!list.includes(here)) writeFileAtomic(userStatePath(dir), `${JSON.stringify({ ...state, setupDeclined: [...list, here] }, null, 2)}\n`);
 }
