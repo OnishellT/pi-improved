@@ -18,6 +18,16 @@ export const understandingCheck = (skill: string) =>
 export const APPROACH_FIRST =
   "Before proposing a design, ask the user how they would approach the one or two most consequential decisions of this task: one ask_user call, open questions (no options), no recommendation. Build the plan from their answer; where it is wrong or risky, say why with evidence from the code. If they answer \"skip\" or ask for a proposal, propose.";
 
+/** A partly answered approach round: keep the answers, ask only the questions still open. */
+export const approachResume = (answered: { question: string; answer: string }[], open: string[]) =>
+  [
+    "The user already answered part of the approach round:",
+    ...answered.map((a) => `- ${a.question} → ${a.answer}`),
+    "Do not ask those again. Ask only what is still open, in one ask_user call with open questions (no options), no recommendation:",
+    ...open.map((q) => `- ${q}`),
+    "Build the plan from their answers; where one is wrong or risky, say why with evidence from the code. If they answer \"skip\" or ask for a proposal, propose.",
+  ].join("\n");
+
 export const planText = (p: Plan) =>
   [
     ...(p.intent ? [`Intent: ${p.intent}`, ""] : []),
@@ -33,13 +43,13 @@ export const planText = (p: Plan) =>
     ...(p.decisions.length ? ["", "Decisions:", ...p.decisions.map((d) => `- ${d.question} → ${d.answer ?? `see ${d.source}`}`)] : []),
   ].join("\n");
 
-export function taskPrompt(title: string, ticket: string | undefined, tracker: string | undefined, related: string[], skills = "", spec: string[] = [], body?: string, approachFirst = false) {
+export function taskPrompt(title: string, ticket: string | undefined, tracker: string | undefined, related: string[], skills = "", spec: string[] = [], body?: string, approachFirst: boolean | string = false) {
   const steps = [
     ticket && tracker ? `Read ticket ${ticket} with the ${tracker} tools (tool_search finds them). Read only.` : ticket && `Ticket ${ticket} has no connector enabled. Work from the title.`,
     spec.length && `Read in full: ${spec.join(", ")}.`,
     "Read GLOSSARY.md, AGENTS.md, the .pi/skills/* skills and docs/adr/* decisions that relate to the task.",
     "Read the files you will touch and their siblings (their names and exports are the convention). Edit nothing yet.",
-    approachFirst && APPROACH_FIRST,
+    approachFirst && (typeof approachFirst === "string" ? approachFirst : APPROACH_FIRST),
     "Call task_plan: intent, summary, steps, files (repo-relative, directories end with /), decisions, interface, seams.",
   ].filter(Boolean);
   return [
