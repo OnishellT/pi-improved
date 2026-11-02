@@ -33,7 +33,8 @@ async function setup(exec: Run, browser: () => string | undefined = () => "chrom
   registerShow(h.pi, exec, browser);
   const tool = h.tools.get("show");
   const root = await tempDir();
-  const call = (params: object, ctx: object = {}) => tool.execute("call/1", params, undefined, undefined, { cwd: root, hasUI: true, ...ctx });
+  // An RPC client by default: the terminal's image support does not decide the text there.
+  const call = (params: object, ctx: object = {}) => tool.execute("call/1", params, undefined, undefined, { cwd: root, hasUI: true, mode: "rpc", ...ctx });
   return { tool, root, call };
 }
 
@@ -74,7 +75,7 @@ test("show passes an image file through without a browser", async () => {
   await fs.writeFile(path.join(root, "plot.png"), "png");
   const r = await call({ file: "plot.png" });
   assert.deepEqual(r.details, { file: path.join(root, "plot.png"), mimeType: "image/png" });
-  assert.match(r.content[0].text, /^Shown to the user: /);
+  assert.equal(r.content[0].text, `Saved at ${path.join(root, "plot.png")}. Sent to the client, which shows it if it can draw pictures.`);
   assert.deepEqual(calls, []);
   await assert.rejects(call({ file: "missing.png" }), /does not exist/);
   await fs.writeFile(path.join(root, "notes.txt"), "");
@@ -96,7 +97,7 @@ test("show renders markup at the measured size and keeps the page", async () => 
     assert.equal(path.dirname(out), path.join(agent, "renders"));
     assert.match(path.basename(out), /^\d+-call1\.png$/);
     assert.equal(await fs.readFile(out, "utf8"), "png");
-    assert.match(r.content[0].text, /^Shown to the user \(500x120\): .*\.png \(page: .*\.html\)$/);
+    assert.match(r.content[0].text, /^Saved at .*\.png \(page: .*\.html\)\. Sent to the client/);
     assert.deepEqual((await fs.readdir(path.join(agent, "renders"))).length, 2);
     assert.equal((await fs.stat(path.join(agent, "renders"))).mode & 0o777, 0o700, "mockups may hold project data");
   });
@@ -209,20 +210,24 @@ test("the result draws the picture once, with empty rows under it, or says why n
     tool.renderResult(result(details), { isPartial: false }, theme, { showImages: true, state: {}, outputPad: 1, isError: false, ...context });
   const text = (view: any) => view.render(80).join("");
   const state = {};
-  const view = draw({ file, mimeType: "image/png" }, { state });
-  const image = view.children[1];
-  assert.ok(image instanceof Image);
-  assert.equal(draw({ file }, { state }).children[1], image, "a redraw keeps the picture already sent");
   setCapabilities({ images: "kitty", trueColor: true, hyperlinks: false });
   try {
+    const view = draw({ file, mimeType: "image/png" }, { state });
+    const image = view.children[1];
+    assert.ok(image instanceof Image);
+    assert.equal(draw({ file }, { state }).children[1], image, "a redraw keeps the picture already sent");
     const [spacer, anchor, ...covered] = view.render(80);
     assert.equal(spacer, "");
     assert.match(anchor, /^\x1b_G/);
     assert.ok(covered.length > 0 && covered.every((line: string) => line === ""), "pi-tui finds a picture scrolled past its top through empty rows only");
+    assert.ok(draw({ file }, { showImages: false }).children[1] instanceof Text, "pi's image setting is off");
+    assert.match(text(draw({ file: path.join(root, "old.png") })), /old\.png is gone/);
+    setCapabilities({ images: null, trueColor: true, hyperlinks: false });
+    const saved = { content: [{ type: "text", text: `Saved at ${file}. This terminal cannot draw pictures, so the user sees only the path.` }], details: { file } };
+    const shown = text(tool.renderResult(saved, { isPartial: false }, theme, { showImages: true, state: {}, outputPad: 1, isError: false }));
+    assert.ok(shown.replace(/\s+/g, "").includes(`Savedat${file}`.replace(/\s+/g, "")), "no image protocol: the full path, not pi-tui's basename fallback");
   } finally {
     resetCapabilitiesCache();
   }
-  assert.ok(draw({ file }, { showImages: false }).children[1] instanceof Text, "pi's image setting is off");
-  assert.match(text(draw({ file: path.join(root, "old.png") })), /old\.png is gone/);
   assert.match(text(draw()), /Shown to the user/);
 });

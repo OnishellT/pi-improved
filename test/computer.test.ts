@@ -22,7 +22,8 @@ async function person(config?: object, mcpJson?: object) {
   const agent = await tempProject({ ...(config ? { "pi-improved.json": JSON.stringify({ computer: config }) } : {}), ...(mcpJson ? { "mcp.json": JSON.stringify(mcpJson) } : {}) });
   const bin = await tempProject({});
   // PI_DESKTOP is the person's own value: the extension must hand it back, and withEnv restores it after the test.
-  return { env: { HOME: home, PI_CODING_AGENT_DIR: agent, PATH: bin, PI_DESKTOP: "mine" }, home, agent, bin };
+  // Not in a Hyprland session, whatever session runs the tests.
+  return { env: { HOME: home, PI_CODING_AGENT_DIR: agent, PATH: bin, PI_DESKTOP: "mine", HYPRLAND_INSTANCE_SIGNATURE: undefined } as Record<string, string | undefined>, home, agent, bin };
 }
 
 const server = (h: ReturnType<typeof fakePi>, name: string) => h.mcp.find((m) => m.name === name)?.config;
@@ -300,6 +301,17 @@ test("cancelling every question changes nothing and writes nothing", async () =>
     assert.deepEqual(await readComputerConfig(p.agent), {});
     await assert.rejects(fs.access(path.join(p.agent, "pi-improved.json")));
     assert.deepEqual(h.mcp, []);
+  });
+});
+
+test("inside a Hyprland session, /computer says what the desktop still needs, even when hyprctl is not on PATH", { skip: process.platform !== "linux" }, async () => {
+  const p = await person();
+  await withEnv({ ...p.env, HYPRLAND_INSTANCE_SIGNATURE: "abc" }, async () => {
+    const h = fakePi();
+    await registerComputer(h.pi);
+    const notes: string[] = [];
+    await h.commands.get("computer").handler("", { ui: { ...fakeUI(["No changes"]), notify: (m: string) => notes.push(m) } });
+    assert.match(notes[0], /^Desktop is not offered here: it needs hyprctl \(Hyprland\), hypruse/m);
   });
 });
 

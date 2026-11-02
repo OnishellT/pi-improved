@@ -121,7 +121,7 @@ test("/metrics names skipped and not-requested reviews, and the estimated saving
   });
   const report = await metricsReport(root);
   assert.match(report, /^D\s.*review: n\/a$/m);
-  assert.match(report, /^B\s.*review: skipped$/m);
+  assert.match(report, /^B\s.*review: skipped \(low risk\)$/m);
   assert.match(report, /^Reviews skipped as low risk: 2 \(estimated \$0\.80 saved\)$/m);
 });
 
@@ -130,9 +130,11 @@ test("/metrics prints no saving without a paid review, nor a skipped line withou
   const skippedOnly = await metricsReport(await tempProject({ ".pi/memory/tasks.jsonl": mk("B", [{ status: "skipped-low-risk", model: "m", seconds: 0 }]) }));
   assert.match(skippedOnly, /^Reviews skipped as low risk: 1$/m);
   assert.doesNotMatch(skippedOnly, /saved/);
+  const freeReview = await metricsReport(await tempProject({ ".pi/memory/tasks.jsonl": [mk("A", [{ status: "approved", model: "m", seconds: 1, cost: 0 }]), mk("B", [{ status: "skipped-low-risk", model: "m", seconds: 0 }])].join("\n") }));
+  assert.doesNotMatch(freeReview, /saved/, "a review that cost nothing (subscription) is not a paid one");
   const discarded = await metricsReport(await tempProject({ ".pi/memory/tasks.jsonl": mk("A", [{ status: "approved", model: "m", seconds: 1, cost: 0.4, discarded: true }]) }));
   assert.match(discarded, /review: approved \(discarded\)$/m);
-  assert.doesNotMatch(discarded, /skipped|saved/);
+  assert.doesNotMatch(discarded, /^Reviews skipped|saved/m);
 });
 
 test("/metrics leaves plan checks out of the review column, not out of the cost", async () => {
