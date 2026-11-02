@@ -96,7 +96,7 @@ function understandingLine(records: any[]): string[] {
 function planLine(records: any[]): string[] {
   const last = records.map((r) => [...(r.metrics.reviews ?? [])].reverse().find((x: any) => String(x.status).startsWith("plan-"))?.status).filter(Boolean);
   const count = (status: string) => `${status} ${last.filter((s) => s === `plan-${status}`).length}`;
-  return last.length ? [`Plan checks (${last.length} tasks): ${["ok", "fix", "skipped"].map(count).join(", ")}`] : [];
+  return last.length ? [`Plan checks (${last.length} task${last.length === 1 ? "" : "s"}): ${["ok", "fix", "skipped"].map(count).join(", ")}`] : [];
 }
 
 export async function metricsReport(root: string): Promise<string> {
