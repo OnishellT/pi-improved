@@ -328,7 +328,7 @@ function deferred<T = void>() {
 
 async function parallel(models: object, answers: unknown[] = [], verifyOut = "", taskExtra: object = {}, steps = ["check"], perStep?: (step: string) => { code: number; stdout: string }) {
   const root = await tempProject({
-    ".pi/workflow.json": JSON.stringify({ version: 1, setup: "done", verify: steps, connectors: [], models, review: { minLevel: "low" } }),
+    ".pi/workflow.json": JSON.stringify({ version: 1, setup: "done", verify: steps, connectors: [], models, review: { minLevel: "low" }, limits: { failuresBeforeEscalation: 2 } }),
     ".pi/task.json": JSON.stringify({ ...task, ...taskExtra }),
   });
   const gate = deferred();
@@ -449,7 +449,7 @@ test("the premise lines go with every repeat from the escalation point on, inclu
   one.setOut("Error: y 2");
   assert.match((await one.settle()).entries[0].content, PREMISE_LINES);
   const late = await parallel({ escalate: "p/strong" }, [], "Error: z 1");
-  await updateManifest(late.ctx.cwd, (m) => void (m.limits = { verifyRetries: 9 }));
+  await updateManifest(late.ctx.cwd, (m) => void (m.limits = { failuresBeforeEscalation: 2, verifyRetries: 9 }));
   late.gate.resolve();
   assert.doesNotMatch((await late.settle()).entries[0].content, /every fix so far assumed/);
   assert.match((await late.settle()).entries[0].content, PREMISE_LINES);
@@ -525,10 +525,13 @@ test("the progress check says when it passes, and never runs when off or not imp
   assert.equal(off.verifies() + planning.verifies(), 0);
 });
 
-test("the progress check is on by default every 5 writes", async () => {
+test("the progress check is off by default; limits.verifyEvery turns it on every N writes", async () => {
   const t = await setup({ pass: true, task: true });
   await fs.writeFile(path.join(t.root, ".pi/task.json"), JSON.stringify(task));
   const event = { toolName: "write", content: [] };
+  for (let i = 0; i < 10; i++) assert.equal(await t.emit("tool_result", event, t.ctx), undefined);
+  assert.equal(t.verifies(), 0);
+  await updateManifest(t.root, (m) => void (m.limits = { verifyEvery: 5 }));
   for (let i = 0; i < 4; i++) assert.equal(await t.emit("tool_result", event, t.ctx), undefined);
   assert.ok(await t.emit("tool_result", event, t.ctx));
 });
