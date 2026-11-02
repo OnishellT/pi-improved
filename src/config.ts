@@ -117,13 +117,13 @@ export interface Limits {
   agentlintRules: number;
   /** Verify retries (and contract retries) before the agent asks whether to keep trying. */
   verifyRetries: number;
-  /** Failed verifies before the stronger model takes over. */
+  /** Failed verifies before the stronger model takes over (default 3: the 2nd failure only diagnoses). */
   failuresBeforeEscalation: number;
   /** Paid plan checks per task; 0 turns them off. */
   planChecks: number;
   /** A retro every N finished tasks; 0 turns it off. */
   retroEvery: number;
-  /** While implementing, run the first verify command after every N write/edit calls and append its tail to the tool result; 0 turns it off. */
+  /** While implementing, run the first verify command after every N write/edit calls and append its tail to the tool result; 0 (the default) turns it off. */
   verifyEvery: number;
   /** Changed lines in one change (lockfiles, generated and vendored paths not counted) above which the diff is high risk, so the review checks that it has one purpose. */
   changeCap: number;
@@ -135,10 +135,10 @@ export const DEFAULT_LIMITS: Limits = {
   interviewQuestions: 12,
   agentlintRules: 3,
   verifyRetries: 2,
-  failuresBeforeEscalation: 2,
+  failuresBeforeEscalation: 3,
   planChecks: 1,
   retroEvery: 5,
-  verifyEvery: 5,
+  verifyEvery: 0,
   changeCap: 500,
   fastPath: { files: 8, interface: 6, decisions: 2 },
 };
