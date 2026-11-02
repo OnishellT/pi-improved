@@ -1,6 +1,6 @@
 // Local pull request reviewer: `npm run review -- <pr> [--dry-run] [--force]`.
 // Builds curated context, runs the reviewer in a disposable worktree at the PR head, and
-// posts one GitHub review with inline comments and a confidence score (README.md, "Reviewing pull requests").
+// posts one GitHub review with inline comments and a confidence score (docs/DEVELOPMENT.md, "Reviewing pull requests").
 import { spawn, spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
