@@ -143,6 +143,13 @@ test("/models says which file was saved when the other one fails", async () => {
   });
 });
 
+test("/models refuses an unknown argument instead of saving for all projects", async () => {
+  const root = await tempProject({});
+  const t = await models(root, [], { args: "projct" });
+  assert.match(t.notes[0], /Unknown argument "projct"\. Run \/models, or \/models project/);
+  assert.deepEqual(t.global, {});
+});
+
 test("/models asks provider first when the list is long", async () => {
   const root = await tempProject({});
   const many = Array.from({ length: 20 }, (_, i) => m(i < 10 ? "a" : "b", `m${i}`));

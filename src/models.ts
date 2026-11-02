@@ -88,7 +88,9 @@ export function registerModels(pi: ExtensionAPI) {
     description: "Pick the model per phase (setup, implement, review, escalate); saved for all projects, `/models project` for this project only",
     handler: async (args, ctx) => {
       const root = ctx.cwd;
-      const projectOnly = args.trim() === "project";
+      const scope = args.trim();
+      if (scope && scope !== "project") return ctx.ui.notify(`Unknown argument "${scope}". Run /models, or /models project for this project only.`, "error");
+      const projectOnly = scope === "project";
       const current = (await readManifest(root)).models ?? {};
       const available = ctx.modelRegistry?.getAvailable().map(idOf).sort() ?? [];
       if (!available.length) return ctx.ui.notify("No models available. Log in with /login.", "error");
