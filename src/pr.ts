@@ -184,7 +184,13 @@ export async function runPr(exec: Exec, root: string, ui: Pick<ExtensionContext[
   if (!facts.base) return { status: "not-ready", detail: "No base branch found. Run /pr <base-branch>." };
   const baseName = facts.base.replace(/^origin\//, "");
   const task = await readTask(root).catch(() => undefined);
-  const manifest = await readManifest(root).catch(() => undefined);
+  // readManifest defaults a missing file, so an error here is a broken file: verify cannot run, and skipping it would say "no verification steps".
+  let manifest: Awaited<ReturnType<typeof readManifest>>;
+  try {
+    manifest = await readManifest(root);
+  } catch (error) {
+    return { status: "not-ready", detail: `Verify did not run, so nothing was committed or pushed: .pi/workflow.json could not be read (${String((error as Error)?.message ?? error).split("\n")[0]}). Fix the file, then run /pr again.` };
+  }
 
   let branch = facts.branch;
   if (branch === baseName || branch === "(detached HEAD)") {
