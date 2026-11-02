@@ -100,7 +100,7 @@ export async function metricsReport(root: string): Promise<string> {
     const sum = (k: string) => phases.reduce((s, p) => s + (p[k] ?? 0), 0);
     const reviews: any[] = r.metrics.reviews ?? [];
     // Plan checks are not diff reviews: the verdict column leaves them out; their cost still counts.
-    const verdicts = reviews.filter((x) => !String(x.status).startsWith("plan-")).map((x) => (x.status === "skipped-low-risk" || x.status === "not-requested" ? "·" : x.discarded ? `(${x.status})` : x.status)).join(",") || "-";
+    const verdicts = reviews.filter((x) => !String(x.status).startsWith("plan-")).map((x) => (x.status === "skipped-low-risk" ? "skipped" : x.status === "not-requested" ? "n/a" : x.discarded ? `${x.status} (discarded)` : x.status)).join(",") || "-";
     const reviewCost = reviews.reduce((s, x) => s + (x.cost ?? 0), 0);
     return { id: String(r.ticket ?? r.id), cost: sum("cost") + reviewCost, tokens: sum("input") + sum("output"), seconds: sum("seconds"), fails: r.metrics.verifyFailures ?? 0, verdicts };
   });
@@ -109,14 +109,19 @@ export async function metricsReport(root: string): Promise<string> {
   const all: any[] = records.flatMap((r) => r.metrics.reviews ?? []);
   const paid = all.filter((x) => x.status !== "skipped-low-risk" && x.status !== "not-requested" && !String(x.status).startsWith("plan-") && x.cost !== undefined);
   const avoided = all.filter((x) => x.status === "skipped-low-risk").length;
+  // The saving is a guess (the mean paid review times the skipped ones), so it needs at least one paid review and says so.
   const mean = paid.length ? paid.reduce((s, x) => s + x.cost, 0) / paid.length : 0;
-  return [`Last ${rows.length} tasks (id, cost, tokens in+out, seconds, verify failures, reviews):`, ...lines, `Mean cost per task: $${avg.toFixed(3)}`, `Reviews avoided: ${avoided} (≈ $${(avoided * mean).toFixed(2)} saved)`, ...understandingLine(records.slice(-10))].join("\n");
+  const skippedLine = !avoided ? [] : [`Reviews skipped as low risk: ${avoided}${paid.length ? ` (estimated $${(avoided * mean).toFixed(2)} saved)` : ""}`];
+  return [`Last ${rows.length} tasks (id, cost, tokens in+out, seconds, verify failures, reviews; n/a: review not requested):`, ...lines, `Mean cost per task: $${avg.toFixed(3)}`, ...skippedLine, ...understandingLine(records.slice(-10))].join("\n");
 }
 
-/** The active task's phase, cost and tokens per phase, and the last risk verdict, from the persisted metrics. */
+/**
+ * The active task's phase, cost and tokens per phase, and the last risk verdict, from the persisted metrics.
+ * With no active task, the latest finished tasks instead.
+ */
 export async function costReport(root: string): Promise<string> {
   const task = await readTask(root).catch(() => undefined);
-  if (!task || task.status === "done") return "No active task. /metrics shows the latest finished ones.";
+  if (!task || task.status === "done") return metricsReport(root);
   const data = await loadMetrics(root, task.id);
   if (!data) return `${task.id}: ${task.status}, nothing recorded yet.`;
   const rows = Object.entries(data.phases).map(([name, p]) => `  ${name.padEnd(13)} $${p.cost.toFixed(3).padStart(7)} ${String(p.input + p.output).padStart(9)} tok (${p.cacheRead} cached) ${String(Math.round(p.seconds)).padStart(5)} s`);
@@ -185,11 +190,11 @@ export function registerTelemetry(pi: ExtensionAPI) {
   pi.events?.on(ESCALATE_EVENT, (d) => bump((d as EscalatePayload).root, (m) => void m.escalations++));
 
   pi.registerCommand("cost", {
-    description: "Phase, cost and tokens of the active task, and its last risk level",
+    description: "Cost, tokens and risk of the active task; with none, the latest finished tasks",
     handler: async (_args, ctx) => ctx.ui.notify(await costReport(ctx.cwd), "info"),
   });
   pi.registerCommand("metrics", {
-    description: "Cost, tokens and time of the latest tasks",
+    description: "Cost, tokens and time of the latest finished tasks (what /cost shows with no active task)",
     handler: async (_args, ctx) => ctx.ui.notify(await metricsReport(ctx.cwd), "info"),
   });
 }

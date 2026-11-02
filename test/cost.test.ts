@@ -22,7 +22,9 @@ test("/cost shows the active task's phases, total and last risk level", async ()
   assert.match(report, /C-1: phase implementing/);
   assert.match(report, /implementing\s+\$\s*0\.500/);
   assert.match(report, /Total \$0\.500 \| last risk: low/);
-  assert.match(await costReport(await tempProject({})), /No active task/);
+  assert.match(await costReport(await tempProject({})), /^No metrics yet/, "with no task and no finished one, it says so");
+  const finished = await tempProject({ ".pi/task.json": taskJson("C-0", "done"), ".pi/memory/tasks.jsonl": JSON.stringify({ id: "C-0", metrics: { phases: { implementing: { input: 1, output: 1, cost: 0.2, seconds: 3 } }, verifyFailures: 0, reviews: [] } }) });
+  assert.match(await costReport(finished), /^Last 1 tasks.*\nC-0\s+\$\s*0\.200/s, "with no active task, the finished tasks are shown at once");
 });
 
 test("/cost names the last review's status instead of calling every review high risk", async () => {
