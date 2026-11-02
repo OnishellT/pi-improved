@@ -74,7 +74,7 @@ async function nixChecks(nix: NixProbe, loggedIn: () => Promise<boolean>): Promi
 export const extensionDetail = (ext: string | undefined) => ext ?? "missing: without it the review never finishes. Run `npm install` in the package folder (`npm run postinstall` when npm skips install scripts)";
 
 /** Project-file keys that are state, written by /setup and /task (`mode` is a legacy key nothing reads; it is tolerated). */
-const STATE_KEYS = ["version", "setup", "language", "startedAt", "completedAt", "verify", "agentlint", "agentlintStep", "connectors", "declinedConnectors", "mode"];
+const STATE_KEYS = ["version", "setup", "language", "startedAt", "completedAt", "verify", "agentlint", "agentlintStep", "connectors", "declinedConnectors", "agentlintDeclined", "mode"];
 
 type KeyCheck = (value: unknown) => string | undefined;
 const shown = (value: unknown) => JSON.stringify(value);
