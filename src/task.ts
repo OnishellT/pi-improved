@@ -29,7 +29,8 @@ const nextSteps = (task: Task) =>
   task.status === "planning" ? "/task continue resumes planning, /task cancel drops it." : task.status === "implementing" ? "/task done or /task cancel ends it." : "/task <description or ticket> starts a new one.";
 /** Said in the plan, the ADR and the decision when a run with no UI takes the recommended option. */
 const WITHOUT_USER = "chosen without the user: no UI, so pi took the recommended option";
-const PLAN_STATUS = { ok: "plan-ok", fix: "plan-fix", skipped: "skipped" } as const;
+// A plan check that did not run is still a plan check: /metrics must not count it as a code review.
+const PLAN_STATUS = { ok: "plan-ok", fix: "plan-fix", skipped: "plan-skipped" } as const;
 // Doc files named in a request: relative or absolute paths ending in .md/.txt/..., bare or quoted, with prose punctuation around them.
 const SPEC_FILE = /(?:^|[\s:(\[`"'])((?:\.{1,2}\/|\/|[\w.-]+\/)?[\w.-]+(?:\/[\w.-]+)*\.(?:md|markdown|txt|rst|adoc))(?=$|[\s:,;.)\]`"'])/g;
 
@@ -83,6 +84,11 @@ export function registerTask(pi: ExtensionAPI) {
   let planning: string | undefined;
   /** The user answered the approach question (open ask_user questions) for that task: continuing it does not ask again. */
   let approached = false;
+  /** The prompt /task sent last, and whether the current run is the planner's (that prompt, or the user typing). */
+  let plannerPrompt: string | undefined;
+  let plannerRun = true;
+  /** Prompts other extensions sent (/retro, /setup...): their runs ask their own questions, not the planner's. */
+  const otherPrompts = new Set<string>();
   /** A partly answered approach round: what the user answered and the open questions still pending. */
   let approach: { answered: { question: string; answer: string }[]; open: string[] } | undefined;
   /** What the planner read from the tracker (MCP) while planning: the ticket, as evidence for interface names. */
@@ -113,7 +119,8 @@ export function registerTask(pi: ExtensionAPI) {
     }
     const previous = await usePhaseModel(pi, ctx, "implement");
     if (previous && !task.model) await updateTask(ctx.cwd, (t) => void (t.model = previous));
-    pi.sendUserMessage(taskPrompt(task.title, task.ticket, tracker(manifest), await relatedTasks(ctx.cwd, task.body ?? task.title), await skillsBlock(ctx.cwd, "plan"), task.spec, task.body, !approached && understandingOf(manifest) === "plan+end" && ctx.hasUI && (approach ? approachResume(approach.answered, approach.open) : true)));
+    plannerPrompt = taskPrompt(task.title, task.ticket, tracker(manifest), await relatedTasks(ctx.cwd, task.body ?? task.title), await skillsBlock(ctx.cwd, "plan"), task.spec, task.body, !approached && understandingOf(manifest) === "plan+end" && ctx.hasUI && (approach ? approachResume(approach.answered, approach.open) : true));
+    pi.sendUserMessage(plannerPrompt);
     return ctx.waitForIdle();
   };
 
@@ -368,12 +375,17 @@ export function registerTask(pi: ExtensionAPI) {
 
   // A paused plan waits for the user: the agent may not open another dialog before they write.
   pi.on("tool_call", async (event, ctx) => {
-    if (paused && event.toolName === "ask_user" && !(await setupRunning(ctx.cwd))) return { block: true, reason: "Planning is paused: the user cancelled a question. Stop and wait for the user." };
+    if (paused && plannerRun && event.toolName === "ask_user" && !(await setupRunning(ctx.cwd))) return { block: true, reason: "Planning is paused: the user cancelled a question. Stop and wait for the user." };
+  });
+  pi.on("input", async (event) => {
+    if (event.source === "extension" && event.text !== plannerPrompt) otherPrompts.add(event.text);
   });
   pi.on("before_agent_start", async (event) => {
     if (event.messageType !== "user") return;
     nudges = 0;
-    paused = false;
+    // A run another command started (a /retro, say) is not the planner's: it neither pauses nor resumes planning.
+    plannerRun = !otherPrompts.delete(event.prompt);
+    if (plannerRun) paused = false;
   });
   // A task left open in an earlier session still drives the gates here: say so once.
   pi.on("session_start", async (event, ctx) => {
@@ -382,7 +394,7 @@ export function registerTask(pi: ExtensionAPI) {
     if (task && task.status !== "done") ctx.ui.notify(`Task "${oneLine(task.title, 80)}" is ${task.status}: ${nextSteps(task)}`, "info");
   });
   pi.on("tool_result", async (event, ctx) => {
-    if (event.toolName !== "ask_user" || (await readTask(ctx.cwd).catch(() => undefined))?.status !== "planning") return;
+    if (event.toolName !== "ask_user" || !plannerRun || (await readTask(ctx.cwd).catch(() => undefined))?.status !== "planning") return;
     // The /setup interview asks through ask_user too, while a task may be open: its rounds are not the planner's.
     if (await setupRunning(ctx.cwd)) return;
     const questions = (event.input.questions ?? []) as { question: string; options?: string[] }[];
@@ -435,7 +447,8 @@ export function registerTask(pi: ExtensionAPI) {
     // In the TUI the person reads it and answers (`hasUI` is true in RPC too, so it is the mode that tells).
     const asking = task?.status === "implementing" && ctx.mode !== "tui" && endsOnQuestion(lastText);
     // While planning, a cancelled question or a plain-text question in the TUI waits for the user: no "call task_plan".
-    if (task?.status === "planning" && (paused || (ctx.mode === "tui" && endsOnQuestion(lastText)))) return;
+    // Another command's run (a /retro, say) is not the planner's to push on.
+    if (task?.status === "planning" && (!plannerRun || paused || (ctx.mode === "tui" && endsOnQuestion(lastText)))) return;
     if (task?.status !== "planning" && !asking) return;
     nudges++;
     const content = asking ? QUESTION_NUDGE : TASK_NUDGE;

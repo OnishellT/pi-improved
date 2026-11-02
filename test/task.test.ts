@@ -341,6 +341,13 @@ test("plan check: OK proceeds to implementing", async () => {
   assert.equal((await readTask(root))!.status, "implementing");
 });
 
+test("plan check: one that did not run is reported as plan-skipped, not as a skipped code review", async () => {
+  const { tools, verdicts, emitted, ctxFor, userNames } = await planCheckSetup();
+  verdicts.push("no verdict line here");
+  await tools.get("task_plan").execute("1", userNames, undefined, undefined, ctxFor(["Use them"]).ctx);
+  assert.equal(emitted.at(-1).payload.status, "plan-skipped");
+});
+
 test("plan check: review.plan = false disables it", async () => {
   const { tools, spawns, ctxFor, userNames, root } = await planCheckSetup();
   await updateManifest(root, (m) => void (m.review = { plan: false }));
@@ -815,6 +822,28 @@ test("a cancelled /setup interview round does not pause planning, and /task canc
   assert.match((await emit("tool_call", { toolName: "ask_user", input }, ctxFor([]).ctx)).reason, /Planning is paused/);
   await commands.get("task").handler("cancel", ctxFor([]).ctx);
   assert.equal(await emit("tool_call", { toolName: "ask_user", input }, ctxFor([]).ctx), undefined);
+});
+
+test("a /retro run during planning neither pauses planning nor records its answers as plan decisions", async () => {
+  const { commands, tools, ctxFor, emit, sent } = await setup();
+  await commands.get("task").handler("Add fee", ctxFor([]).ctx);
+  await emit("input", { text: sent[0], source: "extension" }, ctxFor([]).ctx);
+  await emit("before_agent_start", { messageType: "user", prompt: sent[0] }, ctxFor([]).ctx);
+  const retro = "Review the last 3 finished tasks and propose edits through ask_user options.";
+  await emit("input", { text: retro, source: "extension" }, ctxFor([]).ctx);
+  await emit("before_agent_start", { messageType: "user", prompt: retro }, ctxFor([]).ctx);
+  const input = { questions: [{ question: "Add the rounding rule to AGENTS.md?", options: ["yes", "no"] }, { question: "Write an ADR?", options: ["yes", "no"] }] };
+  const c = noting(ctxFor([]));
+  const out = await emit("tool_result", { toolName: "ask_user", input, details: { answers: [{ question: "Add the rounding rule to AGENTS.md?", answer: "yes" }] }, content: [] }, c.ctx);
+  assert.equal(out, undefined);
+  assert.deepEqual(c.notes, []);
+  assert.equal(await emit("tool_call", { toolName: "ask_user", input }, c.ctx), undefined);
+  assert.equal(await emit("agent_before_settle", { outcome: "completed" }, c.ctx), undefined);
+  // back in the planner's run (the user types): the retro answer is not a plan decision
+  await emit("input", { text: "go on", source: "interactive" }, ctxFor([]).ctx);
+  await emit("before_agent_start", { messageType: "user", prompt: "go on" }, ctxFor([]).ctx);
+  const result = await tools.get("task_plan").execute("1", plan([]), undefined, undefined, ctxFor([]).ctx);
+  assert.ok(!(result.details.plan.decisions ?? []).some((d: any) => /AGENTS\.md/.test(d.question)));
 });
 
 test("continuing after an approach question was cancelled asks again, and a partial round asks only its open questions", async () => {
