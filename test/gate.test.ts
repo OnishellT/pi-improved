@@ -315,8 +315,11 @@ test("review CHANGES continues with the findings once; the fix is checked by ver
   assert.equal(r.continue, true);
   assert.equal(r.entries[0].customType, "diff-review");
   assert.match(r.entries[0].content, /1\. bug[\s\S]*Fix these, then finish\./);
+  t.setDiff("fixed");
   assert.equal(await t.settle(), undefined);
   assert.equal(t.subagent.filter((s) => s === "spawn").length, 1);
+  // The fixed diff was checked by verify only: the dialog does not claim it was reviewed.
+  assert.match(t.ui.messages[0], /\. Review: not run on this diff \(one review round per turn\)\./);
   assert.equal((await readTask(t.root))?.status, "done");
 });
 
@@ -840,6 +843,7 @@ test("with no verify retries a missing interface asks the user instead of passin
   assert.equal(await t.settle(), undefined);
   assert.equal(t.verifies(), 0);
   assert.equal(t.ui.asked.length, 1);
+  assert.match(t.notes[0], /^Interface contract not met[\s\S]*src\/fee\.ts/, "what is missing is shown before the question");
   assert.equal(t.notes.at(-1), "The task stays open: /task done closes it.");
   assert.equal((await t.settle()).entries[0].customType, "contract-gate");
 });
@@ -947,7 +951,9 @@ test("a review that is off is reported as off, naming its key, not as a low-risk
   assert.deepEqual(r.spawned, []);
   assert.equal(r.status, "not-requested");
   assert.match(r.dialog, /\n\nRisk high: [^\n]*\. Review: off \(review\.minLevel\)\./);
-  assert.equal((await highRisk({ never: true })).status, "not-requested");
+  const never = await highRisk({ never: true });
+  assert.equal(never.status, "not-requested");
+  assert.match(never.dialog, /\. Review: off \(review\.never\)\./, "never wins over minLevel, so it is the key named");
 });
 
 test("with review off and no models.review the risk line says the review is off and asks for no model", async () => {
