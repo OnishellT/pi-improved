@@ -204,7 +204,7 @@ export function registerSetup(pi: ExtensionAPI) {
       // A message in the session, not a notice: the reload rebuilds the chat from the session, and pi's own "Reloaded…" status replaces an info notice.
       // setup_finish ends the run before the model could say it.
       const text = done.models?.review ? "Setup done. Next: /task <what to do>." : "Setup done. Next: /models to pick a Review model (without one, no review runs), then /task <what to do>.";
-      pi.sendMessage({ customType: "setup-next", content: text, display: true });
+      pi.sendMessage({ customType: "setup", content: text, display: true });
       await ctx.reload();
     },
   });
