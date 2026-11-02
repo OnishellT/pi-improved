@@ -37,7 +37,7 @@ export const TASK_DONE_EVENT = "pi-improved:task-done";
 export interface TaskDonePayload {
   root: string;
   task: Task;
-  /** The retro prompt is only sent to an interactive session. */
+  /** The retro reminder and the save warning only show in an interactive session. */
   hasUI?: boolean;
 }
 
