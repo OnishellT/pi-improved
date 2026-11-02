@@ -115,7 +115,7 @@ export interface Limits {
   interviewQuestions: number;
   /** agentlint rules offered at first, in /setup. */
   agentlintRules: number;
-  /** Verify retries (and contract retries) before the agent asks whether to keep trying. */
+  /** Verify retries (and contract retries) before the agent asks whether to keep trying. Default 3, so the default escalation at the 3rd failure is reached before the question. */
   verifyRetries: number;
   /** Failed verifies before the stronger model takes over (default 3: the 2nd failure only diagnoses). */
   failuresBeforeEscalation: number;
@@ -134,7 +134,7 @@ export interface Limits {
 export const DEFAULT_LIMITS: Limits = {
   interviewQuestions: 12,
   agentlintRules: 3,
-  verifyRetries: 2,
+  verifyRetries: 3,
   failuresBeforeEscalation: 3,
   planChecks: 1,
   retroEvery: 5,
