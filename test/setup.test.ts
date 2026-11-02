@@ -300,6 +300,7 @@ test("the approval lists the files after .gitignore is fixed, capped at 40 with 
   await tools.get("setup_finish").execute("1", { verify: ["true"], summary: "s" }, undefined, undefined, ctx);
   assert.ok(ignoredFirst, "node_modules/ is ignored before git lists the files");
   assert.match(ui.messages[0], /doc39\.md\n… and 5 more/);
+  assert.match(ui.messages[0], /git status --short --untracked-files=all lists every file/, "git diff alone does not show the untracked files the cap hides");
   assert.doesNotMatch(ui.messages[0], /doc40\.md/);
 });
 
