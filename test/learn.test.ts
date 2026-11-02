@@ -57,11 +57,15 @@ async function withUI(root: string, exec?: Parameters<typeof fakePi>[0]) {
   f.pi.events = { on: (name: string, fn: any) => listeners.set(name, fn) };
   registerLearn(f.pi);
   const notes: [string, string?][] = [];
-  const ctx = { cwd: root, hasUI: true, ui: { notify: (m: string, t?: string) => notes.push([m, t]) } };
+  const delivered: unknown[] = [];
+  const send = f.pi.sendUserMessage;
+  f.pi.sendUserMessage = (text: string, opts?: unknown) => (delivered.push(opts), send(text));
+  const state = { idle: true };
+  const ctx = { cwd: root, hasUI: true, isIdle: () => state.idle, ui: { notify: (m: string, t?: string) => notes.push([m, t]) } };
   await f.emit("session_start", {}, ctx);
   const emit = (i: number, hasUI = true) => listeners.get(TASK_DONE_EVENT)!({ root, hasUI, task: task(`T-${i}`, "T", "S", ["a.ts"]) });
   const retro = (args = "") => f.commands.get("retro").handler(args, ctx);
-  return { ...f, notes, emit, retro };
+  return { ...f, notes, emit, retro, delivered, state };
 }
 
 test("every 5th record shows a /retro reminder, only with UI, and never starts a turn by itself", async () => {
@@ -89,6 +93,17 @@ test("/retro sends the retro prompt over the last retroEvery tasks, or the count
   assert.match(f.sent[1], /Retro: review the last 3 completed tasks/);
   await f.retro("50");
   assert.match(f.sent[2], /Retro: review the last 7 completed tasks/);
+});
+
+test("/retro right after a task closes waits for its record, and during a run it queues after the run", async () => {
+  const f = await withUI(await tempProject({}), () => ({ code: 0 }));
+  void f.emit(1); // the gate does not await its listeners
+  await f.retro();
+  assert.match(f.sent[0], /Retro: review the last 1 completed tasks/);
+  f.state.idle = false;
+  await f.retro();
+  assert.deepEqual(f.delivered, [undefined, { deliverAs: "followUp" }]);
+  assert.deepEqual(f.notes.at(-1), ["The retro starts when the current run ends.", "info"]);
 });
 
 test("a task that cannot be saved tells the user, with UI", async () => {

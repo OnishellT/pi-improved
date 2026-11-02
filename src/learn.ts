@@ -114,8 +114,15 @@ export function registerLearn(pi: ExtensionAPI) {
     ui = ctx.hasUI ? ctx.ui : undefined;
   });
 
-  pi.events?.on(TASK_DONE_EVENT, async (data) => {
-    const { root, task, hasUI } = data as TaskDonePayload;
+  // The event does not wait for its listener: /retro waits for the saves still running, or it could miss the task just closed.
+  let saving: Promise<unknown> = Promise.resolve();
+  pi.events?.on(TASK_DONE_EVENT, (data) => {
+    const save = saving.then(() => saveTask(data as TaskDonePayload));
+    saving = save.catch(() => {});
+    return save;
+  });
+
+  async function saveTask({ root, task, hasUI }: TaskDonePayload) {
     let count: number;
     try {
       const record = await buildRecord(pi, root, task);
@@ -134,17 +141,24 @@ export function registerLearn(pi: ExtensionAPI) {
     // A reminder, not a turn: the retro costs a paid run and asks questions, so it starts only when the user runs /retro.
     const every = limitsOf(await readManifest(root).catch(() => undefined)).retroEvery; // 0 turns the reminder off
     if (hasUI && every > 0 && count % every === 0) ui?.notify(`${count} tasks finished. Run /retro to review the last ${every}.`, "info");
-  });
+  }
 
   pi.registerCommand("retro", {
     description: "Review the last finished tasks and propose edits to AGENTS.md, ADRs or skills (asks before writing)",
     handler: async (args, ctx) => {
       const root = ctx.cwd;
+      await saving;
       const records = await readMemory(root).catch(() => []);
       if (!records.length) return ctx.ui.notify(`No finished tasks in ${MEMORY_PATH} yet. Finish one with /task, then run /retro.`, "info");
       const wanted = Number.parseInt(args?.trim() ?? "", 10);
       const count = Math.min(records.length, wanted > 0 ? wanted : await retroSize(root));
-      pi.sendUserMessage(await retroPrompt(root, count, pi.exec.bind(pi)));
+      // During a run a plain send is refused: queue the retro after it.
+      const prompt = await retroPrompt(root, count, pi.exec.bind(pi));
+      if (ctx.isIdle()) pi.sendUserMessage(prompt);
+      else {
+        pi.sendUserMessage(prompt, { deliverAs: "followUp" });
+        ctx.ui.notify("The retro starts when the current run ends.", "info");
+      }
     },
   });
 }
