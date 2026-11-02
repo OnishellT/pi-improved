@@ -7,7 +7,7 @@ export const endsOnQuestion = (text: string) => /\?\s*$/.test(text.trim().slice(
 export const assistantText = (message: any): string | undefined =>
   message?.role !== "assistant" ? undefined : typeof message.content === "string" ? message.content : (message.content ?? []).filter((c: any) => c.type === "text").map((c: any) => c.text).join("\n");
 
-export const TASK_NUDGE = "Call task_plan with your plan.";
+export const TASK_NUDGE = "Call task_plan with your plan. For a real open question, call ask_user first.";
 export const QUESTION_NUDGE = "The user does not read plain-text questions here. If you need a decision, call ask_user. Otherwise make the reasonable choice that fits the plan, AGENTS.md and the ADRs, and keep implementing.";
 
 /** Sent by the gate once the user confirms a verified (and, if requested, reviewed) task: the teach-back, then `understanding_done` completes the task. */
