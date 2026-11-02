@@ -4,7 +4,6 @@ import { registerAskUser } from "./ask.ts";
 import { registerBasePrompt } from "./base-prompt.ts";
 import { registerDoctor } from "./doctor.ts";
 import { registerGate } from "./gate.ts";
-import { registerContextGuard } from "./context-guard.ts";
 import { registerGuards } from "./guards.ts";
 import { registerLearn } from "./learn.ts";
 import { registerModels } from "./models.ts";
@@ -85,5 +84,4 @@ export default async function (rawPi: ExtensionAPI) {
   });
   registerPr(pi);
   registerTelemetry(pi);
-  registerContextGuard(pi);
 }
