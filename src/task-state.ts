@@ -115,10 +115,28 @@ export async function updateTask(root: string, change: (task: Task) => void): Pr
   return task;
 }
 
+/** Each task's saved verify list as this process last wrote or first read it. Bash can rewrite `.pi/task.json`, not this: the gate trusts it first. */
+const savedHere = new Map<string, string[]>();
+const savedKey = (root: string, task: Task) => `${path.resolve(root)}\0${task.id}`;
+/** Sets the task's saved verify list, in the task and in this process. The caller writes the task. */
+export function saveVerify(root: string, task: Task, steps: string[]) {
+  task.savedVerify = steps;
+  savedHere.set(savedKey(root, task), steps);
+}
+/** The saved verify list to compare against: the one this process holds, else the task file's (then held from here on). */
+export function savedVerifyOf(root: string, task: Task) {
+  const key = savedKey(root, task);
+  if (!savedHere.has(key) && task.savedVerify) savedHere.set(key, task.savedVerify);
+  return savedHere.get(key);
+}
+
 /** pi-improved changed the verify steps itself (/setup, the added agentlint step): the active task's saved list follows, so the gate does not ask about it. */
 export async function refreshSavedVerify(root: string, change: (saved: string[]) => string[]) {
   const task = await readTask(root).catch(() => undefined);
-  if (task?.savedVerify && task.status !== "done") await writeTask(root, { ...task, savedVerify: change(task.savedVerify) });
+  const saved = task && task.status !== "done" ? savedVerifyOf(root, task) : undefined;
+  if (!task || !saved) return;
+  saveVerify(root, task, change(saved));
+  await writeTask(root, task);
 }
 
 /** True when `file` is listed in `files`. Entries ending in `/` cover a directory. */

@@ -122,6 +122,8 @@ export function registerSetup(pi: ExtensionAPI) {
     onStart = undefined;
   });
 
+  // A /setup the user started in this process: only its setup_finish may move an active task's saved verify steps (bash can set `setup: running`).
+  let startedHere = false;
   const setupRunning = async (cwd: string) => (await readManifest(cwd).catch(() => undefined))?.setup === "running";
 
   pi.registerCommand("setup", {
@@ -180,6 +182,7 @@ export function registerSetup(pi: ExtensionAPI) {
         }
       });
       manifest = await readManifest(root);
+      startedHere = true;
       const firstSteps = verifySteps(manifest);
       await refreshSavedVerify(root, () => firstSteps);
       // Only a hint, so a mention is enough: nothing is classified by it.
@@ -302,7 +305,7 @@ export function registerSetup(pi: ExtensionAPI) {
         if (addedStep) m.agentlintStep = addedStep;
         m.completedAt = new Date().toISOString();
       });
-      await refreshSavedVerify(root, () => verifySteps(finished));
+      if (startedHere) await refreshSavedVerify(root, () => verifySteps(finished));
       // Headless, nobody approved: say so, with the verify result, so the summary reports it.
       const text = ctx.hasUI ? "Setup complete and approved. Stop here." : `Setup complete, not approved: no UI to ask; the files are uncommitted for review with git diff.${verifyNote} Report this, then stop.`;
       return { content: [{ type: "text", text }], details: { verify }, terminate: true };
