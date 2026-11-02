@@ -95,7 +95,7 @@ test("missingNames: plurals and simple inflections in the evidence count for a n
 });
 
 test("baseForm strips plurals and -ing/-ed, and leaves words that only end in s alone", () => {
-  for (const [a, b] of [["users", "user"], ["listing", "list"], ["services", "service"], ["entries", "entry"], ["classes", "class"], ["statuses", "status"]]) assert.equal(baseForm(a), baseForm(b), `${a} ~ ${b}`);
+  for (const [a, b] of [["users", "user"], ["listing", "list"], ["listings", "listing"], ["buildings", "building"], ["services", "service"], ["entries", "entry"], ["classes", "class"], ["statuses", "status"]]) assert.equal(baseForm(a), baseForm(b), `${a} ~ ${b}`);
   assert.notEqual(baseForm("class"), baseForm("cla"));
   assert.equal(baseForm("is"), "is");
 });

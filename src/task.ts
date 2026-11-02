@@ -73,6 +73,8 @@ type PlanParams = Omit<Plan, "decisions" | "intent"> & { intent: string; decisio
 /** An ADR is only written once the plan passes its gates and is recorded. */
 type PendingAdr = { decision: Decision; adr: AdrInput };
 
+const setupRunning = async (root: string) => (await readManifest(root).catch(() => undefined))?.setup === "running";
+
 export function registerTask(pi: ExtensionAPI) {
   let nudges = 0;
   /** The user cancelled a planning question: no "call task_plan" nudge until they write again. */
@@ -239,12 +241,14 @@ export function registerTask(pi: ExtensionAPI) {
       } catch (error: any) {
         if (arg !== "cancel") return ctx.ui.notify(`${error.message}. /task cancel removes it.`, "error");
         await writeTask(root, undefined);
+        paused = false;
         return ctx.ui.notify("Task cancelled.", "info");
       }
       if (!arg) return ctx.ui.notify(active ? `${oneLine(active.title)} (${active.status}). ${nextSteps(active)}` : "No active task. Use /task <description or ticket>.", "info");
       if (arg === "cancel") {
         if (!active) return ctx.ui.notify("No active task to cancel.", "info");
         await writeTask(root, undefined);
+        paused = false;
         await restoreModel(pi, ctx, active.model);
         return ctx.ui.notify("Task cancelled.", "info");
       }
@@ -363,8 +367,8 @@ export function registerTask(pi: ExtensionAPI) {
   });
 
   // A paused plan waits for the user: the agent may not open another dialog before they write.
-  pi.on("tool_call", async (event) => {
-    if (paused && event.toolName === "ask_user") return { block: true, reason: "Planning is paused: the user cancelled a question. Stop and wait for the user." };
+  pi.on("tool_call", async (event, ctx) => {
+    if (paused && event.toolName === "ask_user" && !(await setupRunning(ctx.cwd))) return { block: true, reason: "Planning is paused: the user cancelled a question. Stop and wait for the user." };
   });
   pi.on("before_agent_start", async (event) => {
     if (event.messageType !== "user") return;
@@ -379,6 +383,8 @@ export function registerTask(pi: ExtensionAPI) {
   });
   pi.on("tool_result", async (event, ctx) => {
     if (event.toolName !== "ask_user" || (await readTask(ctx.cwd).catch(() => undefined))?.status !== "planning") return;
+    // The /setup interview asks through ask_user too, while a task may be open: its rounds are not the planner's.
+    if (await setupRunning(ctx.cwd)) return;
     const questions = (event.input.questions ?? []) as { question: string; options?: string[] }[];
     const given = ((event as any).details?.answers ?? []) as { question: string; answer: string }[];
     // Answers come back in question order; a cancel drops the rest and pauses the plan.
