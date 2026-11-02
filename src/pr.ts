@@ -92,6 +92,9 @@ export function buildBody({ task, facts, verify, risk }: BodyInput): string {
     ["Risk", riskText],
     ["New ADRs", adrs.length ? adrs.map((f) => `- ${f}`).join("\n") : "(none)"],
   ];
+  // Settled decisions, including names accepted while planning and options picked in a run with no UI (their answers say so).
+  const decided = (plan?.decisions ?? []).filter((d) => d.status === "decided" && d.answer?.trim());
+  if (decided.length) sections.push(["Decisions", decided.map((d) => `- ${oneLine(d.question, 200)} → ${d.answer!.replace(/\s+/g, " ").trim()}`).join("\n")]);
   if (plan?.seams.length) sections.push(["Tests", plan.seams.map((s) => `- ${s.name}: catches ${s.catches}${s.misses ? `; misses ${s.misses}` : ""}`).join("\n")]);
   const generated = sections.map(([h, b]) => `## ${h}\n${b}`).join("\n\n");
   const body = facts.template ? `${facts.template.trimEnd()}\n\n---\n\n${generated}` : generated;
