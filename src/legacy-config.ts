@@ -16,11 +16,21 @@ function readObject(file: string): Record<string, any> | undefined {
   }
 }
 
-/** `cleanup` says how to get rid of the old copy: while it exists, removing the key from the new file would bring the old value back. */
-const moved = (old: string, key: string, target: string, cleanup = `Delete ${old} now`) =>
-  `Moved ${key} from ${old} into ${target}. ${old} is no longer read and was left as it was. ${cleanup}: while it is there, removing ${key} from ${target} copies the old value back.`;
+/** Renames `file` to `<file>.migrated`, so it is never found again and nothing is lost. False when it cannot (a read-only dir): the next start tries again. */
+function retire(file: string): boolean {
+  try {
+    fs.renameSync(file, `${file}.migrated`);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
-/** Global legacy: `computer.json`, `self-compact.json` and `subagentPanes` in pi's `settings.json`, into the global file. Returns one notice per move. */
+const moved = (old: string, target: string) => `Moved ${old} into ${target} (old file renamed to ${old}.migrated).`;
+/** An old file left by an earlier migration: while it is there, removing the key from the new file would copy the old value back. */
+const retired = (old: string, key: string, target: string) => `${old} is no longer read (${target} has ${key}): renamed it to ${old}.migrated.`;
+
+/** Global legacy: `computer.json`, `self-compact.json` and `subagentPanes` in pi's `settings.json`, into the global file. Returns one notice per file. */
 export function migrateGlobal(dir = agentDir()): string[] {
   let config: Record<string, any>;
   try {
@@ -34,14 +44,23 @@ export function migrateGlobal(dir = agentDir()): string[] {
     ["self-compact.json", "selfCompact", readObject(path.join(dir, "self-compact.json"))],
     ["settings.json", "subagentPanes", typeof settings === "string" ? settings : undefined],
   ];
-  const todo = found.filter(([, key, value]) => value !== undefined && !Object.hasOwn(config, key));
-  if (!todo.length) return [];
-  try {
-    updateGlobal((c) => todo.forEach(([, key, value]) => void (c[key] = value)), dir);
-  } catch {
-    return []; // read-only agent dir: the old files keep being found, and the move is tried again next time
+  const present = found.filter(([, , value]) => value !== undefined);
+  const todo = present.filter(([, key]) => !Object.hasOwn(config, key));
+  const target = globalPath(dir);
+  if (todo.length) {
+    try {
+      updateGlobal((c) => todo.forEach(([, key, value]) => void (c[key] = value)), dir);
+    } catch {
+      return []; // read-only agent dir: the old files keep being found, and the move is tried again next time
+    }
   }
-  return todo.map(([old, key]) => moved(old, key, globalPath(dir), old === "settings.json" ? "Remove subagentPanes from settings.json now" : undefined));
+  return present.flatMap(([old, key]) => {
+    const copied = todo.some(([o]) => o === old);
+    // pi's own settings.json is not ours to rename: only the key in it is stale.
+    if (old === "settings.json") return copied ? [`Moved subagentPanes from settings.json into ${target}. Remove it from settings.json: it is no longer read.`] : [];
+    if (!retire(path.join(dir, old))) return copied ? [`Moved ${old} into ${target}. Delete ${old}: it is no longer read.`] : [];
+    return [copied ? moved(old, target) : retired(old, key, target)];
+  });
 }
 
 /** Project legacy: `.pi/self-compact.json` into that project's `.pi/workflow.json`. Writes only the moved key, never the setup defaults. */
@@ -56,13 +75,14 @@ export function migrateProject(root: string): string[] {
   } catch (error: any) {
     if (error.code !== "ENOENT") return []; // an invalid workflow.json is reported elsewhere; it is not overwritten
   }
-  if (!isObject(own) || Object.hasOwn(own, "selfCompact")) return [];
+  if (!isObject(own)) return [];
+  if (Object.hasOwn(own, "selfCompact")) return retire(old) ? [retired(".pi/self-compact.json", "selfCompact", MANIFEST_PATH)] : [];
   try {
     writeFileAtomic(file, `${JSON.stringify({ ...own, selfCompact: value }, null, 2)}\n`);
   } catch {
     return [];
   }
-  return [moved(".pi/self-compact.json", "selfCompact", MANIFEST_PATH)];
+  return [retire(old) ? moved(".pi/self-compact.json", MANIFEST_PATH) : `Moved .pi/self-compact.json into ${MANIFEST_PATH}. Delete .pi/self-compact.json: it is no longer read.`];
 }
 
 /** Both migrations; `root` left out migrates only the global files. Safe to call from every extension at startup: once a key is in place it moves nothing and says nothing. */

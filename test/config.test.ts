@@ -190,20 +190,20 @@ test("migration: legacy global files are copied once, left untouched, and notice
   const before = await Promise.all(["computer.json", "self-compact.json", "settings.json"].map((f) => fs.readFile(path.join(dir, f), "utf8")));
   const notices = migrateGlobal(dir);
   assert.equal(notices.length, 3);
-  assert.match(notices[0], /Moved computer from computer\.json into .*pi-improved\.json\. computer\.json is no longer read and was left as it was\. Delete computer\.json now: while it is there, removing computer from .*pi-improved\.json copies the old value back\./);
-  assert.match(notices[2], /Remove subagentPanes from settings\.json now/);
+  assert.match(notices[0], /^Moved computer\.json into .*pi-improved\.json \(old file renamed to computer\.json\.migrated\)\.$/);
+  assert.match(notices[2], /Remove it from settings\.json: it is no longer read/);
   assert.deepEqual(readGlobal(dir), { computer: { browser: "brave", desktop: "on" }, selfCompact: { default: { notice: "60%" } }, subagentPanes: "tern" });
-  assert.deepEqual(await Promise.all(["computer.json", "self-compact.json", "settings.json"].map((f) => fs.readFile(path.join(dir, f), "utf8"))), before);
+  assert.deepEqual(await Promise.all(["computer.json.migrated", "self-compact.json.migrated", "settings.json"].map((f) => fs.readFile(path.join(dir, f), "utf8"))), before);
   assert.deepEqual(migrateGlobal(dir), [], "the second startup moves and says nothing");
   // After that only the new file is read: a changed legacy file is ignored, and a key already there is never overwritten.
   await write(path.join(dir, "computer.json"), { desktop: "off" });
-  assert.deepEqual(migrateGlobal(dir), []);
+  assert.match(migrateGlobal(dir).join(), /^computer\.json is no longer read \(.*pi-improved\.json has computer\): renamed it to computer\.json\.migrated\.$/);
   assert.equal(readGlobal(dir).computer.desktop, "on");
 });
 
 test("migration copies only the keys the global file lacks, and never writes over an unreadable file", async () => {
   const dir = await tempProject({ "pi-improved.json": JSON.stringify({ mode: "flow", computer: { desktop: "off" } }), "computer.json": JSON.stringify({ desktop: "on" }), "self-compact.json": JSON.stringify({ default: { force: "80%" } }) });
-  assert.equal(migrateGlobal(dir).length, 1);
+  assert.equal(migrateGlobal(dir).length, 2);
   assert.deepEqual(readGlobal(dir), { mode: "flow", computer: { desktop: "off" }, selfCompact: { default: { force: "80%" } } });
   const broken = await tempProject({ "pi-improved.json": "{broken", "computer.json": JSON.stringify({ desktop: "on" }) });
   assert.deepEqual(migrateGlobal(broken), []);
@@ -216,15 +216,15 @@ test("migration copies only the keys the global file lacks, and never writes ove
 test("migration: a project's .pi/self-compact.json moves into its workflow.json once, without setup defaults", async () => {
   const root = await tempProject({ ".pi/self-compact.json": JSON.stringify({ models: { "a/b": { force: "70%" } } }) });
   const notices = migrateProject(root);
-  assert.match(notices[0], /Moved selfCompact from \.pi\/self-compact\.json into \.pi\/workflow\.json/);
+  assert.match(notices[0], /Moved \.pi\/self-compact\.json into \.pi\/workflow\.json \(old file renamed/);
   assert.deepEqual(await read(path.join(root, MANIFEST_PATH)), { selfCompact: { models: { "a/b": { force: "70%" } } } });
-  assert.equal(JSON.parse(await fs.readFile(path.join(root, ".pi/self-compact.json"), "utf8")).models["a/b"].force, "70%");
+  assert.equal(JSON.parse(await fs.readFile(path.join(root, ".pi/self-compact.json.migrated"), "utf8")).models["a/b"].force, "70%");
   assert.deepEqual(migrateProject(root), []);
   const m = await readManifest(root);
   assert.deepEqual([m.setup, m.selfCompact], ["pending", { models: { "a/b": { force: "70%" } } }]);
 
   const set = await tempProject({ ".pi/workflow.json": JSON.stringify({ version: 1, setup: "done", verify: ["t"], connectors: [], selfCompact: { default: { notice: "50%" } } }), ".pi/self-compact.json": JSON.stringify({ default: { notice: "70%" } }) });
-  assert.deepEqual(migrateProject(set), []);
+  assert.match(migrateProject(set).join(), /^\.pi\/self-compact\.json is no longer read/);
   assert.equal((await read(path.join(set, MANIFEST_PATH))).selfCompact.default.notice, "50%");
   const invalid = await tempProject({ ".pi/workflow.json": "{broken", ".pi/self-compact.json": "{}" });
   assert.deepEqual(migrateProject(invalid), []);
@@ -355,7 +355,7 @@ test("at startup /computer moves computer.json once and says so on the first ses
     await h.emit("session_start", {}, ctx);
     await h.emit("session_start", {}, ctx);
     assert.equal(notes.length, 1);
-    assert.match(notes[0], /Moved computer from computer\.json into .*pi-improved\.json\. computer\.json is no longer read/);
+    assert.match(notes[0], /Moved computer\.json into .*pi-improved\.json \(old file renamed/);
     const again = fakePi();
     await registerComputer(again.pi);
     await again.emit("session_start", {}, ctx);
