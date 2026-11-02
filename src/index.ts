@@ -15,7 +15,7 @@ import { registerSetup } from "./setup.ts";
 import { registerShow } from "./show.ts";
 import { globalProblem } from "./config.ts";
 import { migrateGlobal, migrateProject } from "./legacy-config.ts";
-import { loadBundledSubagent } from "./subagent-ext.ts";
+import { loadBundledSubagent, packageRoot } from "./subagent-ext.ts";
 import { registerSubagentView } from "./subagent-view.ts";
 import { registerTask } from "./task.ts";
 import { registerTelemetry } from "./telemetry.ts";
@@ -41,7 +41,7 @@ export default async function (rawPi: ExtensionAPI) {
   let subagentError = "";
   const subagent = await loadBundledSubagent(pi).catch((e) => void (subagentError = `did not load (${e?.message ?? e})`));
   if (subagent === "missing") subagentError = "is not installed";
-  if (subagentError) subagentError = `The bundled pi-subagent ${subagentError}: no /subagent, and the review and plan check cannot run. Run \`npm install\` in the pi-improved folder.`;
+  if (subagentError) subagentError = `The bundled pi-subagent ${subagentError}: no /subagent, and the review and plan check cannot run. Run \`npm install\` in ${packageRoot}, then restart pi.`;
   // The first Nix build of tmux can take minutes: start it now, and make only a bash call wait for it. Children never start panes.
   const child = !!process.env.PI_SUBAGENT_RUN_DIR;
   const exposed = !child && (subagent === "bundled" || subagent === "global") ? exposeSubagent(undefined, undefined, undefined, subagent === "bundled") : undefined;

@@ -5,7 +5,7 @@ import * as path from "node:path";
 import { test } from "node:test";
 import { pathToFileURL } from "node:url";
 import extension from "../src/index.ts";
-import { agentDir, ensureTrusted, hasGlobalSubagent, loadBundledSubagent } from "../src/subagent-ext.ts";
+import { agentDir, ensureTrusted, hasGlobalSubagent, loadBundledSubagent, packageRoot } from "../src/subagent-ext.ts";
 import { fakePi, tempProject, withEnv } from "./helpers.ts";
 
 test("global pi-subagent is detected from extensions/ or settings packages", async () => {
@@ -78,4 +78,23 @@ test("the bundled pi-subagent keeps its commands and events, but not its /subage
   await emit("session_start", {}, { sessionManager: { getSessionId: () => "s1" }, ui: { setWidget: (k: string) => widgets.push(k), notify: (t: string) => notes.push(t) } });
   assert.deepEqual(widgets, ["s1"]);
   assert.deepEqual(notes, ["hi"]);
+});
+
+test("a bundled pi-subagent that is missing or fails to load names the folder to run npm install in", async () => {
+  assert.ok((await fs.readFile(path.join(packageRoot, "package.json"), "utf8")).includes('"name": "pi-improved"'), "packageRoot is the pi-improved folder");
+  const { pi, emit } = fakePi();
+  const on = pi.on;
+  // Missing in a checkout without `npm install`; present, it fails here on purpose. Either way the notice must say where.
+  pi.on = (event: string, handler: any) => (event === "resources_discover" ? assert.fail("pi API changed") : on(event, handler));
+  const agent = await tempProject({});
+  await withEnv({ PI_SUBAGENT_RUN_DIR: undefined, PI_CODING_AGENT_DIR: agent }, () => extension(pi));
+  const errors: string[] = [];
+  const log = console.error;
+  console.error = (text: string) => void errors.push(text);
+  try {
+    await emit("session_start", { reason: "startup" }, { cwd: agent, hasUI: false });
+  } finally {
+    console.error = log;
+  }
+  assert.ok(errors.join("\n").includes(`Run \`npm install\` in ${packageRoot}, then restart pi.`), errors.join("\n"));
 });
