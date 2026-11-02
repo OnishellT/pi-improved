@@ -13,7 +13,7 @@ import { restoreModel, usePhaseModel } from "./models.ts";
 import { declineSetup, readManifest, setupDeclined, updateManifest, type EnabledConnector } from "./manifest.ts";
 import { phaseSkills, skillsBlock } from "./skills.ts";
 import { AGENTS_MAX_LINES, SETUP_NUDGE, setupPrompt } from "./setup-prompt.ts";
-import { LOCAL_STATE } from "./task-state.ts";
+import { LOCAL_STATE, refreshSavedVerify } from "./task-state.ts";
 import { resolvePolicyFailure } from "./policy.ts";
 import { checkVerifyApp } from "./verify-app.ts";
 import { agentlintStepOf, formatVerify, isPolicyFailure, runVerify, verifySteps } from "./verify.ts";
@@ -180,6 +180,8 @@ export function registerSetup(pi: ExtensionAPI) {
         }
       });
       manifest = await readManifest(root);
+      const firstSteps = verifySteps(manifest);
+      await refreshSavedVerify(root, () => firstSteps);
       // Only a hint, so a mention is enough: nothing is classified by it.
       if (use === "never" && manifest.verify.some((step) => /\bagentlint\b/.test(step))) ctx.ui.notify("useAgentlint is \"never\", but a verify step of yours still runs agentlint. Setup leaves your commands alone: change that step yourself if you want it gone.", "warning");
       registerConnectors(pi, connectors);
@@ -294,12 +296,13 @@ export function registerSetup(pi: ExtensionAPI) {
         throw new Error(`The user did not approve. Feedback: ${feedback || "(none)"}. Apply it and call setup_finish again.`);
       }
 
-      await updateManifest(root, (m) => {
+      const finished = await updateManifest(root, (m) => {
         m.setup = "done";
         m.verify = verify;
         if (addedStep) m.agentlintStep = addedStep;
         m.completedAt = new Date().toISOString();
       });
+      await refreshSavedVerify(root, () => verifySteps(finished));
       // Headless, nobody approved: say so, with the verify result, so the summary reports it.
       const text = ctx.hasUI ? "Setup complete and approved. Stop here." : `Setup complete, not approved: no UI to ask; the files are uncommitted for review with git diff.${verifyNote} Report this, then stop.`;
       return { content: [{ type: "text", text }], details: { verify }, terminate: true };

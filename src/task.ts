@@ -17,6 +17,7 @@ import { phaseSkills, skillsBlock } from "./skills.ts";
 import { readManifest, understandingOf, type Manifest } from "./manifest.ts";
 import { inFiles, oneLine, readTask, resolveInside, updateTask, writeTask, type Decision, type Plan, type Task } from "./task-state.ts";
 import { recordUnderstanding } from "./telemetry.ts";
+import { verifySteps } from "./verify.ts";
 import { QUESTION_NUDGE, TASK_NUDGE, approachResume, assistantText, endsOnQuestion, taskPrompt } from "./task-prompt.ts";
 
 const MAX_NUDGES = 2; // "call task_plan" / "use ask_user" reminders per user message
@@ -315,7 +316,7 @@ export function registerTask(pi: ExtensionAPI) {
       const title = oneLine(onlyFile ? await readInside(root, spec[0]) : arg) || arg;
       // A replaced task hands on the model to go back to.
       const model = active?.status !== "done" ? active?.model : undefined;
-      const task: Task = { id: `t${Date.now()}`, title, ...(!onlyFile && title !== arg && { body: arg }), ticket, status: "planning", allowedExtra: [], startedAt: new Date().toISOString(), ...(spec.length && { spec }), ...(model && { model }) };
+      const task: Task = { id: `t${Date.now()}`, title, ...(!onlyFile && title !== arg && { body: arg }), ticket, status: "planning", allowedExtra: [], savedVerify: verifySteps(manifest), startedAt: new Date().toISOString(), ...(spec.length && { spec }), ...(model && { model }) };
       await writeTask(root, task);
       if (ticket && !tracker(manifest))
         tell(ctx, `No tracker is enabled, so the agent sees only "${ticket}". To plan from the ticket: /task cancel, then /task ${ticket} <pasted ticket text>. /setup adds Jira or Linear.`, "warning");

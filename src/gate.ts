@@ -7,7 +7,7 @@ import { checkContract, formatContract } from "./contract.ts";
 import { limitsOf } from "./config.ts";
 import { diffBase, fileChanges, git, type FileChange } from "./git.ts";
 import { recordUnderstanding } from "./telemetry.ts";
-import { readManifest, understandingOf, type Manifest } from "./manifest.ts";
+import { MANIFEST_PATH, readManifest, understandingOf, type Manifest } from "./manifest.ts";
 import { restoreModel, switchModel } from "./models.ts";
 import { assessRisk, minLevelOf } from "./risk.ts";
 import { checkAcceptances } from "./guards.ts";
@@ -54,6 +54,12 @@ async function advice(cwd: string, report: string, kind: "policy" | "diagnose" |
 // the `limits.failuresBeforeEscalation`-th hands the attempt to the stronger model (both at once when the limit is 2 or lower).
 /** The failure that asks the model to diagnose: the 2nd, or the escalation point when that comes first. */
 export const diagnoseAt = (failuresBeforeEscalation: number) => Math.min(2, failuresBeforeEscalation);
+const STEPS_CHANGED = "The verify steps changed during the task. Use the new ones?";
+/** A failed run, without running anything: the verify steps changed and nobody can approve it. Its signature makes a repeat count as the same failure. */
+const stepsChanged = (saved: string[]) => {
+  const lines = ["verify FAILED: the verify steps changed during the task, and nobody can approve that here.", `Put back the steps the task started with in ${MANIFEST_PATH}:`, ...saved.map((s) => `- ${s}`)];
+  return { ok: false, report: lines.join("\n"), policy: false, infra: undefined, signature: { step: "verify steps changed", lines } as Signature | undefined, seconds: 0 };
+};
 /** Where a gate that stops leaves the task, and what closes it. */
 const STAYS_OPEN = "The task stays open: /task done closes it.";
 const REPORT_TAIL = 600;
@@ -133,10 +139,10 @@ export function registerGate(pi: ExtensionAPI) {
     const t = await readTask(cwd).catch(() => undefined);
     return t?.status === "implementing" && t.understanding !== undefined && t.understanding.tree !== now;
   };
-  const verify = async (manifest: Manifest, cwd: string) => {
+  const verify = async (manifest: Manifest, cwd: string, steps = verifySteps(manifest)) => {
     const t0 = Date.now();
     const isAgentlint = agentlintStepOf(manifest);
-    const result = await runVerify(verifySteps(manifest), pi.exec.bind(pi), cwd, undefined, validCap(manifest.maxReport));
+    const result = await runVerify(steps, pi.exec.bind(pi), cwd, undefined, validCap(manifest.maxReport));
     return { ok: result.ok, report: formatVerify(result), infra: infraFailure(result), policy: !result.ok && isPolicyFailure(result, isAgentlint), signature: failureSignature(result), seconds: (Date.now() - t0) / 1000 };
   };
   const emitVerify = (payload: Omit<VerifyPayload, "kind"> & { kind?: VerifyPayload["kind"] }) => void pi.events?.emit(VERIFY_EVENT, { kind: "gate", ...payload } satisfies VerifyPayload);
@@ -251,6 +257,23 @@ export function registerGate(pi: ExtensionAPI) {
         return { entries: [{ type: "custom_message", customType: "contract-gate", content: `${formatContract(problems)}\n\nExpose exactly these names in these files (the plan's interface), then finish.`, display: true }], continue: true };
       }
     }
+    // The steps the task started with: an edit to them during the task (with any tool) is not the gate's to accept.
+    let steps = verifySteps(manifest);
+    let restore = "";
+    let refused: string[] | undefined;
+    if (task?.status === "implementing") {
+      const saved = task.savedVerify;
+      // A task from before the list was saved: this gate saves it and checks from the next one on.
+      if (!saved) await updateTask(ctx.cwd, (t) => void (t.savedVerify = steps)).catch(() => {});
+      else if (JSON.stringify(saved) !== JSON.stringify(steps)) {
+        const use = ctx.hasUI && (await ctx.ui.select(STEPS_CHANGED, ["Use the new ones", "Keep the old ones"])) === "Use the new ones";
+        if (use) await updateTask(ctx.cwd, (t) => void (t.savedVerify = steps));
+        else if (ctx.hasUI) {
+          steps = saved;
+          restore = `The user kept the verify steps the task started with: put them back in ${MANIFEST_PATH}.`;
+        } else refused = saved;
+      }
+    }
     const reviewModel = manifest.models?.review;
     const abort = new AbortController();
     skip = undefined;
@@ -269,11 +292,12 @@ export function registerGate(pi: ExtensionAPI) {
       warnedNoReviewModel = true;
       ctx.ui.notify("This change needs a review, but no review model is set. Run /models and pick Review.", "warning");
     }
-    const reviewing = wanted && task && reviewModel ? review(ctx.cwd, task, reviewModel, abort.signal, verifySteps(manifest)) : undefined;
+    const reviewing = wanted && !refused && task && reviewModel ? review(ctx.cwd, task, reviewModel, abort.signal, steps) : undefined;
     if (reviewing) ctx.ui.setStatus("review", `reviewing the diff with ${reviewModel}…`);
     const clearStatus = () => ctx.ui.setStatus("review", undefined);
-    const { ok, report, policy, infra, signature, seconds } = await verify(manifest, ctx.cwd);
-    const unverified = !verifySteps(manifest).length;
+    // Headless, nobody can approve the new steps: they do not run, and the failure goes through the usual retries.
+    const { ok, report, policy, infra, signature, seconds } = refused ? stepsChanged(refused) : await verify(manifest, ctx.cwd, steps);
+    const unverified = !steps.length;
     const emit = (extra: Pick<VerifyPayload, "premise"> = {}) => void (unverified || emitVerify({ root: ctx.cwd, ok, seconds, ...extra }));
     if (infra) {
       // Not a verify failure: the code cannot be at fault, so the model hears nothing and no retry is spent.
@@ -349,7 +373,7 @@ export function registerGate(pi: ExtensionAPI) {
       const diagnose = !policy && failures === diagnoseFrom;
       // The person sees the attempt and the next step in the gate message itself; the escalation has its own notice.
       const step = retried && !policy && !escalating ? `Verify failed (${retries} of ${verifyRetries}): ${diagnose ? "diagnosing, then retrying" : "retrying"}.\n\n` : "";
-      const content = step + (await advice(ctx.cwd, report, policy ? "policy" : diagnose ? "diagnose" : "fix", premise, manifest.agentlint));
+      const content = (restore && `${restore}\n\n`) + step + (await advice(ctx.cwd, report, policy ? "policy" : diagnose ? "diagnose" : "fix", premise, manifest.agentlint));
       const customType = diagnose ? "verify-diagnose" : "verify-gate";
       shownSignature = signature;
       return { entries: [{ type: "custom_message", customType, content, display: true }], continue: true };
@@ -361,6 +385,14 @@ export function registerGate(pi: ExtensionAPI) {
       exitBefore = null;
     }
 
+    // The old steps passed, but the file still holds the new ones: the task closes once they are back.
+    if (restore) {
+      if (reviewing) {
+        abort.abort();
+        clearStatus();
+      }
+      return { entries: [{ type: "custom_message", customType: "verify-gate", content: `${restore} Then finish.`, display: true }], continue: true };
+    }
     verified = remembered;
     await deescalate(ctx);
     // What happened to the review, in the one risk line said at the end (in the done dialog when there is one).
