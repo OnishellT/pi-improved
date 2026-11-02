@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { checkThresholds, parseThreshold, profileForModel, resolveConfig, sanitizeStatus, thresholdState, thresholdTokens } from "../src/self-compact/config.ts";
+import { checkThresholds, parseThreshold, profileForModel, resolveConfig, thresholdState, thresholdTokens } from "../src/self-compact/config.ts";
 import { parseProfileFile } from "../src/self-compact/profile.ts";
 
 test("parses absolute, suffixed, and percentage thresholds", () => {
@@ -82,11 +82,3 @@ test("checkThresholds reports when force >= window", () => {
   assert.match(checkThresholds(resolveConfig(), 0)!, /buffer must be smaller/);
 });
 
-test("sanitizeStatus removes carriage returns, newlines, and tabs", () => {
-  assert.equal(sanitizeStatus("hello world"), "hello world");
-  assert.equal(sanitizeStatus("hello\nworld"), "hello world");
-  assert.equal(sanitizeStatus("hello\r\nworld"), "hello world");
-  assert.equal(sanitizeStatus("hello\tworld"), "hello world");
-  assert.equal(sanitizeStatus("hello\nworld\nhere"), "hello world here");
-  assert.equal(sanitizeStatus("\r\n\thello\r\n\tworld\r\n\t"), "hello world");
-});

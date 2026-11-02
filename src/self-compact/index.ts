@@ -1,10 +1,6 @@
-import { homedir } from "node:os";
-import { isAbsolute, relative, resolve, sep } from "node:path";
-import type { AssistantMessage } from "@earendil-works/pi-ai";
-import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { checkThresholds, profileForModel, resolveConfig, sanitizeStatus, thresholdState, thresholdTokens } from "./config.ts";
+import { checkThresholds, profileForModel, resolveConfig, thresholdState, thresholdTokens } from "./config.ts";
 import { globalPath, readGlobal } from "../config.ts";
 import { SELF_COMPACT_EVENT, SELF_COMPACT_RESUME_EVENT, type SelfCompactPayload, type SelfCompactResumePayload } from "../events.ts";
 import { migrateLegacy } from "../legacy-config.ts";
@@ -65,67 +61,24 @@ export default function (pi: ExtensionAPI) {
     return error;
   };
 
-  const installFooter = (ctx: ExtensionContext) => {
-    ctx.ui.setWidget("self-compact", undefined);
-    if (ctx.mode !== "tui") return;
-    ctx.ui.setFooter((tui, theme, footerData) => {
-      const unsubscribe = footerData.onBranchChange(() => tui.requestRender());
-      return {
-        dispose: unsubscribe,
-        invalidate() {},
-        render(width) {
-          const usage = usageFor(ctx);
-          const contextWindow = usage?.effectiveWindow ?? (activeContextWindow ?? ctx.model?.contextWindow ?? 0) - config.buffer;
-          const tokens = usage?.tokens ?? 0;
-          const percent = usage?.tokens == null || contextWindow <= 0 ? 0 : (tokens / contextWindow) * 100;
-          const filled = Math.min(20, Math.round((percent / 100) * 20));
-          const bar = `${"█".repeat(filled)}${"░".repeat(20 - filled)}`;
-          let state = "";
-          if (usage?.tokens != null) {
-            state = checkThresholds(config, contextWindow) ? "invalid thresholds" : thresholdState(tokens, contextWindow, config);
-          }
-          const marks = `N ${thresholdTokens(config.notice, contextWindow).toLocaleString()} · W ${thresholdTokens(config.warning, contextWindow).toLocaleString()} · F ${thresholdTokens(config.force, contextWindow).toLocaleString()}`;
-          const contextLine = `Context ${bar} ${usage?.tokens == null ? `?/${contextWindow.toLocaleString()}` : `${tokens.toLocaleString()}/${contextWindow.toLocaleString()} (${percent.toFixed(1)}%)`} · ${marks}${state && state !== "below" ? ` · ${state.toUpperCase()}` : ""}`;
-
-          const home = resolve(homedir());
-          const cwd = resolve(ctx.cwd);
-          const fromHome = relative(home, cwd);
-          let path = fromHome === "" ? "~" : fromHome !== ".." && !fromHome.startsWith(`..${sep}`) && !isAbsolute(fromHome) ? `~${sep}${fromHome}` : cwd;
-          const branch = footerData.getGitBranch();
-          if (branch) path += ` (${branch})`;
-          const sessionName = ctx.sessionManager.getSessionName();
-          if (sessionName) path += ` • ${sessionName}`;
-
-          let input = 0, output = 0, cost = 0;
-          for (const entry of ctx.sessionManager.getBranch()) {
-            if (entry.type === "message" && entry.message.role === "assistant") {
-              const message = entry.message as AssistantMessage;
-              input += message.usage.input;
-              output += message.usage.output;
-              cost += message.usage.cost.total;
-            }
-          }
-          const fmt = (value: number) => value < 1000 ? `${value}` : value < 10_000 ? `${(value / 1000).toFixed(1)}k` : value < 1_000_000 ? `${Math.round(value / 1000)}k` : `${(value / 1_000_000).toFixed(1)}M`;
-          const stats = `${input ? `↑${fmt(input)} ` : ""}${output ? `↓${fmt(output)} ` : ""}$${cost.toFixed(3)}`;
-          let model = ctx.model?.id ?? "no-model";
-          if (ctx.model?.reasoning) model += ` · ${ctx.thinkingLevel ?? "off"}`;
-          if (footerData.getAvailableProviderCount() > 1 && ctx.model) model = `(${ctx.model.provider}) ${model}`;
-          const pair = (left: string, right: string) => {
-            const safeRight = truncateToWidth(right, width, "");
-            const available = Math.max(0, width - visibleWidth(safeRight) - 1);
-            const safeLeft = truncateToWidth(left, available, "");
-            return `${safeLeft}${" ".repeat(Math.max(0, width - visibleWidth(safeLeft) - visibleWidth(safeRight)))}${safeRight}`;
-          };
-          const lines = [
-            theme.fg("dim", pair(path, contextLine)),
-            theme.fg("dim", pair(stats, model)),
-          ];
-          const statuses = [...footerData.getExtensionStatuses().entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, text]) => sanitizeStatus(text)).filter(Boolean);
-          if (statuses.length) lines.push(truncateToWidth(theme.fg("dim", statuses.join(" ")), width));
-          return lines;
-        },
-      };
-    });
+  const offText = `compaction off after ${MAX_FAILURES} failures (run /compact to retry)`;
+  /**
+   * One entry on pi's footer status line: the context use once a threshold is reached, or that compaction is off.
+   * Below the notice threshold pi's own footer already shows the usage, so the entry is cleared.
+   */
+  const statusText = (ctx: ExtensionContext) => {
+    if (compactionOff()) return offText;
+    const usage = usageFor(ctx);
+    if (!usage || checkThresholds(config, usage.effectiveWindow)) return undefined;
+    if (thresholdState(usage.tokens!, usage.effectiveWindow, config) === "below") return undefined;
+    const percent = (tokens: number) => Math.round((tokens / usage.effectiveWindow) * 100);
+    return `context ${percent(usage.tokens!)}% · compacts at ${percent(thresholdTokens(config.force, usage.effectiveWindow))}%`;
+  };
+  const showStatus = (ctx: ExtensionContext) => {
+    // After the session is replaced (`/new`, `/resume`) any use of ctx throws.
+    try {
+      ctx.ui.setStatus("context", statusText(ctx));
+    } catch {}
   };
 
   // pi tells session_compact_failed whether a compaction was cancelled (Escape) before it calls onError.
@@ -244,6 +197,7 @@ export default function (pi: ExtensionAPI) {
         resumed = false; // the session was replaced during the compaction, and its agent is gone
       }
     }
+    showStatus(ctx);
     announce(false, resumed);
   });
 
@@ -260,6 +214,7 @@ export default function (pi: ExtensionAPI) {
     if (pending) return;
     const usage = usageFor(ctx);
     if (!usage || compacting) return;
+    showStatus(ctx);
     if (configProblem(ctx, usage.effectiveWindow)) return;
     const state = thresholdState(usage.tokens!, usage.effectiveWindow, config);
     checkAfterCompaction(ctx, usage.tokens!, usage.effectiveWindow, state);
@@ -290,7 +245,8 @@ export default function (pi: ExtensionAPI) {
           content: state === "notice"
             ? `Context notice threshold reached (${usage.tokens!.toLocaleString()} of ${usage.effectiveWindow.toLocaleString()} tokens). Continue working, and call self_compact once the current step is finished.`
             : `Context warning threshold reached (${usage.tokens!.toLocaleString()} of ${usage.effectiveWindow.toLocaleString()} tokens). Wrap up the current step and call self_compact with a handoff note soon.`,
-          display: true,
+          // For the model: the user sees the tier in the status entry. The force tier stays visible, since it acts.
+          display: false,
         }],
         continue: true,
       };
@@ -347,16 +303,16 @@ export default function (pi: ExtensionAPI) {
     lastTier = "below";
     forceFailed = false;
     failures = 0;
-    installFooter(ctx);
+    showStatus(ctx);
   });
   pi.on("session_start", async (_event, ctx) => {
     // The old self-compact.json files are copied into the config files before the first read.
     const moved = migrateLegacy(ctx.cwd);
     if (moved.length) ctx.hasUI ? ctx.ui.notify(moved.join("\n"), "info") : console.error(`[self-compact] ${moved.join(" ")}`);
     await configureForModel(ctx.model?.provider, ctx.model?.id, ctx);
-    installFooter(ctx);
+    showStatus(ctx);
   });
-  pi.on("session_compact", (_event, _ctx) => {
+  pi.on("session_compact", (_event, ctx) => {
     lastTier = "below";
     compacting = false;
     forceFailed = false;
@@ -365,10 +321,10 @@ export default function (pi: ExtensionAPI) {
     measureAfterCompaction = true;
     // Our own compaction runs after `pending` was taken, so this is pi's auto-compaction doing the scheduled one.
     if (pending) pending.done = true;
+    showStatus(ctx);
   });
   pi.on("session_shutdown", (_event, ctx) => {
-    ctx.ui.setFooter(undefined);
-    ctx.ui.setWidget("self-compact", undefined);
+    ctx.ui.setStatus("context", undefined);
   });
 
   pi.registerCommand("self-compact-info", {
@@ -381,13 +337,17 @@ export default function (pi: ExtensionAPI) {
       const limit = window - config.buffer;
       const current = `${usage ? usage.tokens!.toLocaleString() : "?"} / ${limit.toLocaleString()} tokens`;
       const problem = checkThresholds(config, limit);
-      ctx.ui.notify(`Context ${current}. Notice ${thresholdTokens(config.notice, limit).toLocaleString()}, warning ${thresholdTokens(config.warning, limit).toLocaleString()}, force ${thresholdTokens(config.force, limit).toLocaleString()} tokens.${problem ? ` ${problem}: enforcement is off.` : ""}`, "info");
+      const off = compactionOff() ? ` ${offText[0].toUpperCase()}${offText.slice(1)}.` : "";
+      ctx.ui.notify(`Context ${current}. Notice ${thresholdTokens(config.notice, limit).toLocaleString()}, warning ${thresholdTokens(config.warning, limit).toLocaleString()}, force ${thresholdTokens(config.force, limit).toLocaleString()} tokens.${problem ? ` ${problem}: enforcement is off.` : ""}${off}`, "info");
     },
   });
 
   pi.registerCommand("self-compact-now", {
     description: "Compact now, optionally preserving a handoff note",
     // The user's own command: no resume afterwards, as with `/compact`.
-    handler: async (args, ctx) => void compact(ctx, args.trim() || undefined),
+    handler: async (args, ctx) => {
+      if (compacting) return ctx.ui.notify("A compaction is already running. Wait for it to finish.", "warning");
+      void compact(ctx, args.trim() || undefined);
+    },
   });
 }
