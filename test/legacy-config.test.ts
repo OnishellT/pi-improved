@@ -45,3 +45,13 @@ test("an earlier .migrated backup is never overwritten", async () => {
   assert.match(migrateGlobal(dir)[0], /renamed it to computer\.json\.migrated\.2\.$/);
   assert.equal(await fs.readFile(path.join(dir, "computer.json.migrated"), "utf8"), "first");
 });
+
+test("an old file that cannot be renamed still gets a notice to delete it", async () => {
+  const dir = await tempProject({ "pi-improved.json": JSON.stringify({ computer: { desktop: "on" } }), "computer.json": JSON.stringify({ desktop: "off" }) });
+  await fs.chmod(dir, 0o555);
+  try {
+    assert.match(migrateGlobal(dir)[0], /^computer\.json is no longer read \(.*pi-improved\.json has computer\)\. Delete it\.$/);
+  } finally {
+    await fs.chmod(dir, 0o755);
+  }
+});

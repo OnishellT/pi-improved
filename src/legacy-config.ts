@@ -68,7 +68,7 @@ export function migrateGlobal(dir = agentDir()): string[] {
     // pi's own settings.json is not ours to rename: only the key in it is stale.
     if (old === "settings.json") return copied ? [`Moved subagentPanes from settings.json into ${target}. Remove it from settings.json: it is no longer read.`] : [];
     const suffix = retire(path.join(dir, old));
-    if (!suffix) return copied ? [`Moved ${old} into ${target}. Delete ${old}: it is no longer read.`] : [];
+    if (!suffix) return [copied ? `Moved ${old} into ${target}. Delete ${old}: it is no longer read.` : `${old} is no longer read (${target} has ${key}). Delete it.`];
     return [copied ? moved(old, target, suffix) : retired(old, key, target, suffix)];
   });
 }
@@ -88,7 +88,7 @@ export function migrateProject(root: string): string[] {
   if (!isObject(own)) return [];
   if (Object.hasOwn(own, "selfCompact")) {
     const suffix = retire(old);
-    return suffix ? [retired(".pi/self-compact.json", "selfCompact", MANIFEST_PATH, suffix)] : [];
+    return [suffix ? retired(".pi/self-compact.json", "selfCompact", MANIFEST_PATH, suffix) : `.pi/self-compact.json is no longer read (${MANIFEST_PATH} has selfCompact). Delete it.`];
   }
   try {
     writeFileAtomic(file, `${JSON.stringify({ ...own, selfCompact: value }, null, 2)}\n`);

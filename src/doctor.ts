@@ -7,7 +7,7 @@ import { desktopMissing } from "./computer/desktop.ts";
 import { which } from "./computer/which.ts";
 import { bundledExtension, hasGlobalSubagent } from "./subagent-ext.ts";
 import { checkLimits, isObject, PREFERENCE_KEYS, readGlobal } from "./config.ts";
-import { configFiles, readManifest, readProjectManifest, UNDERSTANDING, type Manifest } from "./manifest.ts";
+import { configFiles, DEFAULT_SKILLS, readManifest, readProjectManifest, UNDERSTANDING, type Manifest } from "./manifest.ts";
 import { checkProfileFile } from "./self-compact/profile.ts";
 import { listSkills } from "./skills.ts";
 import { chromeHeadless, credentialStatus, hasNix, installMessage, NIXPKGS, nixPackage, type CredentialStatus } from "./nix.ts";
@@ -97,12 +97,15 @@ const fields = (checks: Record<string, KeyCheck>): Rule => (value, key) =>
 const modelId: KeyCheck = (v) => (typeof v === "string" && /^[^/]+\/.+/.test(v) ? undefined : `must be "provider/model-id", not ${shown(v)}`);
 const globs: KeyCheck = (v) => (Array.isArray(v) && v.every((p) => typeof p === "string") ? undefined : `must be a list of globs, not ${shown(v)}`);
 const choice = ["ask", "always", "never"];
+/** Skill lists per phase: a phase name the code does not know is ignored, so it is reported (the Skills check reports unknown skill names). */
+const phaseLists: Rule = (value, key) =>
+  !isObject(value) ? scalar(object)(value, key) : Object.keys(value).filter((phase) => !Object.hasOwn(DEFAULT_SKILLS, phase)).map((phase) => `${key}.${phase} is not a known phase: use ${listed(Object.keys(DEFAULT_SKILLS))}`);
 
 /** Per preference key, what is wrong with a value; the code reads anything else as the default without a word. `limits` has its own check, `mode` is legacy. */
 const KEY_CHECKS: Record<string, Rule> = {
   models: fields({ setup: modelId, implement: modelId, review: modelId, escalate: modelId }),
-  skills: scalar(object),
-  skillsOnDemand: scalar(object),
+  skills: phaseLists,
+  skillsOnDemand: phaseLists,
   basePrompt: scalar(bool),
   useAgentlint: scalar(oneOf(choice)),
   useBend: scalar(oneOf(choice)),

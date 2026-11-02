@@ -100,6 +100,12 @@ test("/doctor checks types and ranges in both files and names unknown project ke
   assert.doesNotMatch(fine.notes[0].msg, /Settings|unknown keys/);
 });
 
+test("/doctor names a skill phase the code does not know", async () => {
+  const t = await setup(() => ({ code: 0 }), true, undefined, { skills: { implemnt: ["tdd"] } });
+  await t.commands.get("doctor").handler("", t.ctx);
+  assert.match(t.notes[0].msg, /skills\.implemnt is not a known phase: use "setup", "plan", "implement", "diagnose", "review" or "learn"/);
+});
+
 test("/doctor reports a model id that is not a string instead of throwing", async () => {
   const t = await setup(() => ({ code: 0 }), true, undefined, { models: { review: 123 } });
   await t.commands.get("doctor").handler("", t.ctx);
