@@ -829,6 +829,10 @@ test("a /retro run during planning neither pauses planning nor records its answe
   await commands.get("task").handler("Add fee", ctxFor([]).ctx);
   await emit("input", { text: sent[0], source: "extension" }, ctxFor([]).ctx);
   await emit("before_agent_start", { messageType: "user", prompt: sent[0] }, ctxFor([]).ctx);
+  // the planner's own run: its answer is a plan decision
+  const mine = { questions: [{ question: "Rounding?", options: ["half-up", "banker"] }] };
+  const recorded = await emit("tool_result", { toolName: "ask_user", input: mine, details: { answers: [{ question: "Rounding?", answer: "half-up" }] }, content: [] }, ctxFor([]).ctx);
+  assert.match(recorded.content.at(-1).text, /already recorded as plan decisions/);
   const retro = "Review the last 3 finished tasks and propose edits through ask_user options.";
   await emit("input", { text: retro, source: "extension" }, ctxFor([]).ctx);
   await emit("before_agent_start", { messageType: "user", prompt: retro }, ctxFor([]).ctx);
@@ -844,6 +848,7 @@ test("a /retro run during planning neither pauses planning nor records its answe
   await emit("before_agent_start", { messageType: "user", prompt: "go on" }, ctxFor([]).ctx);
   const result = await tools.get("task_plan").execute("1", plan([]), undefined, undefined, ctxFor([]).ctx);
   assert.ok(!(result.details.plan.decisions ?? []).some((d: any) => /AGENTS\.md/.test(d.question)));
+  assert.ok(result.details.plan.decisions.some((d: any) => d.question === "Rounding?" && d.answer === "half-up"));
 });
 
 test("continuing after an approach question was cancelled asks again, and a partial round asks only its open questions", async () => {
