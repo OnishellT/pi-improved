@@ -57,7 +57,7 @@ test("TUI: Keep the old ones runs the saved steps and tells the agent to put the
   assert.deepEqual(t.ui.asked, [ASK]);
   assert.deepEqual(t.ran, ["check"]);
   assert.equal(result.continue, true);
-  assert.match(result.entries[0].content, /put them back in \.pi\/workflow\.json/);
+  assert.match(result.entries[0].content, /started with \(`check`\): put them back in \.pi\/workflow\.json\./);
   // The task does not close on the old steps while the file still holds the new ones.
   assert.equal((await t.task())?.status, "implementing");
   assert.deepEqual((await t.task())?.savedVerify, ["check"]);
