@@ -4,7 +4,7 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import { test } from "node:test";
-import { branchName, buildBody, gatherFacts, newAdrs, prTitle, runPr, scrub, type PrFacts } from "../src/pr.ts";
+import { branchName, buildBody, evidenceNote, gatherFacts, newAdrs, prTitle, runPr, scrub, type PrFacts } from "../src/pr.ts";
 import { installMessage } from "../src/nix.ts";
 import { stepSignature } from "../src/verify.ts";
 import { fakeUI, tempProject } from "./helpers.ts";
@@ -152,8 +152,22 @@ test("the preview lists the local evidence files and says they are not pushed; t
   const notes: string[] = [];
   const ui = { ...fakeUI([false]), notify: (m: string) => notes.push(m) };
   await runPr(setup().exec, root, ui as any);
-  assert.match(notes[0], /\nEvidence in \.pi\/evidence\/ \(not pushed; attach what reviewers need to the PR\):\n\.pi\/evidence\/b\.log\n\.pi\/evidence\/shots\/a\.png\n$/);
+  assert.match(notes[0], /\nEvidence in \.pi\/evidence\/ \(left out of the PR; attach what reviewers need\):\n\.pi\/evidence\/b\.log\n\.pi\/evidence\/shots\/a\.png\n$/);
   assert.equal(notes[0].match(/\.pi\/evidence/g)!.length, 3);
+});
+
+test("evidence is found at the repository root when pi runs in a subfolder", async () => {
+  const top = await tempProject({ ".pi/evidence/run.log": "x", "app/.pi/workflow.json": JSON.stringify({ version: 1, setup: "done", verify: [], connectors: [] }) });
+  const inner = setup().exec;
+  const exec: any = async (cmd: string, args: string[]) => (cmd === "git" && args.includes("--show-toplevel") ? { code: 0, stdout: `${top}\n`, stderr: "", killed: false } : inner(cmd, args));
+  const facts = await gatherFacts(exec, path.join(top, "app"));
+  assert.deepEqual(facts!.evidence, [".pi/evidence/run.log"]);
+});
+
+test("evidence the branch already commits is a warning that it will be pushed, not a local file to attach", () => {
+  const note = evidenceNote({ evidence: [".pi/evidence/a.png", ".pi/evidence/b.log"], changes: ["A\t.pi/evidence/a.png", "M\tsrc/a.ts"] });
+  assert.match(note, /^\nEvidence in \.pi\/evidence\/ \(left out of the PR; attach what reviewers need\):\n\.pi\/evidence\/b\.log\n\nWarning: this branch already commits evidence files, so they will be pushed\. Remove them from the commits if they must stay private:\n\.pi\/evidence\/a\.png\n$/);
+  assert.equal(evidenceNote({ evidence: [], changes: ["M\tsrc/a.ts"] }), "");
 });
 
 test("a failing git status stops /pr instead of passing for a clean tree", async () => {
