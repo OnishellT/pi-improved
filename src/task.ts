@@ -24,8 +24,11 @@ const MAX_TICKET_TEXT = 300_000; // characters of tracker output kept as evidenc
 // A request that is only a ticket key (`PAY-142`); `PAY-142 add fees` or `UTF-8 handling` is free text.
 const TICKET = /^[A-Z][A-Z0-9]+-\d+$/;
 const TRACKERS = ["jira", "linear"];
-/** The commands that end this task: only an implementing one can be called done. */
-const endsIt = (task: Task) => (task.status === "implementing" ? "/task done or /task cancel" : "/task cancel");
+/** What the user can do next with a task: only an implementing one can be called done. */
+const nextSteps = (task: Task) =>
+  task.status === "planning" ? "/task continue resumes planning, /task cancel drops it." : task.status === "implementing" ? "/task done or /task cancel ends it." : "/task <description or ticket> starts a new one.";
+/** Said in the plan, the ADR and the decision when a run with no UI takes the recommended option. */
+const WITHOUT_USER = "chosen without the user: no UI, so pi took the recommended option";
 const PLAN_STATUS = { ok: "plan-ok", fix: "plan-fix", skipped: "skipped" } as const;
 // Doc files named in a request: relative or absolute paths ending in .md/.txt/..., bare or quoted, with prose punctuation around them.
 const SPEC_FILE = /(?:^|[\s:(\[`"'])((?:\.{1,2}\/|\/|[\w.-]+\/)?[\w.-]+(?:\/[\w.-]+)*\.(?:md|markdown|txt|rst|adoc))(?=$|[\s:,;.)\]`"'])/g;
@@ -72,6 +75,10 @@ type PendingAdr = { decision: Decision; adr: AdrInput };
 
 export function registerTask(pi: ExtensionAPI) {
   let nudges = 0;
+  /** The user cancelled a planning question: no "call task_plan" nudge until they write again. */
+  let paused = false;
+  /** The task the answers below belong to: continuing it keeps them. */
+  let planning: string | undefined;
   /** What the planner read from the tracker (MCP) while planning: the ticket, as evidence for interface names. */
   const ticketText = new Map<string, string>();
   /** Answers already given for a question text, so a task_plan retry does not ask it again. Reset per task. */
@@ -87,8 +94,12 @@ export function registerTask(pi: ExtensionAPI) {
 
   const start = async (ctx: any, manifest: Manifest, task: Task) => {
     nudges = 0;
-    answers.clear();
-    asked.clear();
+    paused = false;
+    if (planning !== task.id) {
+      answers.clear();
+      asked.clear();
+      planning = task.id;
+    }
     ticketText.delete(ctx.cwd);
     const previous = await usePhaseModel(pi, ctx, "implement");
     if (previous && !task.model) await updateTask(ctx.cwd, (t) => void (t.model = previous));
@@ -96,13 +107,22 @@ export function registerTask(pi: ExtensionAPI) {
     return ctx.waitForIdle();
   };
 
-  /** Ask once per question and options; a cancelled dialog stops the plan. */
+  /** Ask once per question and options; a cancelled dialog pauses the plan. With no UI nobody can answer: the recommended (first) option is taken. */
   const ask = async (ctx: any, what: string, question: string, options: string[]) => {
     const key = JSON.stringify([question, options]);
     const known = answers.get(key);
     if (known !== undefined) return known;
+    if (!ctx.hasUI) {
+      ctx.ui.notify(`No UI: took "${options[0]}" for: ${oneLine(question, 80)}`, "info");
+      answers.set(key, options[0]);
+      return options[0];
+    }
     const answer = await selectOrType(ctx, question, options);
-    if (answer === undefined) throw new Error(`The user cancelled the ${what} question, so the plan stops here. Stop and wait for the user.`);
+    if (answer === undefined) {
+      paused = true;
+      ctx.ui.notify(`Planning paused at: ${oneLine(question, 80)}. ${nextSteps({ status: "planning" } as Task)}`, "info");
+      throw new Error(`The user cancelled the ${what} question, so the plan stops here. Stop and wait for the user.`);
+    }
     answers.set(key, answer);
     return answer;
   };
@@ -117,25 +137,31 @@ export function registerTask(pi: ExtensionAPI) {
     if (stray.length) throw new Error(`Seam test files must be listed in files: ${stray.map((x) => x.testFile).join(", ")}. Fix the plan and call task_plan again.`);
   };
 
-  /** Names are only "given" when the cited source really contains them; the label alone proves nothing. */
-  const askInterface = async (ctx: any, root: string, task: Task, params: PlanParams, evidence: string, pending: PendingAdr[]): Promise<Decision[]> => {
+  /**
+   * Names are only "given" when the cited source or the ticket (title, body, tracker text, spec files) really contains them; the label alone proves nothing.
+   * Names nobody gave are asked once. The accepted names stay in task.json as a decision: no ADR, they are not architecture.
+   */
+  const askInterface = async (ctx: any, root: string, params: PlanParams, evidence: string): Promise<Decision[]> => {
     const invented: string[] = [];
     for (const entry of params.interface) {
       const file = entry.source && entry.source !== "user" && entry.source !== "ticket" ? entry.source.split("#")[0] : undefined;
       const text = entry.source === "ticket" ? evidence : file ? await readInside(root, file) : "";
       const isNew = !entry.file.endsWith("/") && !(await exists(path.join(root, entry.file)));
-      const missing = text ? missingNames(entry, text, isNew) : [...entry.exports, path.basename(entry.file)];
+      let missing = text ? missingNames(entry, text, isNew) : [...entry.exports, ...(isNew ? [path.basename(entry.file)] : [])];
+      if (missing.length && text !== evidence) {
+        const notInTicket = new Set(missingNames(entry, evidence, isNew));
+        missing = missing.filter((m) => notInTicket.has(m));
+      }
       if (!missing.length) continue;
       const names = [...entry.exports, ...(entry.signatures ?? [])].join(", ");
-      invented.push(`${entry.file}: ${names}${text ? ` (not found in ${entry.source}: ${missing.join(", ")})` : ""}`);
+      invented.push(`${entry.file}${names ? `: ${names}` : ""}`);
     }
     if (!invented.length) return [];
     const proposal = invented.join("\n");
-    const accept = "Accept the proposed names";
-    const answer = await ask(ctx, "interface", `Proposed names (nobody defines them):\n${proposal}`, [accept]);
-    const decision: Decision = { id: "i1", question: "Interface names", options: [accept], status: "decided", answer: answer === accept ? proposal : answer };
-    pending.push({ decision, adr: { title: `Interface for ${task.title}`, context: `${task.title}\n\n${params.summary}`, decision: decision.answer! } });
-    return [decision];
+    const use = "Use them";
+    const answer = await ask(ctx, "interface", `The ticket does not name these. Use them?\n${proposal}`, [use]);
+    const chosen = answer === use ? proposal : answer;
+    return [{ id: "i1", question: "Interface names", options: [use], status: "decided", answer: ctx.hasUI ? chosen : `${chosen} (${WITHOUT_USER})` }];
   };
 
   /** A decision is settled when its source is a project file that is about the question; otherwise the user answers. */
@@ -148,7 +174,8 @@ export function registerTask(pi: ExtensionAPI) {
         out.push({ ...base, status: "documented", source: d.source });
         continue;
       }
-      const decision: Decision = { ...base, status: "decided", answer: await ask(ctx, "decision", d.question, d.options) };
+      const answer = await ask(ctx, "decision", d.question, d.options);
+      const decision: Decision = { ...base, status: "decided", answer: ctx.hasUI ? answer : `${answer} (${WITHOUT_USER})` };
       pending.push({ decision, adr: { title: d.question, context: `${task.title}\n\n${params.summary}`, decision: decision.answer! } });
       out.push(decision);
     }
@@ -188,7 +215,7 @@ export function registerTask(pi: ExtensionAPI) {
   };
 
   pi.registerCommand("task", {
-    description: "Start a task: the agent plans and implements it, you confirm the files it wrote at the end. /task done or /task cancel ends it",
+    description: "Start a task: the agent plans and implements it, you confirm the files it wrote at the end. /task alone shows it; /task continue, /task done, /task cancel",
     handler: async (args, ctx) => {
       const root = ctx.cwd;
       const arg = args.trim();
@@ -201,7 +228,7 @@ export function registerTask(pi: ExtensionAPI) {
         await writeTask(root, undefined);
         return ctx.ui.notify("Task cancelled.", "info");
       }
-      if (!arg) return ctx.ui.notify(active ? `${oneLine(active.title)} (${active.status})` : "No active task. Use /task <description or ticket>.", "info");
+      if (!arg) return ctx.ui.notify(active ? `${oneLine(active.title)} (${active.status}). ${nextSteps(active)}` : "No active task. Use /task <description or ticket>.", "info");
       if (arg === "cancel") {
         if (!active) return ctx.ui.notify("No active task to cancel.", "info");
         await writeTask(root, undefined);
@@ -209,7 +236,7 @@ export function registerTask(pi: ExtensionAPI) {
         return ctx.ui.notify("Task cancelled.", "info");
       }
       if (arg === "done") {
-        if (active?.status !== "implementing") return ctx.ui.notify(active ? `The task is ${active.status}: only an implementing task can be marked done.` : "No active task.", "info");
+        if (active?.status !== "implementing") return ctx.ui.notify(active ? `The task is ${active.status}, so it cannot be marked done yet. ${nextSteps(active)}` : "No active task.", "info");
         // Closing the task during the understanding check skips it.
         if (active.understanding) await recordUnderstanding(root, "skipped", 0);
         await completeTask(pi, ctx);
@@ -217,14 +244,17 @@ export function registerTask(pi: ExtensionAPI) {
       }
       const manifest = await readManifest(root);
       if (manifest.setup !== "done") return ctx.ui.notify("Run /setup first.", "error");
+      if (arg === "continue") {
+        if (active?.status === "planning") return start(ctx, manifest, active);
+        return ctx.ui.notify(active?.status === "implementing" ? `The task is implementing: keep working in the session. ${nextSteps(active)}` : "No task to continue. Use /task <description or ticket>.", "info");
+      }
 
       if (active && active.status !== "done") {
-        if (!ctx.hasUI) return ctx.ui.notify(`A task is already active: ${oneLine(active.title, 80)}. ${endsIt(active)} ends it.`, "error");
-        const choice = await ctx.ui.select(`A task is already active: ${oneLine(active.title, 80)}`, ["Continue it", "Replace it", "Cancel"]);
-        if (choice === "Continue it") {
-          if (active.status === "planning") return start(ctx, manifest, active);
-          return ctx.ui.notify(`The task is already ${active.status}: keep working in the session.`, "info");
-        }
+        if (!ctx.hasUI) return ctx.ui.notify(`A task is already ${active.status}: ${oneLine(active.title, 80)}. ${nextSteps(active)}`, "error");
+        // Only a planning task has something to continue; an implementing one goes on in the session.
+        const options = active.status === "planning" ? ["Continue it", "Replace it", "Keep it"] : ["Replace it", "Keep it"];
+        const choice = await ctx.ui.select(`A task is already ${active.status}: ${oneLine(active.title, 80)}`, options);
+        if (choice === "Continue it") return start(ctx, manifest, active);
         if (choice !== "Replace it") return;
       }
 
@@ -237,6 +267,8 @@ export function registerTask(pi: ExtensionAPI) {
       const model = active?.status !== "done" ? active?.model : undefined;
       const task: Task = { id: `t${Date.now()}`, title, ...(!onlyFile && title !== arg && { body: arg }), ticket, status: "planning", allowedExtra: [], startedAt: new Date().toISOString(), ...(spec.length && { spec }), ...(model && { model }) };
       await writeTask(root, task);
+      if (ticket && !tracker(manifest))
+        ctx.ui.notify(`No tracker is enabled, so the agent sees only "${ticket}". To plan from the ticket: /task cancel, then /task ${ticket} <pasted ticket text>. /setup adds Jira or Linear.`, "warning");
       await start(ctx, manifest, task);
     },
   });
@@ -288,7 +320,7 @@ export function registerTask(pi: ExtensionAPI) {
       await checkShape(root, params);
       const evidence = await evidenceFor(root, task);
       const pending: PendingAdr[] = [];
-      const decisions = [...(await askInterface(ctx, root, task, params, evidence, pending)), ...(await askDecisions(ctx, root, task, params, pending))];
+      const decisions = [...(await askInterface(ctx, root, params, evidence)), ...(await askDecisions(ctx, root, task, params, pending))];
       const plan: Plan = { intent: params.intent, summary: params.summary, steps: params.steps, files: params.files, decisions, interface: params.interface, seams: params.seams };
 
       const manifest = await readManifest(root);
@@ -305,7 +337,7 @@ export function registerTask(pi: ExtensionAPI) {
       announce(ctx, plan, manifest);
       const decided = plan.decisions.filter((d) => d.answer).map((d) => `- ${d.question} -> ${d.answer}${d.source ? ` (${d.source})` : ""}`);
       const settled = decided.length
-        ? `\n\nDecisions already made by the user (do not ask again):\n${decided.join("\n")}\npi wrote each one as an ADR at the path shown. They belong to this change and go in the PR: keep them, do not rewrite or delete them, and do not write ADRs for these yourself.`
+        ? `\n\nDecisions already made (do not ask again):\n${decided.join("\n")}\npi wrote an ADR for each one that shows a path. They belong to this change and go in the PR: keep them, do not rewrite or delete them, and do not write ADRs for these yourself.`
         : "";
       // Implementation starts here; skills the plan block already loaded are not sent twice.
       const skills = await skillsBlock(root, "implement", await phaseSkills(root, "plan"));
@@ -317,13 +349,15 @@ export function registerTask(pi: ExtensionAPI) {
   });
 
   pi.on("before_agent_start", async (event) => {
-    if (event.messageType === "user") nudges = 0;
+    if (event.messageType !== "user") return;
+    nudges = 0;
+    paused = false;
   });
   // A task left open in an earlier session still drives the gates here: say so once.
   pi.on("session_start", async (event, ctx) => {
     if (event.reason === "reload") return;
     const task = await readTask(ctx.cwd).catch(() => undefined);
-    if (task && task.status !== "done") ctx.ui.notify(`Task "${oneLine(task.title, 80)}" is ${task.status}: ${endsIt(task)} ends it.`, "info");
+    if (task && task.status !== "done") ctx.ui.notify(`Task "${oneLine(task.title, 80)}" is ${task.status}: ${nextSteps(task)}`, "info");
   });
   pi.on("tool_result", async (event, ctx) => {
     if (event.toolName !== "ask_user" || (await readTask(ctx.cwd).catch(() => undefined))?.status !== "planning") return;
@@ -363,6 +397,8 @@ export function registerTask(pi: ExtensionAPI) {
     // A run that ends on a plain-text question (last line, last 400 chars) has nobody to answer it in RPC/print/json: route it to ask_user.
     // In the TUI the person reads it and answers (`hasUI` is true in RPC too, so it is the mode that tells).
     const asking = task?.status === "implementing" && ctx.mode !== "tui" && endsOnQuestion(lastText);
+    // While planning, a cancelled question or a plain-text question in the TUI waits for the user: no "call task_plan".
+    if (task?.status === "planning" && (paused || (ctx.mode === "tui" && endsOnQuestion(lastText)))) return;
     if (task?.status !== "planning" && !asking) return;
     nudges++;
     const content = asking ? QUESTION_NUDGE : TASK_NUDGE;

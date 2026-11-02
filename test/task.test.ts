@@ -91,7 +91,7 @@ test("invalid source is asked and recorded as an ADR", async () => {
   const d = (await readTask(root))!.plan!.decisions[0];
   // The model is told pi wrote the ADR, so it neither deletes it nor writes its own.
   assert.ok(result.content[0].text.includes(`Fee unit? -> basis points (${d.source})`));
-  assert.match(result.content[0].text, /pi wrote each one as an ADR/);
+  assert.match(result.content[0].text, /pi wrote an ADR for each one that shows a path/);
   assert.equal(d.status, "decided");
   assert.equal(d.answer, "basis points");
   assert.match(await fs.readFile(path.join(root, d.source!), "utf8"), /basis points/);
@@ -222,16 +222,27 @@ test("a plain-text question while implementing is routed to ask_user, except in 
   assert.equal((await emit("agent_before_settle", { outcome: "completed" }, { ...ctx, mode: "rpc", hasUI: true })).continue, true);
 });
 
-test("invented interface names ask the user and write an ADR", async () => {
+test("invented interface names are asked once in plain words and kept in task.json, with no ADR", async () => {
   const { commands, tools, ctxFor, root } = await setup();
   await commands.get("task").handler("Add fee", ctxFor([]).ctx);
-  const { ctx, ui } = ctxFor(["Accept the proposed names"]);
-  const result = await tools.get("task_plan").execute("1", plan([], { interface: [{ file: "src/fee.ts", exports: ["fee"], signatures: ["fee(n: number): number"], source: "user" }] }), undefined, undefined, ctx);
-  assert.equal(ui.asked.length, 1);
+  const { ctx, ui } = ctxFor(["Use them"]);
+  const result = await tools.get("task_plan").execute("1", plan([], { interface: [{ file: "src/fee.ts", exports: ["computeFee"], signatures: ["computeFee(n: number): number"], source: "user" }] }), undefined, undefined, ctx);
+  assert.deepEqual(ui.asked, ["The ticket does not name these. Use them?\nsrc/fee.ts: computeFee, computeFee(n: number): number"]);
   assert.match(result.content[0].text, /write the tests/);
   const d = (await readTask(root))!.plan!.decisions[0];
   assert.equal(d.status, "decided");
-  assert.match(await fs.readFile(path.join(root, d.source!), "utf8"), /Interface for Add fee[\s\S]*fee\(n: number\)/);
+  assert.equal(d.source, undefined);
+  assert.equal(d.answer, "src/fee.ts: computeFee, computeFee(n: number): number");
+  assert.deepEqual(await fs.readdir(path.join(root, "docs/adr")), ["0001-money.md"]);
+});
+
+test("names labelled 'user' that the ticket already gives are not asked", async () => {
+  const { commands, tools, ctxFor, root } = await setup();
+  await commands.get("task").handler("List users with their fees", ctxFor([]).ctx);
+  const { ctx, ui } = ctxFor([]);
+  await tools.get("task_plan").execute("1", plan([], { interface: [{ file: "src/fee.ts", exports: ["fee"], source: "user" }] }), undefined, undefined, ctx);
+  assert.equal(ui.asked.length, 0);
+  assert.equal((await readTask(root))!.status, "implementing");
 });
 
 test("interface from ticket or an existing path is accepted silently", async () => {
@@ -265,19 +276,18 @@ test("names labelled 'ticket' but absent from the ticket text are asked; names i
   assert.equal(quiet.ui.asked.length, 0);
   // parseMicros is nowhere and the new file `micros.ts` is not a ticket noun: the label 'ticket' does not save it
   await commands.get("task").handler("Add fee per docs/spec.md", ctxFor(["Replace it"]).ctx);
-  const loud = ctxFor(["Accept the proposed names"]);
+  const loud = ctxFor(["Use them"]);
   await tools.get("task_plan").execute("1", plan([], { files: ["src/micros.ts", "test/fee.test.ts"], interface: [{ file: "src/micros.ts", exports: ["parseMicros"], source: "ticket" }] }), undefined, undefined, loud.ctx);
-  assert.equal(loud.ui.asked.length, 1);
-  assert.match(loud.ui.asked[0], /Proposed names[\s\S]*src\/micros\.ts: parseMicros \(not found in ticket: parseMicros, micros\.ts\)/);
+  assert.deepEqual(loud.ui.asked, ["The ticket does not name these. Use them?\nsrc/micros.ts: parseMicros"]);
   assert.equal((await readTask(root))!.plan!.decisions[0].status, "decided");
 });
 
 test("a cited existing file must contain the names too", async () => {
   const { commands, tools, ctxFor } = await setup();
   await commands.get("task").handler("Add fee", ctxFor([]).ctx);
-  const { ctx, ui } = ctxFor(["Accept the proposed names"]);
+  const { ctx, ui } = ctxFor(["Use them"]);
   await tools.get("task_plan").execute("1", plan([], { interface: [{ file: "src/money.ts", exports: ["m", "formatUsd"], source: "src/money.ts" }] }), undefined, undefined, ctx);
-  assert.match(ui.asked[0], /not found in src\/money\.ts: formatUsd/);
+  assert.match(ui.asked[0], /src\/money\.ts: m, formatUsd/);
 });
 
 /** Project with a scripted plan-check subagent: `verdicts` are consumed in order (default OK). */
@@ -321,7 +331,7 @@ test("plan check: FIX sends the findings back and the retry skips the paid check
 
 test("plan check: OK proceeds to implementing", async () => {
   const { tools, spawns, emitted, ctxFor, userNames, root } = await planCheckSetup();
-  await tools.get("task_plan").execute("1", userNames, undefined, undefined, ctxFor(["Accept the proposed names"]).ctx);
+  await tools.get("task_plan").execute("1", userNames, undefined, undefined, ctxFor(["Use them"]).ctx);
   assert.equal(spawns.length, 1);
   assert.equal(emitted.at(-1).payload.status, "plan-ok");
   assert.equal((await readTask(root))!.status, "implementing");
@@ -330,7 +340,7 @@ test("plan check: OK proceeds to implementing", async () => {
 test("plan check: review.plan = false disables it", async () => {
   const { tools, spawns, ctxFor, userNames, root } = await planCheckSetup();
   await updateManifest(root, (m) => void (m.review = { plan: false }));
-  await tools.get("task_plan").execute("1", userNames, undefined, undefined, ctxFor(["Accept the proposed names"]).ctx);
+  await tools.get("task_plan").execute("1", userNames, undefined, undefined, ctxFor(["Use them"]).ctx);
   assert.equal(spawns.length, 0);
 });
 
@@ -342,7 +352,7 @@ test("ticket text from the tracker connector counts as evidence; other MCP resul
   const iface = [{ file: "src/fee.ts", exports: ["computeTotal"], source: "ticket" }];
   await read("mcp__browser__page_text");
   await read("bash");
-  const loud = ctxFor(["Accept the proposed names"]);
+  const loud = ctxFor(["Use them"]);
   await tools.get("task_plan").execute("1", plan([], { interface: iface }), undefined, undefined, loud.ctx);
   assert.equal(loud.ui.asked.length, 1);
   await commands.get("task").handler("PAY-12", ctxFor(["Replace it"]).ctx);
@@ -359,7 +369,7 @@ test("a tracker result read after planning ended is not evidence for the next ta
   await tools.get("task_plan").execute("1", plan([], { interface: [{ file: "src/money.ts", exports: ["m"], source: "src/money.ts" }] }), undefined, undefined, ctxFor([]).ctx);
   await emit("tool_result", { toolName: "mcp__jira__get_issue", content: "Add `computeTotal` to src/fee.ts" }, { cwd: root });
   await commands.get("task").handler("PAY-12", ctxFor(["Replace it"]).ctx);
-  const { ctx, ui } = ctxFor(["Accept the proposed names"]);
+  const { ctx, ui } = ctxFor(["Use them"]);
   await tools.get("task_plan").execute("1", plan([], { interface: [{ file: "src/fee.ts", exports: ["computeTotal"], source: "ticket" }] }), undefined, undefined, ctx);
   assert.equal(ui.asked.length, 1);
 });
@@ -399,7 +409,7 @@ test("ticket text from the tracker is evidence for names labelled 'ticket'", asy
   assert.equal(ui.asked.length, 0);
 });
 
-test("/task cancel says so when there is no task; 'Continue it' on an implementing task tells the user", async () => {
+test("/task cancel says so when there is no task; an implementing task offers no 'Continue it'", async () => {
   const { commands, tools, ctxFor, root } = await setup();
   const say = async (cmd: string, answers: unknown[] = []) => {
     const { ctx } = ctxFor(answers);
@@ -411,7 +421,15 @@ test("/task cancel says so when there is no task; 'Continue it' on an implementi
   assert.match((await say("cancel"))[0], /No active task/);
   await commands.get("task").handler("Add fee", ctxFor([]).ctx);
   await tools.get("task_plan").execute("1", plan(), undefined, undefined, ctxFor([]).ctx);
-  assert.match((await say("Add fee", ["Continue it"]))[0], /already implementing/);
+  const { ctx: keep, ui } = ctxFor(["Keep it"]);
+  let options: string[] = [];
+  const select = keep.ui.select;
+  keep.ui.select = (title: string, o: string[]) => ((options = o), select(title));
+  await commands.get("task").handler("Other work", keep);
+  assert.deepEqual(options, ["Replace it", "Keep it"]);
+  assert.deepEqual(ui.asked, ["A task is already implementing: Add fee"]);
+  assert.equal((await readTask(root))!.title, "Add fee");
+  assert.match((await say("continue"))[0], /keep working in the session\. \/task done or \/task cancel ends it/);
   assert.match((await say("cancel"))[0], /Task cancelled/);
   assert.equal(await readTask(root), undefined);
 });
@@ -434,7 +452,7 @@ test("recording the plan stores the HEAD commit as baseCommit", async () => {
   registerTask(h.pi);
   const root = await tempProject({ "src/money.ts": "export const m = 1;\n" });
   await updateManifest(root, (m) => void (m.setup = "done"));
-  const ui = fakeUI(["Accept the proposed names"]);
+  const ui = fakeUI(["Use them"]);
   const ctx = { cwd: root, hasUI: true, ui, waitForIdle: async () => {} } as any;
   await h.commands.get("task").handler("Add fee", ctx);
   await h.tools.get("task_plan").execute("1", { ...plan(), interface: [{ file: "src/fee.ts", exports: ["fee"], source: "user" }] }, undefined, undefined, ctx);
@@ -522,7 +540,7 @@ test("recording the plan runs no verify command, and the agent hears to keep imp
   const root = await tempProject({ "src/money.ts": "export const m = 1;\n" });
   await updateManifest(root, (m) => void ((m.setup = "done"), (m.review = { always: true }), (m.verify = ["fast check", "slow check"])));
   await h.commands.get("task").handler("Add fee", fakeCtx(root, []).ctx);
-  const result = await h.tools.get("task_plan").execute("1", plan(), undefined, undefined, fakeCtx(root, ["Accept the proposed names"]).ctx);
+  const result = await h.tools.get("task_plan").execute("1", plan(), undefined, undefined, fakeCtx(root, ["Use them"]).ctx);
   assert.deepEqual(runs, []);
   assert.equal(emitted.find((e) => e.name === VERIFY_EVENT), undefined);
   assert.equal((await readTask(root))!.status, "implementing");
@@ -636,7 +654,7 @@ test("a session that starts with an open task says so once; a reload or a done t
   await t.emit("session_start", { reason: "reload" }, ctx);
   assert.deepEqual(notes, []);
   await t.emit("session_start", { reason: "resume" }, ctx);
-  assert.deepEqual(notes, ['Task "Add fee" is planning: /task cancel ends it.']);
+  assert.deepEqual(notes, ['Task "Add fee" is planning: /task continue resumes planning, /task cancel drops it.']);
   await writeTask(t.root, { ...(await readTask(t.root))!, status: "implementing" });
   await t.emit("session_start", { reason: "fork" }, ctx);
   assert.equal(notes[1], 'Task "Add fee" is implementing: /task done or /task cancel ends it.');
@@ -652,7 +670,7 @@ test("without a UI, /task with a task already open says how to end it instead of
   const { ctx } = fakeCtx(t.root, [], { hasUI: false });
   ctx.ui.notify = (m: string) => void notes.push(m);
   await t.commands.get("task").handler("Second", ctx);
-  assert.equal(notes[0], "A task is already active: First. /task cancel ends it.");
+  assert.equal(notes[0], "A task is already planning: First. /task continue resumes planning, /task cancel drops it.");
   assert.equal((await readTask(t.root))!.title, "First");
 });
 
@@ -662,4 +680,89 @@ test("plan check: one that did not run does not use up the budget", async () => 
   await tools.get("task_plan").execute("1", plan(), undefined, undefined, ctxFor([]).ctx);
   assert.equal(spawns.length, 1);
   assert.equal((await readTask(root))!.planChecks ?? 0, 0);
+});
+
+/** Notices of a scripted context, collected. */
+const noting = (c: ReturnType<typeof fakeCtx>) => {
+  const notes: string[] = [];
+  c.ctx.ui.notify = (m: string) => void notes.push(m);
+  return { ...c, notes };
+};
+
+test("a cancelled planning question pauses planning: no nudge until the user writes, and /task continue asks only what is still open", async () => {
+  const { commands, tools, ctxFor, emit, sent, root } = await setup();
+  await commands.get("task").handler("Add fee", ctxFor([]).ctx);
+  const decisions = [{ question: "Q?", options: ["a", "b"] }, { question: "R?", options: ["x", "y"] }];
+  const c = noting(ctxFor(["a", undefined]));
+  await assert.rejects(tools.get("task_plan").execute("1", plan(decisions), undefined, undefined, c.ctx), /cancelled/);
+  assert.deepEqual(c.notes, ["Planning paused at: R?. /task continue resumes planning, /task cancel drops it."]);
+  const settle = () => emit("agent_before_settle", { outcome: "completed" }, c.ctx);
+  assert.equal(await settle(), undefined);
+  await commands.get("task").handler("continue", ctxFor([]).ctx);
+  assert.equal(sent.length, 2);
+  assert.match(sent[1], /New task: Add fee/);
+  assert.ok(await settle());
+  // the answer to Q? is kept: only R? is asked again
+  const again = ctxFor(["y"]);
+  await tools.get("task_plan").execute("1", plan(decisions), undefined, undefined, again.ctx);
+  assert.deepEqual(again.ui.asked, ["R?"]);
+  assert.equal((await readTask(root))!.status, "implementing");
+  // a user message after a pause also lifts it
+  await commands.get("task").handler("Next", ctxFor(["Replace it"]).ctx);
+  await assert.rejects(tools.get("task_plan").execute("1", plan(decisions), undefined, undefined, ctxFor([undefined]).ctx), /cancelled/);
+  assert.equal(await settle(), undefined);
+  await emit("before_agent_start", { messageType: "user" }, c.ctx);
+  assert.ok(await settle());
+});
+
+test("without a UI, planning takes the recommended option and accepts proposed names, says so, and records it", async () => {
+  const { commands, tools, root } = await setup();
+  const c = noting(fakeCtx(root, [], { hasUI: false }));
+  await commands.get("task").handler("Add fee", c.ctx);
+  const decisions = [{ question: "Fee unit?", options: ["cents", "percent"] }];
+  const result = await tools.get("task_plan").execute("1", plan(decisions, { interface: [{ file: "src/fee.ts", exports: ["computeFee"], source: "user" }] }), undefined, undefined, c.ctx);
+  const task = (await readTask(root))!;
+  assert.equal(task.status, "implementing");
+  const [names, unit] = task.plan!.decisions;
+  assert.match(names.answer!, /^src\/fee\.ts: computeFee \(chosen without the user/);
+  assert.match(unit.answer!, /^cents \(chosen without the user/);
+  assert.match(await fs.readFile(path.join(root, unit.source!), "utf8"), /cents \(chosen without the user/);
+  assert.match(result.content[0].text, /Fee unit\? -> cents \(chosen without the user/);
+  assert.ok(c.notes.includes('No UI: took "cents" for: Fee unit?'));
+});
+
+test("while planning, a plain-text question waits for the user in the TUI; elsewhere the nudge points to ask_user", async () => {
+  const { commands, ctxFor, emit } = await setup();
+  const { ctx } = ctxFor([]);
+  await commands.get("task").handler("Add fee", ctx);
+  await emit("message_end", { message: { role: "assistant", content: [{ type: "text", text: "Should the fee be in cents or percent?" }] } }, ctx);
+  assert.equal(await emit("agent_before_settle", { outcome: "completed" }, { ...ctx, mode: "tui" }), undefined);
+  const r = await emit("agent_before_settle", { outcome: "completed" }, { ...ctx, mode: "rpc" });
+  assert.match(r.entries[0].content, /task_plan[\s\S]*ask_user/);
+});
+
+test("/task with a ticket key and no tracker warns that the agent sees only the key; with a tracker it does not", async () => {
+  const { commands, ctxFor, root } = await setup();
+  const bare = noting(ctxFor([]));
+  await commands.get("task").handler("PAY-12", bare.ctx);
+  assert.match(bare.notes[0], /^No tracker is enabled, so the agent sees only "PAY-12"\. To plan from the ticket: \/task cancel, then \/task PAY-12 <pasted ticket text>\. \/setup adds Jira or Linear\.$/);
+  await updateManifest(root, (m) => void (m.connectors = [{ id: "jira" }]));
+  const linked = noting(ctxFor(["Replace it"]));
+  await commands.get("task").handler("PAY-13", linked.ctx);
+  assert.deepEqual(linked.notes, []);
+});
+
+test("/task alone and /task done while planning say what to do next", async () => {
+  const { commands, ctxFor } = await setup();
+  await commands.get("task").handler("Add fee", ctxFor([]).ctx);
+  const status = noting(ctxFor([]));
+  await commands.get("task").handler("", status.ctx);
+  assert.deepEqual(status.notes, ["Add fee (planning). /task continue resumes planning, /task cancel drops it."]);
+  const done = noting(ctxFor([]));
+  await commands.get("task").handler("done", done.ctx);
+  assert.deepEqual(done.notes, ["The task is planning, so it cannot be marked done yet. /task continue resumes planning, /task cancel drops it."]);
+  const none = noting(ctxFor([]));
+  await commands.get("task").handler("cancel", ctxFor([]).ctx);
+  await commands.get("task").handler("continue", none.ctx);
+  assert.deepEqual(none.notes, ["No task to continue. Use /task <description or ticket>."]);
 });
