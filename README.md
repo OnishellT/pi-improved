@@ -18,7 +18,7 @@ Every command is in [Commands](#commands). The full flow is in [docs/WORKFLOW.md
 ## Requirements
 
 - Linux or macOS, Node >= 22.19, git and npm on your PATH.
-- [Nix](https://nixos.org/download/), recommended. It provides tmux (the review and plan-check subagents), git, gh, bash and the headless Chromium (`show` on HTML or SVG, the isolated browser), all from the nixpkgs pinned in `flake.lock`. Without it those features are off, they say so with the install command for your OS, and `/doctor` reports it.
+- [Nix](https://nixos.org/download/), required for `/setup`, verify and the features below. It provides tmux (the review and plan-check subagents), git, gh, bash and the headless Chromium (`show` on HTML or SVG, the isolated browser), all from the nixpkgs pinned in `flake.lock`. Without it `/setup` stops, verify does not run, and the other features are off. Each says so with the install command for your OS, and `/doctor` reports it.
   - Linux and WSL (needs systemd): `curl --proto '=https' --tlsv1.2 -L https://nixos.org/nix/install | sh -s -- --daemon`
   - macOS: `curl --proto '=https' --tlsv1.2 -L https://nixos.org/nix/install | sh`
   - Intel Macs have no headless Chromium in nixpkgs, so `show` on HTML and the isolated browser do not work there.
