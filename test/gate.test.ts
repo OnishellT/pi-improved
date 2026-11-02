@@ -426,11 +426,13 @@ test("with failuresBeforeEscalation 2, the 2nd failure diagnoses and escalates a
   t.gate.resolve();
   const first = await t.settle();
   assert.equal(first.entries[0].customType, "verify-gate");
+  assert.match(first.entries[0].content, /^Verify failed \(1 of 2\): retrying\.\n\n/);
   const second = await t.settle();
   assert.equal(second.entries[0].customType, "verify-diagnose");
   assert.match(second.entries[0].content, /Apply the diagnosing-bugs method[\s\S]*reproduce, isolate, state the hypothesis, then fix\./);
+  assert.doesNotMatch(second.entries[0].content, /^Verify failed \(/, "the escalation notice says it");
   assert.deepEqual(t.set, ["p/strong"]);
-  assert.ok(t.notes.includes("Verify failed 2 times: p/strong takes this attempt."));
+  assert.equal(t.notes.at(-1), "Verify failed 2 times: p/strong takes this attempt, then you decide.");
   assert.deepEqual(t.emitted.find((e) => e.name === ESCALATE_EVENT).payload, { root: t.ctx.cwd, model: "p/strong" });
   t.setCode(0);
   t.ctx.model = { provider: "p", id: "strong" };
@@ -442,10 +444,10 @@ test("with failuresBeforeEscalation 3, the 2nd failure only diagnoses on the cur
   const t = await parallel({ escalate: "p/strong" }, [false]);
   await updateManifest(t.ctx.cwd, (m) => void (m.limits = { failuresBeforeEscalation: 3, verifyRetries: 2 }));
   t.gate.resolve();
-  assert.equal((await t.settle()).entries[0].customType, "verify-gate");
+  assert.match((await t.settle()).entries[0].content, /^Verify failed \(1 of 2\): retrying\./);
   const second = await t.settle();
   assert.equal(second.entries[0].customType, "verify-diagnose");
-  assert.match(second.entries[0].content, /Apply the diagnosing-bugs method/);
+  assert.match(second.entries[0].content, /^Verify failed \(2 of 2\): diagnosing, then retrying\.\n\n[\s\S]*Apply the diagnosing-bugs method/);
   assert.deepEqual(t.set, [], "the diagnosing attempt stays on the cheap model");
   assert.equal(t.emitted.filter((e) => e.name === ESCALATE_EVENT).length, 0);
   // Both retries are spent: the stronger model still gets its attempt before the user is asked.
@@ -453,24 +455,67 @@ test("with failuresBeforeEscalation 3, the 2nd failure only diagnoses on the cur
   assert.equal(third.entries[0].customType, "verify-gate");
   assert.equal(t.ctx.ui.asked.length, 0);
   assert.deepEqual(t.set, ["p/strong"]);
-  assert.ok(t.notes.includes("Verify failed 3 times: p/strong takes this attempt."));
+  assert.equal(t.notes.at(-1), "Verify failed 3 times: p/strong takes this attempt, then you decide.");
   t.setCode(0);
   t.ctx.model = { provider: "p", id: "strong" };
   await t.settle();
   assert.deepEqual(t.set, ["p/strong", "p/cheap"]);
 });
 
-test("headless, the escalated attempt runs past the retries; the next failure ends the run with one notice and the report's end", async () => {
+/** Runs `fn` with console.error captured and process.exitCode restored after, so a red headless end does not fail this test file. */
+async function headlessEnd(fn: () => Promise<void>) {
+  const [error, code] = [console.error, process.exitCode];
+  const lines: string[] = [];
+  console.error = (...a: unknown[]) => void lines.push(a.join(" "));
+  try {
+    await fn();
+    return { lines, exitCode: process.exitCode };
+  } finally {
+    console.error = error;
+    process.exitCode = code;
+  }
+}
+
+test("headless, the escalated attempt runs past the retries; the next failure ends the run red: one notice, one stderr line, exit code 1", async () => {
   const t = await parallel({ escalate: "p/strong" }, [], "Error: boom");
   await updateManifest(t.ctx.cwd, (m) => void (m.limits = { failuresBeforeEscalation: 3, verifyRetries: 2 }));
   t.ctx.hasUI = false;
   t.gate.resolve();
-  for (let i = 0; i < 3; i++) assert.equal((await t.settle()).continue, true);
-  assert.deepEqual(t.set, ["p/strong"]);
-  t.ctx.model = { provider: "p", id: "strong" };
-  assert.equal(await t.settle(), undefined);
-  assert.match(t.notes.at(-1)!, /^Verify still fails after the automatic retries\. The task stays open: \/task done closes it\.\n\nverify FAILED[\s\S]*Error: boom$/);
+  const end = await headlessEnd(async () => {
+    for (let i = 0; i < 3; i++) assert.equal((await t.settle()).continue, true);
+    assert.deepEqual(t.set, ["p/strong"]);
+    assert.equal(t.notes.at(-1), "Verify failed 3 times: p/strong takes this attempt, then the run stops.");
+    t.ctx.model = { provider: "p", id: "strong" };
+    assert.equal(await t.settle(), undefined);
+  });
+  assert.match(t.notes.at(-1)!, /^Verify failed 4 times, last with p\/strong\. The task stays open: \/task done closes it\.\n\nverify FAILED[\s\S]*Error: boom$/);
+  assert.deepEqual(end.lines, ["[pi-improved] Verify failed 4 times, last with p/strong. The task stays open: /task done closes it."]);
+  assert.equal(end.exitCode, 1);
   assert.equal((await readTask(t.ctx.cwd))?.status, "implementing");
+});
+
+test("with a UI, a red end sets no exit code and writes nothing to stderr", async () => {
+  const t = await setup({ task: true, answers: ["Leave it as is"] });
+  await updateManifest(t.root, (m) => void (m.limits = { verifyRetries: 0, failuresBeforeEscalation: 3 }));
+  await t.run();
+  const end = await headlessEnd(async () => void (await t.settle()));
+  assert.deepEqual(end.lines, []);
+  assert.notEqual(end.exitCode, 1);
+});
+
+test("at the question, the same failure already on screen is not shown again; a new one is", async () => {
+  const t = await parallel({ escalate: "p/strong" }, ["Keep trying", "Leave it as is"], "Error: boom");
+  await updateManifest(t.ctx.cwd, (m) => void (m.limits = { failuresBeforeEscalation: 3, verifyRetries: 2 }));
+  t.gate.resolve();
+  for (let i = 0; i < 3; i++) await t.settle();
+  t.ctx.model = { provider: "p", id: "strong" };
+  await t.settle();
+  assert.deepEqual(t.ctx.ui.asked, ["Verify failed 4 times, last with p/strong. What now?"]);
+  assert.ok(!t.notes.some((n) => /verify FAILED/.test(n)), "the 3rd gate message already shows this report");
+  t.setOut("Error: other");
+  assert.equal(await t.settle(), undefined);
+  assert.equal(t.ctx.ui.asked[1], "Verify failed 5 times, last with p/strong. What now?");
+  assert.ok(t.notes.some((n) => /verify FAILED[\s\S]*Error: other$/.test(n)));
 });
 
 test("the still-fails question follows the last report; leaving it says the task stays open and how to finish", async () => {
@@ -478,7 +523,7 @@ test("the still-fails question follows the last report; leaving it says the task
   await updateManifest(t.root, (m) => void (m.limits = { verifyRetries: 0, failuresBeforeEscalation: 3 }));
   await t.run();
   assert.equal(await t.settle(), undefined);
-  assert.deepEqual(t.ui.asked, ["Verify still fails after the automatic retries. What now?"]);
+  assert.deepEqual(t.ui.asked, ["Verify failed 1 time. What now?"]);
   assert.match(t.notes[0], /^verify FAILED[\s\S]*boom$/);
   assert.equal(t.notes.at(-1), "The task stays open: after your fix, /verify checks it and /task done closes it.");
 });
@@ -860,7 +905,8 @@ test("headless, a missing interface after the retries ends the run with one noti
   await fs.writeFile(path.join(t.root, ".pi/workflow.json"), JSON.stringify({ version: 1, setup: "done", verify: ["check"], connectors: [], limits: { verifyRetries: 0 } }));
   t.ctx.hasUI = false;
   await t.run();
-  assert.equal(await t.settle(), undefined);
+  const end = await headlessEnd(async () => assert.equal(await t.settle(), undefined));
+  assert.deepEqual([end.lines, end.exitCode], [["[pi-improved] The plan's interface is still missing after the automatic retries. The task stays open: /task done closes it."], 1]);
   assert.equal(t.notes.length, 1);
   assert.match(t.notes[0], /^The plan's interface is still missing after the automatic retries\. The task stays open: \/task done closes it\.\n\nInterface contract not met[\s\S]*src\/fee\.ts/);
   assert.match(t.notes[0], /src\/fee\.ts[\s\S]*src\/fees\/calculator39\.ts/);

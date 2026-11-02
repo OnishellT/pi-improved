@@ -58,6 +58,13 @@ export const diagnoseAt = (failuresBeforeEscalation: number) => Math.min(2, fail
 const STAYS_OPEN = "The task stays open: /task done closes it.";
 const REPORT_TAIL = 600;
 const tail = (report: string) => (report.length > REPORT_TAIL ? `…${report.slice(-REPORT_TAIL)}` : report);
+/** Headless, a notice reaches nobody (print mode drops it): the run's red end goes to stderr in one line, and the exit code says it too. */
+function endRed(ctx: any, line: string) {
+  if (ctx.hasUI) return;
+  console.error(`[pi-improved] ${line}`);
+  process.exitCode = 1;
+}
+const idOf = (model: any) => (model ? `${model.provider}/${model.id}` : undefined);
 type Risk = { level: string; reasons: string[] };
 /** One line on the risk and what happened to the review; undefined when there is nothing to say (no risk, no review). */
 export function riskLine(risk: Risk | undefined, review: string | undefined) {
@@ -223,8 +230,10 @@ export function registerGate(pi: ExtensionAPI) {
           const missing = "The plan's interface is still missing after the automatic retries.";
           // Headless, nobody can answer: say why the run ended red, with what is missing. With a UI, show it before asking.
           // In full: the list is one short line per pinned name, and any one left out is one the user cannot judge.
-          if (!ctx.hasUI) ctx.ui.notify(`${missing}${open}\n\n${formatContract(problems)}`, "warning");
-          else ctx.ui.notify(formatContract(problems), "warning");
+          if (!ctx.hasUI) {
+            ctx.ui.notify(`${missing}${open}\n\n${formatContract(problems)}`, "warning");
+            endRed(ctx, `${missing}${open}`);
+          } else ctx.ui.notify(formatContract(problems), "warning");
           const choice = ctx.hasUI ? await ctx.ui.select(`${missing} What now?`, ["Keep trying", "Leave it as is"]) : undefined;
           if (choice !== "Keep trying") {
             if (ctx.hasUI) ctx.ui.notify(STAYS_OPEN, "info");
@@ -301,16 +310,20 @@ export function registerGate(pi: ExtensionAPI) {
       }
       // The stronger model always gets its one attempt, even past the automatic retries: only then is the user asked.
       const escalating = failures >= failuresBeforeEscalation && !escalatedFrom ? await switchModel(pi, ctx, manifest.models?.escalate ?? manifest.models?.review ?? manifest.models?.setup) : undefined;
-      if (retries < verifyRetries) retries++;
+      const retried = retries < verifyRetries;
+      if (retried) retries++;
       else if (!escalating) {
-        const failed = "Verify still fails after the automatic retries.";
+        // The count and the model that tried last: with the escalation past the retries, more ran than verifyRetries says.
+        const last = idOf(ctx.model);
+        const failed = failures ? `Verify failed ${failures} time${failures === 1 ? "" : "s"}${last ? `, last with ${last}` : ""}.` : "Verify still fails.";
         if (!ctx.hasUI) {
           // Headless, nobody can answer: say why the run ended red, with the end of the last report.
           ctx.ui.notify(`${failed}${open}\n\n${tail(report)}`, "error");
+          endRed(ctx, `${failed}${open}`);
           return deescalate(ctx).then(() => undefined);
         }
-        // The last report goes to nobody else: show it before asking.
-        ctx.ui.notify(tail(report), "error");
+        // The last report goes to nobody else: show it before asking, unless the same failure is already on screen in the last gate message.
+        if (policy || repeats < 2) ctx.ui.notify(tail(report), "error");
         const choice = await ctx.ui.select(`${failed} What now?`, ["Keep trying", "Leave it as is"]);
         if (choice !== "Keep trying") {
           ctx.ui.notify(task?.status === "implementing" ? "The task stays open: after your fix, /verify checks it and /task done closes it." : "Stopped: verify still fails.", "info");
@@ -320,11 +333,15 @@ export function registerGate(pi: ExtensionAPI) {
       if (escalating) {
         escalatedFrom = escalating.previous;
         escalatedTo = escalating.model;
-        ctx.ui.notify(`Verify failed ${failures} times: ${escalating.model} takes this attempt.`, "warning");
+        const more = verifyRetries - retries;
+        const then = ctx.hasUI ? "then you decide" : "then the run stops";
+        ctx.ui.notify(`Verify failed ${failures} times: ${escalating.model} takes this attempt${more > 0 ? ` and ${more} more` : ""}, ${then}.`, "warning");
         pi.events.emit(ESCALATE_EVENT, { root: ctx.cwd, model: escalating.model } satisfies EscalatePayload);
       }
       const diagnose = !policy && failures === diagnoseFrom;
-      const content = await advice(ctx.cwd, report, policy ? "policy" : diagnose ? "diagnose" : "fix", premise, manifest.agentlint);
+      // The person sees the attempt and the next step in the gate message itself; the escalation has its own notice.
+      const step = retried && !policy && !escalating ? `Verify failed (${retries} of ${verifyRetries}): ${diagnose ? "diagnosing, then retrying" : "retrying"}.\n\n` : "";
+      const content = step + (await advice(ctx.cwd, report, policy ? "policy" : diagnose ? "diagnose" : "fix", premise, manifest.agentlint));
       const customType = diagnose ? "verify-diagnose" : "verify-gate";
       return { entries: [{ type: "custom_message", customType, content, display: true }], continue: true };
     }
