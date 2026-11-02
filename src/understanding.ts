@@ -1,7 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { completeTask, treeSnapshot, UNREADABLE } from "./gate.ts";
-import { readTask } from "./task-state.ts";
+import { oneLine, readTask } from "./task-state.ts";
 import { recordUnderstanding } from "./telemetry.ts";
 
 /** Ends the teach-back the gate asked for: records how it went, then completes the task the usual way. */
@@ -25,7 +25,8 @@ export function registerUnderstanding(pi: ExtensionAPI) {
       if (tree !== task.understanding.tree) throw new Error("The code changed during the check. End your turn so verify checks it; then call understanding_done again.");
       // Before the task is marked done: telemetry records into the active task only.
       await recordUnderstanding(ctx.cwd, skipped ? "skipped" : "done", skipped ? 0 : gaps.length);
-      await completeTask(pi, ctx);
+      const done = await completeTask(pi, ctx);
+      ctx.ui.notify(`Task done: ${oneLine(done.title)}.`, "info");
       return { content: [{ type: "text", text: "Recorded. The task is done." }], details: { skipped, gaps } };
     },
   });

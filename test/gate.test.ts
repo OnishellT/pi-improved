@@ -111,12 +111,12 @@ test("retry cap asks the user, then stops", async () => {
   assert.equal(t.ui.asked.length, 2);
 });
 
-test("missing Nix tells the user, asks whether to leave the work unverified, and sends nothing to the model", async () => {
-  const t = await setup({ nix: false, answers: Array(5).fill("Leave the work unverified") });
+test("missing Nix tells the user once per settle, asks nothing, and sends nothing to the model", async () => {
+  const t = await setup({ nix: false });
   await t.run();
   for (let i = 0; i < 5; i++) assert.equal(await t.settle(), undefined);
-  assert.equal(t.ui.asked.length, 5, "a state git could not read is never remembered as verified, so each turn asks again");
-  assert.match(t.ui.asked[0], /Verify did not run\. Nix is required and was not found/);
+  assert.equal(t.ui.asked.length, 0, "nothing to decide: no dialog");
+  assert.equal(t.notes.length, 5, "a state git could not read is never remembered as verified, so each settle says it again");
   assert.match(t.notes[0], /^Verify did not run\. Nix is required and was not found/);
   assert.equal(t.emitted.filter((e) => e.name === ESCALATE_EVENT).length, 0);
   assert.notEqual((await readTask(t.root))?.status, "done");
@@ -124,10 +124,10 @@ test("missing Nix tells the user, asks whether to leave the work unverified, and
 
 test("a Nix build that fails shows Nix's own message, not the install hint", async () => {
   const msg = "Nix could not build bash: Could not resolve host. Check your network and disk space, then run /doctor.";
-  const t = await setup({ nix: msg, answers: ["Stop here: I will fix it and finish again"] });
+  const t = await setup({ nix: msg });
   await t.run();
   assert.equal(await t.settle(), undefined);
-  assert.equal(t.notes[0], `Verify did not run. ${msg}`);
+  assert.deepEqual(t.notes, [`Verify did not run. ${msg}`]);
 });
 
 test("without a UI, missing Nix leaves the task unverified and says so; when git itself fails the work still counts as changed", async () => {
@@ -135,7 +135,8 @@ test("without a UI, missing Nix leaves the task unverified and says so; when git
   t.ctx.hasUI = false;
   await t.run();
   assert.equal(await t.settle(), undefined);
-  assert.match(t.notes.join("\n"), /Verify did not run[\s\S]*Unverified: Nix is required[\s\S]*not marked done/);
+  assert.equal(t.notes.length, 1, "said once");
+  assert.match(t.notes[0], /^Verify did not run\. Nix is required[\s\S]*The task stays open: once this is fixed, \/verify checks the change and \/task done closes the task\.$/);
   assert.equal((await readTask(t.root))?.status, "implementing");
 });
 
@@ -145,7 +146,7 @@ test("without a UI, a failed Nix build also leaves the task unverified with Nix'
   t.ctx.hasUI = false;
   await t.run();
   assert.equal(await t.settle(), undefined);
-  assert.match(t.notes.join("\n"), new RegExp(`Unverified: ${msg}[\\s\\S]*not marked done`));
+  assert.deepEqual(t.notes, [`Verify did not run. ${msg} The task stays open: once this is fixed, /verify checks the change and /task done closes the task.`]);
   assert.equal((await readTask(t.root))?.status, "implementing");
 });
 
@@ -154,7 +155,9 @@ test("the completion dialog lists the pre-existing tests and verify files the ta
   await t.run();
   await t.settle();
   assert.match(t.ui.messages[0], /Tests and verify setup changed \(check before accepting\):\n- test\/old\.test\.ts$/);
-  assert.match(t.notes.join("\n"), /Risk high: tests or verify setup changed \(test\/old\.test\.ts\)/);
+  // The done dialog carries the risk line, so no separate notice says it again.
+  assert.match(t.ui.messages[0], /\n\nRisk high: tests or verify setup changed \(test\/old\.test\.ts\)[^\n]*\. Review: /);
+  assert.ok(!t.notes.some((n) => n.startsWith("Risk")));
   const clean = await setup({ pass: true, task: true, answers: [true] });
   await clean.run();
   await clean.settle();
@@ -166,8 +169,9 @@ test("the done dialog lists the changed files first, one sorted line each, cappe
   const t = await setup({ pass: true, task: true, answers: [true], status });
   await t.run();
   await t.settle();
-  const [question, list] = t.ui.messages[0].split("\n\n");
+  const [question, risk, list] = t.ui.messages[0].split("\n\n");
   assert.equal(question, 'Is the task "Do it" done?');
+  assert.match(risk, /^Risk low: no plan\./);
   const rows = list.split("\n");
   assert.equal(rows[0], "Files changed (33):");
   assert.deepEqual(rows.slice(1, 3), ["- src/f00.ts (modified)", "- src/f01.ts (modified)"]);
@@ -182,16 +186,16 @@ test("the done dialog lists the changed files first, one sorted line each, cappe
   const failed = await setup({ pass: true, task: true, answers: [true], listFails: true });
   await failed.run();
   await failed.settle();
-  assert.equal(failed.ui.messages[0], 'Is the task "Do it" done?\n\nFiles changed: unknown, git could not list them.');
+  assert.match(failed.ui.messages[0], /^Is the task "Do it" done\?\n\nRisk [^\n]*\n\nFiles changed: unknown, git could not list them\.$/);
 });
 
 test("a Nix build that fails is an infrastructure failure too: the user hears Nix's message, no retry, no escalation, nothing for the model", async () => {
   const msg = "Nix could not build bash: Could not resolve host. Check your network and disk space, then run /doctor.";
-  const t = await setup({ nix: msg, answers: ["Stop here: I will fix it and finish again"] });
+  const t = await setup({ nix: msg });
   await updateManifest(t.root, (m) => void (m.models = { ...m.models, escalate: "p/strong" }));
   await t.run();
   assert.equal(await t.settle(), undefined);
-  assert.equal(t.ui.asked.length, 1);
+  assert.equal(t.ui.asked.length, 0);
   assert.equal(t.notes[0], `Verify did not run. ${msg}`);
   assert.equal(t.emitted.filter((e) => e.name === ESCALATE_EVENT).length, 0);
 });
@@ -205,6 +209,7 @@ test("pass confirms the task, marks it done and emits the event; same state is n
   assert.ok(done?.completedAt);
   const doneEvent = t.emitted.find((e) => e.name === TASK_DONE_EVENT);
   assert.equal(doneEvent.payload.root, t.root);
+  assert.equal(t.notes.at(-1), "Task done: Do it.");
   await t.settle();
   assert.equal(t.verifies(), 1);
 });
@@ -287,6 +292,22 @@ test("/verify reports even without changes", async () => {
   assert.match(notes[0][0], /verify passed/);
 });
 
+test("/verify says when verify could not run, shows a status while it runs, says how to add steps, and reports a broken manifest", async () => {
+  const t = await setup({ nix: false });
+  const statuses: unknown[] = [];
+  t.ctx.ui.setStatus = (_key: string, value: unknown) => void statuses.push(value);
+  const run = () => t.commands.get("verify").handler("", t.ctx);
+  await run();
+  assert.match(t.notes[0], /^Verify did not run\. Nix is required/);
+  assert.deepEqual(statuses, ["running verify…", undefined]);
+  await updateManifest(t.root, (m) => void (m.verify = []));
+  await run();
+  assert.equal(t.notes[1], "No verification steps configured. Run /setup to add them.");
+  await fs.writeFile(path.join(t.root, ".pi/workflow.json"), "<<<<<<< HEAD\n");
+  await run();
+  assert.match(t.notes[2], /^Verify did not run: \.pi\/workflow\.json is not valid JSON/);
+});
+
 test("review CHANGES continues with the findings once; the fix is checked by verify only", async () => {
   const t = await setup({ pass: true, task: true, review: "VERDICT: CHANGES\n1. bug", answers: [true] });
   await t.run();
@@ -312,7 +333,7 @@ test("review skipped notifies and still confirms; no review model never spawns",
   t.ctx.ui.notify = (m: string) => notes.push(m);
   await t.run();
   await t.settle();
-  assert.ok(notes.some((n) => /^Review skipped/.test(n)));
+  assert.match(t.ui.messages[0], /\n\nRisk [^\n]*Review did not run: /);
   assert.equal((await readTask(t.root))?.status, "done");
   const n = await setup({ pass: true, task: true, answers: [true] });
   await n.run();
@@ -396,8 +417,9 @@ test("verify pass handles the parallel review as before and emits both events", 
   assert.deepEqual([rev.status, rev.model, rev.root], ["changes", "p/strong", t.ctx.cwd]);
 });
 
-test("1st failure fixes, the 2nd diagnoses and escalates, pass restores the model", async () => {
+test("with failuresBeforeEscalation 2, the 2nd failure diagnoses and escalates at once; pass restores the model", async () => {
   const t = await parallel({ escalate: "p/strong" }, [false]);
+  await updateManifest(t.ctx.cwd, (m) => void (m.limits = { failuresBeforeEscalation: 2, verifyRetries: 2 }));
   t.gate.resolve();
   const first = await t.settle();
   assert.equal(first.entries[0].customType, "verify-gate");
@@ -405,12 +427,57 @@ test("1st failure fixes, the 2nd diagnoses and escalates, pass restores the mode
   assert.equal(second.entries[0].customType, "verify-diagnose");
   assert.match(second.entries[0].content, /Apply the diagnosing-bugs method[\s\S]*reproduce, isolate, state the hypothesis, then fix\./);
   assert.deepEqual(t.set, ["p/strong"]);
-  assert.ok(t.notes.some((n) => n.includes("verify failed 2 times: p/strong takes this attempt")));
+  assert.ok(t.notes.includes("Verify failed 2 times: p/strong takes this attempt."));
   assert.deepEqual(t.emitted.find((e) => e.name === ESCALATE_EVENT).payload, { root: t.ctx.cwd, model: "p/strong" });
   t.setCode(0);
   t.ctx.model = { provider: "p", id: "strong" };
   await t.settle();
   assert.deepEqual(t.set, ["p/strong", "p/cheap"]);
+});
+
+test("with failuresBeforeEscalation 3, the 2nd failure only diagnoses on the current model and the 3rd escalates, even past the retries", async () => {
+  const t = await parallel({ escalate: "p/strong" }, [false]);
+  await updateManifest(t.ctx.cwd, (m) => void (m.limits = { failuresBeforeEscalation: 3, verifyRetries: 2 }));
+  t.gate.resolve();
+  assert.equal((await t.settle()).entries[0].customType, "verify-gate");
+  const second = await t.settle();
+  assert.equal(second.entries[0].customType, "verify-diagnose");
+  assert.match(second.entries[0].content, /Apply the diagnosing-bugs method/);
+  assert.deepEqual(t.set, [], "the diagnosing attempt stays on the cheap model");
+  assert.equal(t.emitted.filter((e) => e.name === ESCALATE_EVENT).length, 0);
+  // Both retries are spent: the stronger model still gets its attempt before the user is asked.
+  const third = await t.settle();
+  assert.equal(third.entries[0].customType, "verify-gate");
+  assert.equal(t.ctx.ui.asked.length, 0);
+  assert.deepEqual(t.set, ["p/strong"]);
+  assert.ok(t.notes.includes("Verify failed 3 times: p/strong takes this attempt."));
+  t.setCode(0);
+  t.ctx.model = { provider: "p", id: "strong" };
+  await t.settle();
+  assert.deepEqual(t.set, ["p/strong", "p/cheap"]);
+});
+
+test("headless, the escalated attempt runs past the retries; the next failure ends the run with one notice and the report's end", async () => {
+  const t = await parallel({ escalate: "p/strong" }, [], "Error: boom");
+  await updateManifest(t.ctx.cwd, (m) => void (m.limits = { failuresBeforeEscalation: 3, verifyRetries: 2 }));
+  t.ctx.hasUI = false;
+  t.gate.resolve();
+  for (let i = 0; i < 3; i++) assert.equal((await t.settle()).continue, true);
+  assert.deepEqual(t.set, ["p/strong"]);
+  t.ctx.model = { provider: "p", id: "strong" };
+  assert.equal(await t.settle(), undefined);
+  assert.match(t.notes.at(-1)!, /^Verify still fails after the automatic retries\. The task stays open: \/task done closes it\.\n\nverify FAILED[\s\S]*Error: boom$/);
+  assert.equal((await readTask(t.ctx.cwd))?.status, "implementing");
+});
+
+test("the still-fails question follows the last report; leaving it says the task stays open and how to finish", async () => {
+  const t = await setup({ task: true, answers: ["Leave it as is"] });
+  await updateManifest(t.root, (m) => void (m.limits = { verifyRetries: 0, failuresBeforeEscalation: 3 }));
+  await t.run();
+  assert.equal(await t.settle(), undefined);
+  assert.deepEqual(t.ui.asked, ["Verify still fails after the automatic retries. What now?"]);
+  assert.match(t.notes[0], /^verify FAILED[\s\S]*boom$/);
+  assert.equal(t.notes.at(-1), "The task stays open: after your fix, /verify checks it and /task done closes it.");
 });
 
 const sigOf = (output: string, step = "check") => failureSignature({ ok: false, results: [{ step, ok: false, output }] });
@@ -636,7 +703,9 @@ test("low-risk diff skips the paid review, notifies and emits skipped-low-risk",
   await t.run();
   assert.equal(await t.settle(), undefined);
   assert.equal(t.subagent.length, 0);
-  assert.ok(notes.some((n) => n.startsWith("Review skipped (risk none)")));
+  // Risk none with no reasons and no review: nothing to say, neither in a notice nor in the dialog.
+  assert.ok(!notes.some((n) => /Risk|Review/.test(n)));
+  assert.doesNotMatch(t.ui.messages[0], /Risk|Review/);
   assert.equal(t.emitted.find((e) => e.name === REVIEW_EVENT).payload.status, "skipped-low-risk");
   assert.equal((await readTask(t.root))?.status, "done");
 });
@@ -771,7 +840,20 @@ test("with no verify retries a missing interface asks the user instead of passin
   assert.equal(await t.settle(), undefined);
   assert.equal(t.verifies(), 0);
   assert.equal(t.ui.asked.length, 1);
+  assert.equal(t.notes.at(-1), "The task stays open: /task done closes it.");
   assert.equal((await t.settle()).entries[0].customType, "contract-gate");
+});
+
+test("headless, a missing interface after the retries ends the run with one notice naming what is missing", async () => {
+  const t = await setup({ pass: true, task: true });
+  const plan = { summary: "s", steps: [], files: ["src/fee.ts"], decisions: [], interface: [{ file: "src/fee.ts", exports: ["fee"], source: "ticket" }], seams: [] };
+  await fs.writeFile(path.join(t.root, ".pi/task.json"), JSON.stringify({ ...task, plan }));
+  await fs.writeFile(path.join(t.root, ".pi/workflow.json"), JSON.stringify({ version: 1, setup: "done", verify: ["check"], connectors: [], limits: { verifyRetries: 0 } }));
+  t.ctx.hasUI = false;
+  await t.run();
+  assert.equal(await t.settle(), undefined);
+  assert.equal(t.notes.length, 1);
+  assert.match(t.notes[0], /^The plan's interface is still missing after the automatic retries\. The task stays open: \/task done closes it\.\n\nInterface contract not met[\s\S]*src\/fee\.ts/);
 });
 
 test("a requested review without models.review is announced once; the Risk line says there is no review model", async () => {
@@ -789,8 +871,8 @@ test("a requested review without models.review is announced once; the Risk line 
   await h.emit("before_agent_start", { messageType: "user" }, ctx);
   await h.emit("tool_result", { toolName: "write" }, ctx);
   await h.emit("agent_before_settle", { outcome: "completed" }, ctx);
-  assert.equal(notes.filter((n) => /needs models\.review/.test(n)).length, 1);
-  assert.ok(notes.some((n) => /^Risk high.*\(no review model\)$/.test(n)));
+  assert.equal(notes.filter((n) => n === "This change needs a review, but no review model is set. Run /models and pick Review.").length, 1);
+  assert.match(ui.messages[0], /\n\nRisk high[^\n]*\. Review: not run, no review model is set\./);
 });
 
 /** A high-risk diff (package.json changed) with models.review set and the given review policy. */
@@ -819,7 +901,7 @@ async function highRisk(review?: object, models: object = { review: "p/m" }) {
   await h.emit("before_agent_start", { messageType: "user" }, ctx);
   started = true;
   await h.emit("agent_before_settle", { outcome: "completed" }, ctx);
-  return { notes, spawned, status: emitted.find((e) => e.name === REVIEW_EVENT)?.payload.status };
+  return { notes, spawned, dialog: ui.messages[0] as string, status: emitted.find((e) => e.name === REVIEW_EVENT)?.payload.status };
 }
 
 test("a review skipped as low risk on one settle does not use up the review a later, riskier diff needs", async () => {
@@ -856,20 +938,22 @@ test("review.minLevel is high by default: a high-risk diff gets a review when mo
   const r = await highRisk();
   assert.ok(r.spawned.includes("spawn"));
   assert.equal(r.status, "approved");
-  assert.ok(r.notes.some((n) => /^Risk high.*\(review requested\)$/.test(n)));
+  assert.match(r.dialog, /\n\nRisk high: [^\n]*\. Review: approved\.\n/);
+  assert.ok(!r.notes.some((n) => /Risk|Review/.test(n)), "said once, in the dialog");
 });
 
-test("a review that is off is reported as not requested, with how to turn it on, not as a low-risk skip", async () => {
+test("a review that is off is reported as off, naming its key, not as a low-risk skip", async () => {
   const r = await highRisk({ minLevel: "off" });
   assert.deepEqual(r.spawned, []);
   assert.equal(r.status, "not-requested");
-  assert.ok(r.notes.some((n) => /^Review not requested \(risk high\).*Set review\.minLevel/.test(n)));
+  assert.match(r.dialog, /\n\nRisk high: [^\n]*\. Review: off \(review\.minLevel\)\./);
   assert.equal((await highRisk({ never: true })).status, "not-requested");
 });
 
-test("with review off and no models.review the Risk line says the model is missing", async () => {
+test("with review off and no models.review the risk line says the review is off and asks for no model", async () => {
   const r = await highRisk({ minLevel: "off" }, {});
-  assert.ok(r.notes.some((n) => /^Risk high.*\(review not requested; models\.review is not set\)$/.test(n)));
+  assert.match(r.dialog, /\n\nRisk high: [^\n]*\. Review: off \(review\.minLevel\)\./);
+  assert.ok(!r.notes.some((n) => /models/.test(n)));
 });
 
 test("the done dialog names the task on one line, even when the title holds a whole ticket", async () => {
@@ -881,7 +965,7 @@ test("the done dialog names the task on one line, even when the title holds a wh
   await t.run();
   await t.settle();
   assert.equal(asked.length, 1);
-  assert.equal(asked[0][1], 'Is the task "Superconduct shred" done?');
+  assert.equal(asked[0][1].split("\n")[0], 'Is the task "Superconduct shred" done?');
 });
 
 test("without a UI a passing verify marks the task done", async () => {
@@ -891,6 +975,7 @@ test("without a UI a passing verify marks the task done", async () => {
   assert.equal(await t.settle(), undefined);
   assert.equal((await readTask(t.root))?.status, "done");
   assert.ok(t.emitted.some((e) => e.name === TASK_DONE_EVENT && e.payload.hasUI === false));
+  assert.equal(t.notes.at(-1), "Task done: Do it.");
 });
 
 test("declining the done dialog says how to close the task later", async () => {
@@ -951,7 +1036,7 @@ test("editing an untracked file (even only its line ends, next to a dangling lin
   await fs.chmod(file, 0o755);
   await fs.utimes(file, 1e9, 1e9);
   await t.settle();
-  assert.equal(t.notes.filter((n) => n === "Diff review: approved.").length, 3);
+  assert.equal(t.ui.messages.filter((m) => m.includes(". Review: approved.")).length, 3);
   const s = await setup({ pass: true, task: true, review: "no verdict here", answers: [false, false] });
   await s.run();
   await s.emit("tool_result", { toolName: "write" }, s.ctx);
@@ -960,7 +1045,7 @@ test("editing an untracked file (even only its line ends, next to a dangling lin
   await s.run();
   await s.emit("tool_result", { toolName: "write" }, s.ctx);
   await s.settle();
-  assert.equal(s.notes.filter((n) => n.startsWith("Review skipped")).length, 2);
+  assert.equal(s.ui.messages.filter((m) => m.includes(". Review did not run: ")).length, 2);
 });
 
 test("a TUI turn that ends on a question waits for the answer once; the next turn runs the gate even on a question", async () => {
@@ -971,6 +1056,7 @@ test("a TUI turn that ends on a question waits for the answer once; the next tur
   await say("Changed the fee.\nShould it round up?");
   assert.equal(await t.settle(), undefined);
   assert.equal(t.verifies(), 0);
+  assert.deepEqual(t.notes, ["The agent asked a question: verify runs after your reply."]);
   await t.run();
   t.setDiff("changed again");
   await say("Rounded up. Anything else?");
