@@ -4,9 +4,9 @@ The `src/computer/` extension lets the agent drive a browser and a desktop. It l
 
 ## Use
 
-`/computer` asks for the browser mode, then (in relay or both mode) your browser, then the desktop when its tools exist. Escape at any question cancels and saves nothing. The result is one line, such as `Browser: both (relay: auto). Desktop: off.`, with hints only for what you just chose. Inside a Hyprland session it says which desktop tools are missing. When you leave the browser unchanged, it names the config file to edit for another Chromium browser or an MCP server.
+`/computer` asks for the browser mode, then (in relay or both mode) your browser, then the desktop when its tools exist. Escape at any question cancels and saves nothing. The result starts with one line, such as `Browser: both (relay: auto). Desktop: off.`, then hints only for what you just chose, and any problem. Inside a Hyprland session it says which desktop tools are missing. When you leave the browser unchanged, it names the config file to edit for another Chromium browser or an MCP server.
 
-The pick goes under the `computer` key of `pi-improved.json` in the pi agent dir (`~/.pi/agent`, or `PI_CODING_AGENT_DIR`); the other keys of that file stay. It is per user on purpose: logins belong to you, not to a repo, so a project's `.pi/workflow.json` cannot set it. It applies at once, with no restart. An old `computer.json` is moved into that key once, at startup, and renamed to `computer.json.migrated`.
+The pick goes under the `computer` key of `pi-improved.json` in the pi agent dir (`~/.pi/agent`, or `PI_CODING_AGENT_DIR`); the other keys of that file stay. It is per user on purpose: logins belong to you, not to a repo, so a project's `.pi/workflow.json` cannot set it. It applies at once, with no restart. An old `computer.json` is moved into that key once, at startup, and renamed to `computer.json.migrated` (or the next free name). When the key is already set, it wins and the old file is only renamed.
 
 ## Config
 
