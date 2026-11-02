@@ -15,7 +15,7 @@ pi-subagent is pinned to a commit in `package.json`; bump the sha on purpose. It
 Scripts in `scripts/`:
 
 - `postinstall.mjs`: copies the pi-subagent CLI out of `node_modules` into `.bundled/` (Node will not run TypeScript from `node_modules`). Warns on failure, never fails the install.
-- `usage-report.mjs [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--root ~/.pi/agent]`: sums `usage.cost.total` from pi's session files. It prints cost per day, per model and per subagent, and the share of turns by context size (big contexts are where cost hides). Unreadable or unpriced data is listed as warnings, never as an error. Compare two periods with `--since` and `--until`.
+- `usage-report.mjs [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--root <agent dir>]` (default `$PI_CODING_AGENT_DIR`, else `~/.pi/agent`): sums `usage.cost.total` from pi's session files. It prints cost per day, per model and per subagent, and the share of turns by context size (big contexts are where cost hides). Unreadable or unpriced data is listed as warnings, never as an error. Compare two periods with `--since` and `--until`.
 - `skill-tokens.mjs [--json]`: skill sizes per phase and per skill.
 - `review-pr.ts <pr>`: the local pull request reviewer, below.
 

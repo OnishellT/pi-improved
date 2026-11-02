@@ -256,7 +256,7 @@ export async function runPr(exec: Exec, root: string, ui: Pick<ExtensionContext[
 
 export function registerPr(pi: ExtensionAPI) {
   pi.registerCommand("pr", {
-    description: "Prepare the task's PR (summary, verify report, risk, ADRs); pushes only after you confirm",
+    description: "Prepare the task's PR (summary, verify report, risk, ADRs, decisions); pushes only after you confirm",
     handler: async (args, ctx) => {
       const outcome = await runPr(pi.exec.bind(pi) as Exec, ctx.cwd, ctx.ui, args);
       ctx.ui.notify(outcome.detail, outcome.status === "failed" || outcome.status === "not-ready" ? "warning" : "info");
