@@ -70,9 +70,10 @@ export default function (pi: ExtensionAPI) {
     if (compactionOff()) return offText;
     const usage = usageFor(ctx);
     if (!usage || checkThresholds(config, usage.effectiveWindow)) return undefined;
-    if (thresholdState(usage.tokens!, usage.effectiveWindow, config) === "below") return undefined;
+    const tier = thresholdState(usage.tokens!, usage.effectiveWindow, config);
+    if (tier === "below") return undefined;
     const percent = (tokens: number) => Math.round((tokens / usage.effectiveWindow) * 100);
-    return `context ${percent(usage.tokens!)}% · compacts at ${percent(thresholdTokens(config.force, usage.effectiveWindow))}%`;
+    return `context ${percent(usage.tokens!)}% (${tier}) · compacts at ${percent(thresholdTokens(config.force, usage.effectiveWindow))}%`;
   };
   const showStatus = (ctx: ExtensionContext) => {
     // After the session is replaced (`/new`, `/resume`) any use of ctx throws.
