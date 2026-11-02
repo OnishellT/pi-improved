@@ -36,8 +36,9 @@ function setup(diff = "v1", gitWorks = true) {
   };
   registerUnderstanding(f.pi);
   registerLearn(f.pi);
-  const done = (input: object, root: string) => f.tools.get("understanding_done").execute("1", input, undefined, undefined, { cwd: root, hasUI: true, ui: { notify: () => {} } });
-  return { emitted, done, tree: () => treeSnapshot(f.pi, "/"), settled: () => Promise.all(running), atDone };
+  const notes: string[] = [];
+  const done = (input: object, root: string) => f.tools.get("understanding_done").execute("1", input, undefined, undefined, { cwd: root, hasUI: true, ui: { notify: (m: string) => void notes.push(m) } });
+  return { emitted, done, notes, tree: () => treeSnapshot(f.pi, "/"), settled: () => Promise.all(running), atDone };
 }
 /** The outcome persisted for the task in `root`, as /metrics and the memory record read it. */
 async function recorded(root: string) {
@@ -48,9 +49,10 @@ const asked = async () => ({ understanding: { tree: await setup().tree() } });
 
 test("understanding_done records the outcome and the number of gaps, then completes the task with them in its memory record", async () => {
   const root = await tempProject({ ".pi/task.json": taskJson(await asked()) });
-  const { emitted, done, settled, atDone } = setup();
+  const { emitted, done, settled, atDone, notes } = setup();
   await done({ skipped: false, gaps: ["thinks the retry is unbounded"] }, root);
   assert.deepEqual(emitted, [TASK_DONE_EVENT]);
+  assert.deepEqual(notes, [`Task done: ${JSON.parse(taskJson(await asked())).title}.`], "the user hears the task closed, as with /task done");
   assert.deepEqual(atDone, [{ outcome: "done", gaps: 1 }], "kept before the task is done, not by a pending write");
   assert.equal((await readTask(root))?.status, "done");
   await settled();

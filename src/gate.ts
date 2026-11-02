@@ -50,7 +50,20 @@ async function advice(cwd: string, report: string, kind: "policy" | "diagnose" |
   const head = kind === "diagnose" ? `${report}\n\n${await skillsBlock(cwd, "diagnose")}\n\nApply the diagnosing-bugs method to this failure before changing code: reproduce, isolate, state the hypothesis, then fix.` : `${report}\n\nFix it, then finish.`;
   return premise ? `${head} ${UNTOUCHED}\n\n${PREMISE}` : `${head} ${UNTOUCHED}`;
 }
-// `limits.verifyRetries` and `limits.failuresBeforeEscalation` (config.ts) set the retries and when the failed verify diagnoses the bug and hands the attempt to the stronger model.
+// `limits.verifyRetries` (config.ts) sets the automatic retries. The 2nd failed verify diagnoses the bug with the current model;
+// the `limits.failuresBeforeEscalation`-th hands the attempt to the stronger model (both at once when the limit is 2 or lower).
+/** The failure that asks the model to diagnose: the 2nd, or the escalation point when that comes first. */
+export const diagnoseAt = (failuresBeforeEscalation: number) => Math.min(2, failuresBeforeEscalation);
+/** Where a gate that stops leaves the task, and what closes it. */
+const STAYS_OPEN = "The task stays open: /task done closes it.";
+const REPORT_TAIL = 600;
+const tail = (report: string) => (report.length > REPORT_TAIL ? `…${report.slice(-REPORT_TAIL)}` : report);
+type Risk = { level: string; reasons: string[] };
+/** One line on the risk and what happened to the review; undefined when there is nothing to say (no risk, no review). */
+export function riskLine(risk: Risk | undefined, review: string | undefined) {
+  if (!risk || (risk.level === "none" && !risk.reasons.length && !review)) return undefined;
+  return `Risk ${risk.level}${risk.reasons.length ? `: ${risk.reasons.join("; ")}` : ""}.${review ? ` ${review}` : ""}`;
+}
 
 /** A hash of the working tree and HEAD; UNREADABLE when git could not take it. */
 export async function treeSnapshot(pi: ExtensionAPI, cwd: string) {
@@ -195,16 +208,26 @@ export function registerGate(pi: ExtensionAPI) {
     const remembered = now === UNREADABLE ? undefined : state;
 
     const task = await readTask(ctx.cwd).catch(() => undefined);
-    if (ctx.mode === "tui" && task?.status === "implementing" && !deferred && endsOnQuestion(lastText)) return void (deferred = true);
+    if (ctx.mode === "tui" && task?.status === "implementing" && !deferred && endsOnQuestion(lastText)) {
+      deferred = true;
+      return void ctx.ui.notify("The agent asked a question: verify runs after your reply.", "info");
+    }
     deferred = false;
+    const open = task?.status === "implementing" ? ` ${STAYS_OPEN}` : "";
     // The pinned names are a contract: check them before spending verify time or a paid review on code that misses them.
     if (task?.status === "implementing" && task.plan) {
       const problems = await checkContract(ctx.cwd, task.plan);
       if (problems.length) {
         // Out of retries (none at all with verifyRetries 0): only the user lets a task with a missing interface go on.
         if (contractRetries >= verifyRetries) {
-          const choice = ctx.hasUI ? await ctx.ui.select("The plan's interface is still missing after several attempts. What now?", ["Keep trying", "Leave it as is"]) : undefined;
-          if (choice !== "Keep trying") return deescalate(ctx).then(() => undefined);
+          const missing = "The plan's interface is still missing after the automatic retries.";
+          // Headless, nobody can answer: say why the run ended red, with what is missing.
+          if (!ctx.hasUI) ctx.ui.notify(`${missing}${open}\n\n${tail(formatContract(problems))}`, "warning");
+          const choice = ctx.hasUI ? await ctx.ui.select(`${missing} What now?`, ["Keep trying", "Leave it as is"]) : undefined;
+          if (choice !== "Keep trying") {
+            if (ctx.hasUI) ctx.ui.notify(STAYS_OPEN, "info");
+            return deescalate(ctx).then(() => undefined);
+          }
         }
         contractRetries++;
         return { entries: [{ type: "custom_message", customType: "contract-gate", content: `${formatContract(problems)}\n\nExpose exactly these names in these files (the plan's interface), then finish.`, display: true }], continue: true };
@@ -216,21 +239,17 @@ export function registerGate(pi: ExtensionAPI) {
     let wanted = task?.status === "implementing" && !!reviewModel && reviews < MAX_REVIEWS && (now === UNREADABLE || reviewed.get(task.id) !== now);
     // The level is measured and reported; whether it asks for a model review is the manifest's policy.
     const risk = task?.status === "implementing" ? await assessRisk(pi.exec.bind(pi), ctx.cwd, task, manifest) : undefined;
-    if (wanted && reviewModel && risk) {
-      if (!risk.review) {
-        wanted = false;
-        const why = risk.reasons.join("; ") || "small diff outside sensitive areas";
-        // Off by policy is not the same as too small to need one: only the second counts as a saving.
-        const off = !!manifest.review?.never || minLevelOf(manifest.review) === "off";
-        ctx.ui.notify(off ? `Review not requested (risk ${risk.level}): ${why}.${manifest.review?.never ? "" : ' Set review.minLevel to "high" or "low" in .pi/workflow.json to have the diff reviewed.'}` : `Review skipped (risk ${risk.level}): ${why}`, "info");
-        // Counted when the task completes without a review (below), not here: a settle that fails verify, or a diff that grows, has not skipped anything yet.
-        skip = { root: ctx.cwd, status: off ? "not-requested" : "skipped-low-risk", model: reviewModel, seconds: 0, cost: 0 };
-      }
+    // Off by policy is not the same as too small to need one: only the second counts as a saving.
+    const off = !!manifest.review?.never || minLevelOf(manifest.review) === "off";
+    if (wanted && reviewModel && risk && !risk.review) {
+      wanted = false;
+      // Counted when the task completes without a review (below), not here: a settle that fails verify, or a diff that grows, has not skipped anything yet.
+      skip = { root: ctx.cwd, status: off ? "not-requested" : "skipped-low-risk", model: reviewModel, seconds: 0, cost: 0 };
     }
     // A review the policy asks for cannot run without a model: say so once instead of skipping silently.
     if (task?.status === "implementing" && !reviewModel && risk?.review && !warnedNoReviewModel) {
       warnedNoReviewModel = true;
-      ctx.ui.notify("The review policy asks for a review, but it needs models.review in .pi/workflow.json.", "warning");
+      ctx.ui.notify("This change needs a review, but no review model is set. Run /models and pick Review.", "warning");
     }
     const reviewing = wanted && task && reviewModel ? review(ctx.cwd, task, reviewModel, abort.signal, verifySteps(manifest)) : undefined;
     if (reviewing) ctx.ui.setStatus("review", `reviewing the diff with ${reviewModel}…`);
@@ -245,19 +264,10 @@ export function registerGate(pi: ExtensionAPI) {
         abort.abort();
         clearStatus();
       }
-      const message = `Verify did not run. ${infra}`;
-      ctx.ui.notify(message, "error");
-      if (ctx.hasUI) {
-        // The work stays a task in progress either way; only the user decides to go on without checking it.
-        const choice = await ctx.ui.select(`${message}\n\nThe change cannot be checked until this is fixed.`, ["Leave the work unverified", "Stop here: I will fix it and finish again"]);
-        if (choice === "Leave the work unverified") {
-          verified = remembered;
-          if (task?.status === "implementing") ctx.ui.notify("The task stays open: /task done closes it.", "info");
-        }
-      } else {
-        ctx.ui.notify(`Unverified: ${infra} Nobody can answer here, so the task is not marked done; /task done closes it.`, "warning");
-        verified = remembered;
-      }
+      // No question: nothing the user picks here changes what happens. The work stays unverified and the task open;
+      // a turn that changes nothing does not run the gate again, so the notice names the commands that do.
+      ctx.ui.notify(`Verify did not run. ${infra}${task?.status === "implementing" ? " The task stays open: once this is fixed, /verify checks the change and /task done closes the task." : ""}`, "error");
+      verified = remembered;
       return deescalate(ctx).then(() => undefined);
     }
     if (!ok) {
@@ -271,34 +281,47 @@ export function registerGate(pi: ExtensionAPI) {
         repeats = sameFailure(signature, lastSignature) ? repeats + 1 : 1;
         lastSignature = signature;
       }
-      const premise = !policy && failures >= failuresBeforeEscalation && repeats >= 2;
+      const diagnoseFrom = diagnoseAt(failuresBeforeEscalation);
+      const premise = !policy && failures >= diagnoseFrom && repeats >= 2;
       emit({ premise });
       // The model gets one chance to fix an agentlint finding; after that only the user can decide, so ask them instead of looping.
       if (policy && ctx.hasUI && policyRepeats++ >= 1) {
         const outcome = await resolvePolicyFailure(pi, ctx, manifest, report);
-        if (outcome === "stop") return deescalate(ctx).then(() => undefined);
+        if (outcome === "stop") {
+          ctx.ui.notify(task?.status === "implementing" ? STAYS_OPEN : "Stopped: agentlint still blocks.", "info");
+          return deescalate(ctx).then(() => undefined);
+        }
         if (outcome === "approved") {
           const content = "The user approved the agentlint exception and it is recorded. Do not change the code: finish so verify runs again.";
           return { entries: [{ type: "custom_message", customType: "verify-gate", content, display: true }], continue: true };
         }
         if (outcome === "failed") ctx.ui.notify("Could not record the agentlint exception. The model continues.", "warning");
       }
-      if (retries >= verifyRetries) {
-        if (!ctx.hasUI) return deescalate(ctx).then(() => undefined);
-        const choice = await ctx.ui.select("Verification still fails after several attempts. What now?", ["Keep trying", "Leave it as is"]);
-        if (choice !== "Keep trying") return deescalate(ctx).then(() => undefined);
-      } else retries++;
-      const target = manifest.models?.escalate ?? manifest.models?.review ?? manifest.models?.setup;
-      if (failures >= failuresBeforeEscalation && !escalatedFrom) {
-        const switched = await switchModel(pi, ctx, target);
-        if (switched) {
-          escalatedFrom = switched.previous;
-          escalatedTo = switched.model;
-          ctx.ui.notify(`verify failed ${failuresBeforeEscalation} times: ${switched.model} takes this attempt`, "warning");
-          pi.events.emit(ESCALATE_EVENT, { root: ctx.cwd, model: switched.model } satisfies EscalatePayload);
+      // The stronger model always gets its one attempt, even past the automatic retries: only then is the user asked.
+      const escalating = failures >= failuresBeforeEscalation && !escalatedFrom ? await switchModel(pi, ctx, manifest.models?.escalate ?? manifest.models?.review ?? manifest.models?.setup) : undefined;
+      if (retries < verifyRetries) retries++;
+      else if (!escalating) {
+        const failed = "Verify still fails after the automatic retries.";
+        if (!ctx.hasUI) {
+          // Headless, nobody can answer: say why the run ended red, with the end of the last report.
+          ctx.ui.notify(`${failed}${open}\n\n${tail(report)}`, "error");
+          return deescalate(ctx).then(() => undefined);
+        }
+        // The last report goes to nobody else: show it before asking.
+        ctx.ui.notify(tail(report), "error");
+        const choice = await ctx.ui.select(`${failed} What now?`, ["Keep trying", "Leave it as is"]);
+        if (choice !== "Keep trying") {
+          ctx.ui.notify(task?.status === "implementing" ? "The task stays open: after your fix, /verify checks it and /task done closes it." : "Stopped: verify still fails.", "info");
+          return deescalate(ctx).then(() => undefined);
         }
       }
-      const diagnose = !policy && failures === failuresBeforeEscalation;
+      if (escalating) {
+        escalatedFrom = escalating.previous;
+        escalatedTo = escalating.model;
+        ctx.ui.notify(`Verify failed ${failures} times: ${escalating.model} takes this attempt.`, "warning");
+        pi.events.emit(ESCALATE_EVENT, { root: ctx.cwd, model: escalating.model } satisfies EscalatePayload);
+      }
+      const diagnose = !policy && failures === diagnoseFrom;
       const content = await advice(ctx.cwd, report, policy ? "policy" : diagnose ? "diagnose" : "fix", premise, manifest.agentlint);
       const customType = diagnose ? "verify-diagnose" : "verify-gate";
       return { entries: [{ type: "custom_message", customType, content, display: true }], continue: true };
@@ -307,11 +330,13 @@ export function registerGate(pi: ExtensionAPI) {
 
     verified = remembered;
     await deescalate(ctx);
-    if (risk) ctx.ui.notify(`Risk ${risk.level}${risk.reasons.length ? `: ${risk.reasons.join("; ")}` : ""}${reviewing ? " (review requested)" : !risk.review ? ` (review not requested${reviewModel ? "" : "; models.review is not set"})` : reviewModel ? " (already reviewed)" : " (no review model)"}`, "info");
+    // What happened to the review, in the one risk line said at the end (in the done dialog when there is one).
+    let reviewNote: string | undefined;
+    let warn = false;
     if (reviewing) {
       const review = await reviewing.finally(clearStatus);
-      if (review.status === "skipped") ctx.ui.notify(`Review skipped: ${review.report}`, "warning");
-      else ctx.ui.notify(review.status === "approved" ? "Diff review: approved." : "Diff review: changes requested. The agent fixes them.", review.status === "approved" ? "info" : "warning");
+      warn = review.status !== "approved";
+      reviewNote = review.status === "approved" ? "Review: approved." : review.status === "changes" ? "Review: changes requested; the agent fixes them." : `Review did not run: ${oneLine(review.report, 200)}`;
       reviews++;
       // A review that did not run (no tmux, a failed child) is tried again on the same diff, and still counts as one for the low-risk skip.
       if (task) reviewed.set(task.id, review.status === "skipped" ? "" : now);
@@ -319,13 +344,23 @@ export function registerGate(pi: ExtensionAPI) {
       // One round: the fixes are checked by verify, not by another paid review.
       if (review.status === "changes") {
         verified = undefined;
+        const line = riskLine(risk, reviewNote);
+        if (line) ctx.ui.notify(line, "warning");
         const content = `${review.report}\n\nFix these, then finish.`;
         return { entries: [{ type: "custom_message", customType: "diff-review", content, display: true }], continue: true };
       }
+    } else if (risk) {
+      if (!risk.review) reviewNote = off ? "Review: off (review.minLevel)." : risk.level === "none" ? undefined : "Review: not needed at this risk.";
+      else if (!reviewModel) [reviewNote, warn] = ["Review: not run, no review model is set.", true];
+      else reviewNote = "Review: done earlier on this diff.";
     }
+    const line = riskLine(risk, reviewNote);
+    const checking = task?.understanding;
+    // The done dialog carries the line; without one it is a notice.
+    const dialog = ctx.hasUI && task?.status === "implementing" && checking?.tree !== now;
+    if (line && !dialog) ctx.ui.notify(line, warn ? "warning" : "info");
     if (task?.status !== "implementing") return;
     // The understanding check was sent for this tree: understanding_done (or /task done) closes the task.
-    const checking = task.understanding;
     if (checking?.tree === now) return;
     // Only a person confirms changed code during the check: a session resumed headless leaves it to /task done.
     if (checking && !ctx.hasUI) return void ctx.ui.notify("The code changed during the understanding check and nobody can confirm it here. /task done closes the task.", "info");
@@ -333,7 +368,7 @@ export function registerGate(pi: ExtensionAPI) {
     const title = unverified ? "No verify steps: nothing checked this change" : "Verification OK";
     const exec = pi.exec.bind(pi);
     const changes = ctx.hasUI ? await fileChanges(exec, ctx.cwd, await diffBase(exec, ctx.cwd, task)) : [];
-    const done = ctx.hasUI ? await ctx.ui.confirm(title, `Is the task "${oneLine(task.title, 80)}" done?${filesNote(changes)}${dialogNotes(risk)}`) : !unverified;
+    const done = ctx.hasUI ? await ctx.ui.confirm(title, `Is the task "${oneLine(task.title, 80)}" done?${line ? `\n\n${line}` : ""}${filesNote(changes)}${dialogNotes(risk)}`) : !unverified;
     if (!done) {
       ctx.ui.notify(`The task stays open${ctx.hasUI ? "" : ": no verify steps checked it"}. /task done closes it.`, "info");
       return;
@@ -354,15 +389,19 @@ export function registerGate(pi: ExtensionAPI) {
       return { entries: [{ type: "custom_message", customType: "understanding-check", content, display: true }], continue: true };
     }
     await recordUnderstanding(ctx.cwd, understanding === "off" ? "off" : "no-ui", 0);
-    await completeTask(pi, ctx);
+    const closed = await completeTask(pi, ctx);
+    ctx.ui.notify(`Task done: ${oneLine(closed.title)}.`, "info");
   });
 
   pi.registerCommand("verify", {
     description: "Run the project's verification steps",
     handler: async (_args, ctx) => {
-      const manifest = await readManifest(ctx.cwd);
-      if (!manifest.verify.length) return ctx.ui.notify("No verification steps configured.", "warning");
-      const { ok, report } = await verify(manifest, ctx.cwd);
+      const manifest = await readManifest(ctx.cwd).catch((e: Error) => void ctx.ui.notify(`Verify did not run: ${e.message}`, "error"));
+      if (!manifest) return;
+      if (!manifest.verify.length) return ctx.ui.notify("No verification steps configured. Run /setup to add them.", "warning");
+      ctx.ui.setStatus("verify", "running verify…");
+      const { ok, report, infra } = await verify(manifest, ctx.cwd).finally(() => ctx.ui.setStatus("verify", undefined));
+      if (infra) return ctx.ui.notify(`Verify did not run. ${infra}`, "error");
       ctx.ui.notify(report, ok ? "info" : "error");
     },
   });
