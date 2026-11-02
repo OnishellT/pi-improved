@@ -2,15 +2,13 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { globalPath, isObject, updateGlobal } from "./config.ts";
 import { globalMap, MANIFEST_PATH, patchMap, readManifest, readProjectManifest, updateManifest, type PhaseModels } from "./manifest.ts";
 
-/** Each phase: its key, its row in /models, and what an unset value means. Review has no session fallback: unset means no review and no plan check. */
+/** Each phase: its key, its row in /models, what an unset value means, and the option that unsets it. Review has no session fallback: unset means no diff review. */
 const PHASES = [
-  ["setup", "Setup", "session model"],
-  ["implement", "Implement (plan and code)", "session model"],
-  ["review", "Review and plan check (no model: no review)", "off"],
-  ["escalate", "Escalate (when verify keeps failing)", "review model, else setup model"],
-] as const satisfies readonly (readonly [keyof PhaseModels, string, string])[];
-const SESSION = "Use the session model";
-const OFF = "Off: no review and no plan check";
+  ["setup", "Setup", "session model", "Use the session model"],
+  ["implement", "Implement (plan and code)", "session model", "Use the session model"],
+  ["review", "Review and plan check (no model: no review)", "off", "Off: no diff review (the plan check uses the setup model)"],
+  ["escalate", "Escalate (when verify keeps failing)", "review model, else setup model", "Unset: use the review model, else the setup model"],
+] as const satisfies readonly (readonly [keyof PhaseModels, string, string, string])[];
 const DONE = "Done";
 const MAX_FLAT = 15;
 
@@ -71,8 +69,7 @@ export async function restoreModel(pi: ExtensionAPI, ctx: ExtensionContext, id: 
 }
 
 /** The model picked for a phase, `null` to unset it, or undefined on Esc (back to the phase list). */
-async function pickModel(ctx: ExtensionContext, key: keyof PhaseModels, label: string, ids: string[]): Promise<string | null | undefined> {
-  const unset = key === "review" ? OFF : SESSION;
+async function pickModel(ctx: ExtensionContext, label: string, unset: string, ids: string[]): Promise<string | null | undefined> {
   let list = ids;
   if (ids.length > MAX_FLAT) {
     const providers = [...new Set(ids.map((id) => id.split("/")[0]))];
@@ -102,8 +99,8 @@ export function registerModels(pi: ExtensionAPI) {
         const row = await ctx.ui.select("Which phase to change?", [...lines, DONE]);
         if (!row) return ctx.ui.notify("Models: nothing saved.", "info");
         if (row === DONE) break;
-        const [key, name] = PHASES[lines.indexOf(row)];
-        const pick = await pickModel(ctx, key, name, available);
+        const [key, name, , unset] = PHASES[lines.indexOf(row)];
+        const pick = await pickModel(ctx, name, unset, available);
         if (pick === null) delete next[key];
         else if (pick) next[key] = pick;
       }
@@ -111,29 +108,44 @@ export function registerModels(pi: ExtensionAPI) {
       if (!changed.length) return ctx.ui.notify("Models: no changes.", "info");
 
       // A phase the project file sets is changed there (it wins over the global file); the rest goes to the global file, unless asked for this project only.
-      const own = (await readProjectManifest(root)).models ?? {};
-      const inProject = changed.filter((key) => projectOnly || Object.hasOwn(own, key));
+      // A project `models: null` hides the whole global map, so everything goes to the project file, which then lists every phase it must keep unset.
+      const own = (await readProjectManifest(root)).models;
+      const hidden = own === null;
+      const inProject = changed.filter((key) => projectOnly || hidden || Object.hasOwn(own ?? {}, key));
       const inGlobal = changed.filter((key) => !inProject.includes(key));
-      const pick = (models: PhaseModels, keys: (keyof PhaseModels)[]) => Object.fromEntries(keys.filter((k) => models[k] !== undefined).map((k) => [k, models[k]])) as PhaseModels;
-      try {
-        if (inGlobal.length)
+      const only = (models: PhaseModels, keys: (keyof PhaseModels)[]) => Object.fromEntries(keys.filter((k) => models[k] !== undefined).map((k) => [k, models[k]])) as PhaseModels;
+      const saved: string[] = [];
+      const failed: string[] = [];
+      const save = async (file: string, write: () => unknown) => {
+        try {
+          await write();
+          saved.push(file);
+        } catch (error: any) {
+          failed.push(`${file}: ${error.message}`);
+        }
+      };
+      if (inGlobal.length)
+        await save(globalPath(), () =>
           updateGlobal((c) => {
             const models: Record<string, unknown> = isObject(c.models) ? { ...c.models } : {};
             for (const key of inGlobal) next[key] === undefined ? delete models[key] : (models[key] = next[key]);
             if (Object.keys(models).length) c.models = models;
             else delete c.models;
-          });
-        if (inProject.length)
-          await updateManifest(root, (m) => {
-            const models = patchMap(m.models, pick(current, inProject), pick(next, inProject), globalMap("models"));
-            if (models) m.models = models;
+          }),
+        );
+      if (inProject.length)
+        await save(MANIFEST_PATH, () =>
+          updateManifest(root, (m) => {
+            const inherited = globalMap("models");
+            const models = hidden
+              ? (Object.fromEntries(PHASES.flatMap(([k]): [string, string | null][] => (next[k] !== undefined ? [[k, next[k]!]] : inherited?.[k] !== undefined ? [[k, null]] : []))) as PhaseModels)
+              : patchMap(m.models ?? undefined, only(current, inProject), only(next, inProject), inherited);
+            if (models && Object.keys(models).length) m.models = models;
             else delete m.models;
-          });
-      } catch (error: any) {
-        return ctx.ui.notify(`Models not saved: ${error.message}. Fix the file and run /models again.`, "error");
-      }
-      const where = [inGlobal.length ? globalPath() : "", inProject.length ? MANIFEST_PATH : ""].filter(Boolean).join(" and ");
-      ctx.ui.notify(`${rows(next).join("\n")}\nSaved in ${where}.`, "info");
+          }),
+        );
+      const result = [saved.length ? `Saved in ${saved.join(" and ")}.` : "", failed.length ? `Not saved in ${failed.join("; ")}. Fix the file and run /models again.` : ""].filter(Boolean).join(" ");
+      ctx.ui.notify(saved.length ? `${rows(next).join("\n")}\n${result}` : result, failed.length ? "error" : "info");
     },
   });
 }

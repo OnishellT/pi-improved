@@ -16,19 +16,28 @@ function readObject(file: string): Record<string, any> | undefined {
   }
 }
 
-/** Renames `file` to `<file>.migrated`, so it is never found again and nothing is lost. False when it cannot (a read-only dir): the next start tries again. */
-function retire(file: string): boolean {
-  try {
-    fs.renameSync(file, `${file}.migrated`);
-    return true;
-  } catch {
-    return false;
+/** A free name for the retired copy: `<file>.migrated`, else `<file>.migrated.2`, ... so an earlier backup is never overwritten. */
+function freeName(file: string): string {
+  for (let n = 1; ; n++) {
+    const name = `${file}.migrated${n > 1 ? `.${n}` : ""}`;
+    if (!fs.existsSync(name)) return name;
   }
 }
 
-const moved = (old: string, target: string) => `Moved ${old} into ${target} (old file renamed to ${old}.migrated).`;
+/** Renames `file` to a free `<file>.migrated` name, so it is never found again and nothing is lost. Returns that name's suffix, or undefined when it cannot (a read-only dir): the next start tries again. */
+function retire(file: string): string | undefined {
+  try {
+    const name = freeName(file);
+    fs.renameSync(file, name);
+    return name.slice(file.length);
+  } catch {
+    return undefined;
+  }
+}
+
+const moved = (old: string, target: string, suffix: string) => `Moved ${old} into ${target} (old file renamed to ${old}${suffix}).`;
 /** An old file left by an earlier migration: while it is there, removing the key from the new file would copy the old value back. */
-const retired = (old: string, key: string, target: string) => `${old} is no longer read (${target} has ${key}): renamed it to ${old}.migrated.`;
+const retired = (old: string, key: string, target: string, suffix: string) => `${old} is no longer read (${target} has ${key}): renamed it to ${old}${suffix}.`;
 
 /** Global legacy: `computer.json`, `self-compact.json` and `subagentPanes` in pi's `settings.json`, into the global file. Returns one notice per file. */
 export function migrateGlobal(dir = agentDir()): string[] {
@@ -58,8 +67,9 @@ export function migrateGlobal(dir = agentDir()): string[] {
     const copied = todo.some(([o]) => o === old);
     // pi's own settings.json is not ours to rename: only the key in it is stale.
     if (old === "settings.json") return copied ? [`Moved subagentPanes from settings.json into ${target}. Remove it from settings.json: it is no longer read.`] : [];
-    if (!retire(path.join(dir, old))) return copied ? [`Moved ${old} into ${target}. Delete ${old}: it is no longer read.`] : [];
-    return [copied ? moved(old, target) : retired(old, key, target)];
+    const suffix = retire(path.join(dir, old));
+    if (!suffix) return copied ? [`Moved ${old} into ${target}. Delete ${old}: it is no longer read.`] : [];
+    return [copied ? moved(old, target, suffix) : retired(old, key, target, suffix)];
   });
 }
 
@@ -76,13 +86,17 @@ export function migrateProject(root: string): string[] {
     if (error.code !== "ENOENT") return []; // an invalid workflow.json is reported elsewhere; it is not overwritten
   }
   if (!isObject(own)) return [];
-  if (Object.hasOwn(own, "selfCompact")) return retire(old) ? [retired(".pi/self-compact.json", "selfCompact", MANIFEST_PATH)] : [];
+  if (Object.hasOwn(own, "selfCompact")) {
+    const suffix = retire(old);
+    return suffix ? [retired(".pi/self-compact.json", "selfCompact", MANIFEST_PATH, suffix)] : [];
+  }
   try {
     writeFileAtomic(file, `${JSON.stringify({ ...own, selfCompact: value }, null, 2)}\n`);
   } catch {
     return [];
   }
-  return [retire(old) ? moved(".pi/self-compact.json", MANIFEST_PATH) : `Moved .pi/self-compact.json into ${MANIFEST_PATH}. Delete .pi/self-compact.json: it is no longer read.`];
+  const suffix = retire(old);
+  return [suffix ? moved(".pi/self-compact.json", MANIFEST_PATH, suffix) : `Moved .pi/self-compact.json into ${MANIFEST_PATH}. Delete .pi/self-compact.json: it is no longer read.`];
 }
 
 /** Both migrations; `root` left out migrates only the global files. Safe to call from every extension at startup: once a key is in place it moves nothing and says nothing. */

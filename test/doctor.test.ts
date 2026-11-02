@@ -100,6 +100,12 @@ test("/doctor checks types and ranges in both files and names unknown project ke
   assert.doesNotMatch(fine.notes[0].msg, /Settings|unknown keys/);
 });
 
+test("/doctor reports a model id that is not a string instead of throwing", async () => {
+  const t = await setup(() => ({ code: 0 }), true, undefined, { models: { review: 123 } });
+  await t.commands.get("doctor").handler("", t.ctx);
+  assert.match(t.notes[0].msg, /models\.review: must be "provider\/model-id", not 123/);
+});
+
 test("/doctor shows a status while it runs and clears it after, even when a check throws", async () => {
   const t = await setup(() => ({ code: 0 }));
   await t.commands.get("doctor").handler("", t.ctx);

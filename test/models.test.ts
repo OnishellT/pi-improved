@@ -93,7 +93,7 @@ test("/models: Esc in the phase list saves nothing; Esc in the model list goes b
 
 test("/models: Review offers Off, never the session model; other phases offer the session model", async () => {
   const root = await tempProject({});
-  const t = await models(root, [row("Review and plan check (no model: no review)", "openai/gpt-6-luna"), "Off: no review and no plan check", row("Setup", "session model"), "Use the session model", "Done"], { global: { models: { review: "openai/gpt-6-luna" } } });
+  const t = await models(root, [row("Review and plan check (no model: no review)", "openai/gpt-6-luna"), "Off: no diff review (the plan check uses the setup model)", row("Setup", "session model"), "Use the session model", "Done"], { global: { models: { review: "openai/gpt-6-luna" } } });
   assert.deepEqual(t.global, {});
   assert.equal(t.merged, undefined);
   assert.match(t.notes[0], /Review and plan check \(no model: no review\): off/);
@@ -108,10 +108,39 @@ test("/models changes a phase the project file sets in the project file, and `/m
   assert.deepEqual(t.global, { models: { setup: "openai/gpt-6-luna" } });
   assert.match(t.notes[0], new RegExp(`Saved in .*pi-improved\\.json and ${MANIFEST_PATH.replaceAll(".", "\\.")}\\.`));
   const local = await tempProject({});
-  const p = await models(local, [row("Review and plan check (no model: no review)", "openai/gpt-6-luna"), "Off: no review and no plan check", "Done"], { args: "project", global: { models: { review: "openai/gpt-6-luna" } } });
+  const p = await models(local, [row("Review and plan check (no model: no review)", "openai/gpt-6-luna"), "Off: no diff review (the plan check uses the setup model)", "Done"], { args: "project", global: { models: { review: "openai/gpt-6-luna" } } });
   assert.deepEqual(p.global, { models: { review: "openai/gpt-6-luna" } }, "the global file is untouched");
   assert.deepEqual(JSON.parse(await fs.readFile(path.join(local, MANIFEST_PATH), "utf8")).models, { review: null }, "unset for this project only");
   assert.equal(p.merged?.review, undefined);
+});
+
+test("/models: Escalate unset says what it falls back to", async () => {
+  const root = await tempProject({});
+  const t = await models(root, [row("Escalate (when verify keeps failing)", "openai/gpt-6-luna"), "Unset: use the review model, else the setup model", "Done"], { global: { models: { escalate: "openai/gpt-6-luna" } } });
+  assert.deepEqual(t.global, {});
+  assert.match(t.notes[0], /Escalate \(when verify keeps failing\): review model, else setup model/);
+});
+
+test("/models: a project `models: null` keeps hiding the global phases it does not set", async () => {
+  const root = await tempProject({});
+  await updateManifest(root, (x) => void (x.models = null as any));
+  const t = await models(root, [row("Setup", "session model"), "openai/gpt-6-astra", "Done"], { global: { models: { review: "openai/gpt-6-luna", setup: "openai/gpt-6-luna" } } });
+  assert.deepEqual(t.global, { models: { review: "openai/gpt-6-luna", setup: "openai/gpt-6-luna" } }, "the global file is untouched");
+  assert.deepEqual(JSON.parse(await fs.readFile(path.join(root, MANIFEST_PATH), "utf8")).models, { setup: "openai/gpt-6-astra", review: null });
+  assert.deepEqual(t.merged, { setup: "openai/gpt-6-astra" });
+});
+
+test("/models says which file was saved when the other one fails", async () => {
+  const root = await tempProject({});
+  await updateManifest(root, (x) => void (x.models = { implement: "openai/gpt-6-luna" }));
+  const dir = await tempProject({ "pi-improved.json": "{broken" });
+  await withEnv({ PI_CODING_AGENT_DIR: dir }, async () => {
+    const t = setup(root, luna, [luna, astra], [row("Implement (plan and code)", "openai/gpt-6-luna"), "openai/gpt-6-astra", row("Setup", "session model"), "openai/gpt-6-astra", "Done"]);
+    registerModels(t.pi);
+    await t.commands.get("models").handler("", t.ctx);
+    assert.match(t.notes[0], /Saved in \.pi\/workflow\.json\. Not saved in .*pi-improved\.json: .*not valid JSON.*Fix the file and run \/models again\./);
+    assert.deepEqual((await readProjectManifest(root)).models, { implement: "openai/gpt-6-astra" });
+  });
 });
 
 test("/models asks provider first when the list is long", async () => {
