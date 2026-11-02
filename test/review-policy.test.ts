@@ -165,6 +165,25 @@ test("stops from the fourth round and tells the caller to escalate", () => {
   assert.equal(reviewGate(rounds.slice(0, 2), "ffffff0000000000", false).action, "run");
 });
 
+test("the round limit counts only the current reviewer model's rounds", () => {
+  const round = (reviewer: string | undefined, i: number) => ({
+    sha: `${i}`.repeat(7),
+    confidence: 3,
+    actionable: 1,
+    ...(reviewer === undefined ? {} : { reviewer }),
+  });
+  const other = [0, 1, 2].map((i) => round("aaaaaaaa", i));
+  assert.equal(reviewGate(other, "ffffff0000000000", false, false, "aaaaaaaa").action, "stop");
+  // Three rounds by another model, plus two older rounds without a recorded model.
+  const mixed = [...other, round(undefined, 3), round(undefined, 4), round("bbbbbbbb", 5)];
+  assert.equal(reviewGate(mixed, "ffffff0000000000", false, false, "bbbbbbbb").action, "run");
+  const own = [...mixed, round("bbbbbbbb", 6), round("bbbbbbbb", 7)];
+  const gate = reviewGate(own, "ffffff0000000000", false, false, "bbbbbbbb");
+  assert.ok(gate.action === "stop" && gate.message.startsWith("3 local reviews by this reviewer model"));
+  // The head is still skipped when another model already reviewed it.
+  assert.equal(reviewGate(other, "2222222abc", false, false, "bbbbbbbb").action, "skip");
+});
+
 test("a converged PR can still get its final commit reviewed after three rounds", () => {
   const rounds = [3, 3, 4].map((confidence, i) => ({
     sha: `${i}`.repeat(7),

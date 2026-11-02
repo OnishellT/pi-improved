@@ -9,6 +9,7 @@ import {
   inlineCommentBody,
   missingVerdicts,
   parseMarker,
+  reviewerId,
   renderBody,
   splitFindings,
 } from "../scripts/review/result.ts";
@@ -72,6 +73,23 @@ test("builds and parses the marker", () => {
   const marker = { sha: "abcdef0123456789", confidence: 4, actionable: 0 };
   assert.deepEqual(parseMarker(`text\n${buildMarker(marker)}\n`), marker);
   assert.equal(parseMarker("<!-- local-review sha=zz confidence=9 actionable=x -->"), undefined);
+});
+
+test("the marker records the reviewer model as a hash, and old markers without it still parse", () => {
+  const id = reviewerId("opencode-go", "deepseek-v4.1-flash");
+  assert.match(id, /^[0-9a-f]{8}$/);
+  assert.notEqual(id, reviewerId("openai", "gpt-6.1-terra"));
+  const marker = { sha: "abcdef0", confidence: 3, actionable: 1, reviewer: id };
+  const text = buildMarker(marker);
+  assert.ok(!/deepseek|opencode/.test(text));
+  assert.deepEqual(parseMarker(text), marker);
+  assert.deepEqual(parseMarker("<!-- local-review sha=abcdef0 confidence=3 actionable=1 -->"), {
+    sha: "abcdef0",
+    confidence: 3,
+    actionable: 1,
+  });
+  const body = renderBody({ review: { confidence: 4, summary: "ok", findings: [] }, sha: "abcdef0", reviewer: id, outside: [], threadNotes: [] });
+  assert.equal(parseMarker(body)?.reviewer, id);
 });
 
 test("splits findings into inline and outside the diff", () => {

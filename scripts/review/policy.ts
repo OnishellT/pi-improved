@@ -106,11 +106,15 @@ export const maxLocalRounds = 3;
 
 export type Gate = { action: "run" } | { action: "skip" | "stop"; message: string };
 
+// The round limit counts only the rounds of the current reviewer (see reviewerId): after a
+// switch of model, rounds by another model do not use up the new one's. Markers written before
+// the reviewer was recorded count for no model.
 export function reviewGate(
   earlier: readonly Marker[],
   headSha: string,
   force: boolean,
   incomplete = false,
+  reviewer?: string,
 ): Gate {
   if (force) return { action: "run" };
   if (
@@ -124,10 +128,11 @@ export function reviewGate(
   }
   // A PR that converged (last confidence 4 or more) can still get its final commit reviewed.
   // An incomplete attempt finishes a round that was already counted, so the limit does not apply.
-  if (!incomplete && earlier.length >= maxLocalRounds && (earlier.at(-1)?.confidence ?? 0) < 4) {
+  const rounds = reviewer === undefined ? earlier : earlier.filter((marker) => marker.reviewer === reviewer);
+  if (!incomplete && rounds.length >= maxLocalRounds && (rounds.at(-1)?.confidence ?? 0) < 4) {
     return {
       action: "stop",
-      message: `${earlier.length} local reviews have not converged: stop and ask the coordinator before another round (use --force to override).`,
+      message: `${rounds.length} local reviews by this reviewer model have not converged: stop and ask the coordinator before another round (use --force to override).`,
     };
   }
   return { action: "run" };

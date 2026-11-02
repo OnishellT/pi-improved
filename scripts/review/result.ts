@@ -1,5 +1,6 @@
 // The reviewer's structured result: schema, extraction, mapping onto the diff, and the
 // text posted to the pull request.
+import { createHash } from "node:crypto";
 import { z } from "zod";
 
 const Severity = z.enum(["critical", "major", "minor", "nit"]);
@@ -109,22 +110,32 @@ export interface Marker {
   sha: string;
   confidence: number;
   actionable: number;
+  // Short hash of provider/model (see reviewerId). Absent on markers written before it existed.
+  reviewer?: string;
+}
+
+// Identifies the reviewer model in the marker without naming it in posted text.
+export function reviewerId(provider: string, model: string): string {
+  return createHash("sha256").update(`${provider}/${model}`).digest("hex").slice(0, 8);
 }
 
 export function buildMarker(marker: Marker): string {
-  return `<!-- local-review sha=${marker.sha} confidence=${marker.confidence} actionable=${marker.actionable} -->`;
+  const reviewer = marker.reviewer === undefined ? "" : ` reviewer=${marker.reviewer}`;
+  return `<!-- local-review sha=${marker.sha} confidence=${marker.confidence} actionable=${marker.actionable}${reviewer} -->`;
 }
 
 export function parseMarker(body: string): Marker | undefined {
   // The script appends the real marker last; model text never contains one (comments are stripped).
   const matches = [
     ...body.matchAll(
-      /<!-- local-review sha=([0-9a-f]{7,40}) confidence=([1-5]) actionable=(\d+) -->/g,
+      /<!-- local-review sha=([0-9a-f]{7,40}) confidence=([1-5]) actionable=(\d+)(?: reviewer=([0-9a-f]{8}))? -->/g,
     ),
   ];
   const match = matches.at(-1);
   if (!match) return undefined;
-  return { sha: match[1] ?? "", confidence: Number(match[2]), actionable: Number(match[3]) };
+  const marker: Marker = { sha: match[1] ?? "", confidence: Number(match[2]), actionable: Number(match[3]) };
+  if (match[4] !== undefined) marker.reviewer = match[4];
+  return marker;
 }
 
 export interface SplitFindings {
@@ -162,6 +173,7 @@ const confidenceMeaning: Record<number, string> = {
 export interface BodyInput {
   review: Review;
   sha: string;
+  reviewer?: string;
   outside: readonly Finding[];
   threadNotes: readonly string[];
   notFixed?: number;
@@ -169,7 +181,7 @@ export interface BodyInput {
   note?: string;
 }
 
-export function renderBody({ review, sha, outside, threadNotes, notFixed = 0, note }: BodyInput): string {
+export function renderBody({ review, sha, reviewer, outside, threadNotes, notFixed = 0, note }: BodyInput): string {
   const counts = (severity: Severity) =>
     review.findings.filter((finding) => finding.severity === severity).length;
   const parts = [
@@ -204,6 +216,7 @@ export function renderBody({ review, sha, outside, threadNotes, notFixed = 0, no
       sha,
       confidence: review.confidence,
       actionable: actionableCount(review) + notFixed,
+      ...(reviewer === undefined ? {} : { reviewer }),
     }),
   );
   return parts.join("\n\n");
