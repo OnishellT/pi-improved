@@ -15,6 +15,8 @@ const INTERACTIVE_AGENTLINT = /\bagentlint(?:\s+--)?\s+review\b|\bagentlint\b[^;
  * agentlint keeps exceptions in this file; the guard watches the file, not the command, so no spelling of the command gets past it.
  */
 const ACCEPTANCES = path.join(".agentlint", "acceptances.jsonl");
+/** agentlint's selector cache: where the findings of its last complete check are (rule, file, line). */
+const LAST_CHECK = path.join(".agentlint", ".cache", "last-check.json");
 
 /** Workflow state the code owns: the model must not rewrite it. Only write/edit are guarded; a bash redirect into it is a deliberate limit. */
 const OWNED = /(^|\/)\.pi\/(workflow|task)\.json$/;
@@ -103,11 +105,35 @@ export async function trustAcceptances(cwd: string, approved: (record: any) => b
   known.set(cwd, (await records(cwd)).filter((l) => trusted.includes(l) || pick(l)));
 }
 
+/** A finding agentlint's last check listed: its identity (`source` and `fingerprint`) and where it is. */
+export interface CheckedFinding {
+  source?: Record<string, unknown>;
+  fingerprint?: { digest?: string };
+  ruleId?: string;
+  file?: string;
+  line?: number;
+}
+
+/** The findings of agentlint's last complete check, from its selector cache; [] when there is none. */
+export async function lastCheck(cwd: string): Promise<CheckedFinding[]> {
+  try {
+    const cache = JSON.parse((await read(path.resolve(cwd, LAST_CHECK))) ?? "");
+    // Each `hash` is agentlint's canonical JSON of the finding's source and fingerprint.
+    return (cache?.findings ?? []).map((f: any) => ({ ...JSON.parse(f.hash), ruleId: f.ruleId, file: f.file, line: f.line }));
+  } catch {
+    return [];
+  }
+}
+
+const sameFinding = (r: any, f: CheckedFinding) =>
+  !!r?.fingerprint?.digest && r.fingerprint.digest === f.fingerprint?.digest && ["standardId", "detectorId", "bindingId"].every((k) => r.source?.[k] === f.source?.[k]);
+
 /**
- * One acceptance record in plain words: rule, place when the record has one, reason and who accepted it.
- * agentlint's records name the rule by its standard and carry no file or line; a line that is not a record is shown as is.
+ * One acceptance record in plain words: rule, place, reason and who accepted it.
+ * agentlint's records hold no file or line: the place comes from the finding of its last check with the same identity.
+ * Without one, the detector and a short fingerprint tell two exceptions under one rule apart. A line that is not a record is shown as is.
  */
-export function describeAcceptance(line: string): string {
+export function describeAcceptance(line: string, checked: CheckedFinding[] = []): string {
   let r: any;
   try {
     r = JSON.parse(line);
@@ -115,8 +141,12 @@ export function describeAcceptance(line: string): string {
     return line;
   }
   if (!r || typeof r !== "object" || typeof r.reason !== "string") return line;
-  const rule = r.ruleId ?? r.source?.standardId ?? r.source?.detectorId ?? "agentlint rule";
-  const where = r.file ? ` at ${r.file}${r.line ? `:${r.line}` : ""}` : "";
+  const found = checked.find((f) => sameFinding(r, f));
+  const rule = found?.ruleId ?? r.ruleId ?? r.source?.standardId ?? r.source?.detectorId ?? "agentlint rule";
+  const file = found?.file ?? r.file;
+  const lineNo = found?.line ?? r.line;
+  const id = [r.source?.standardId && r.source?.detectorId, r.fingerprint?.digest && `#${String(r.fingerprint.digest).slice(0, 8)}`].filter(Boolean).join(" ");
+  const where = file ? ` at ${file}${lineNo ? `:${lineNo}` : ""}` : id ? ` (${id})` : "";
   const reason = r.reason.replace(/\s+/g, " ").trim();
   return `- ${rule}${where}: "${reason.length > 200 ? `${reason.slice(0, 199)}…` : reason}" (by ${r.actor ?? r.authority ?? "unknown"})`;
 }
@@ -132,7 +162,11 @@ export async function checkAcceptances(ctx: Pick<ExtensionContext, "cwd" | "hasU
   const now = await records(ctx.cwd);
   // A changed record (a new reason, an exception that came back) is a line the user has not approved: they see it too.
   const added = now.filter((l) => !trusted.includes(l));
-  if (!added.length || (ctx.hasUI && (await ctx.ui.confirm("Keep these agentlint exceptions? (No: they are removed)", added.map(describeAcceptance).join("\n"))))) {
+  const describe = async () => {
+    const checked = await lastCheck(ctx.cwd);
+    return added.map((l) => describeAcceptance(l, checked)).join("\n");
+  };
+  if (!added.length || (ctx.hasUI && (await ctx.ui.confirm("Keep these agentlint exceptions? (No: they are removed)", await describe())))) {
     known.set(ctx.cwd, now);
     return;
   }
