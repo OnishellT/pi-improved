@@ -18,7 +18,7 @@ import {
 import { planDelta } from "./review/delta.ts";
 import { fetchThreads, graphqlArgs, remoteFor } from "./review/github.ts";
 import { checkSeparateProfiles, linkCredentials } from "./review/profile.ts";
-import { parsePiStream } from "./review/pi-stream.ts";
+import { parsePiStream, runFailure, type RunOutcome } from "./review/pi-stream.ts";
 import {
   buildReviewPayload,
   dedupeFindings,
@@ -36,6 +36,7 @@ import {
   missingVerdicts,
   parseMarker,
   renderBody,
+  reviewerId,
   splitFindings,
   type Review,
 } from "./review/result.ts";
@@ -45,6 +46,7 @@ const { provider, model, thinking, timeoutMs, idleMs, piDir, piMainDir } = revie
   process.env,
   homedir(),
 );
+const reviewer = reviewerId(provider, model);
 // Prompt and profile settings come from the PR's base branch when it has them (see main), so a
 // PR cannot rewrite the reviewer that judges it; the local copies are the bootstrap fallback.
 let piSettingsFile = resolve(import.meta.dirname, "review", "pi-settings.json");
@@ -99,8 +101,10 @@ const usageText = `${usageLine}
 
 Reviews a pull request with the local reviewer and posts one review (inline comments,
 summary, confidence 1-5). --dry-run prints the review instead of posting it. A head that already
-has a local review is skipped, and from the fourth round on the run stops unless the last review had
-confidence 4 or more; --force overrides both, and --dry-run ignores both.
+has a local review is skipped, and from the fourth round by the same reviewer model on the run stops
+unless its last review had confidence 4 or more; --force overrides both, and --dry-run ignores both.
+A run is stopped after REVIEW_TIMEOUT_MS in total (default 60 min) or REVIEW_IDLE_MS without
+output (default 120 s).
 Env: REVIEW_PROVIDER, REVIEW_MODEL, REVIEW_THINKING, REVIEW_TIMEOUT_MS, REVIEW_IDLE_MS, REVIEW_PI_DIR,
 PI_MAIN_DIR (default PI_CODING_AGENT_DIR, then ~/.pi/agent). See README.md.`;
 
@@ -344,19 +348,19 @@ function localSecrets(clone: string): string[] {
 
 // Runs pi while streaming its JSON events: prints one progress line per turn, and kills the
 // process when no event arrives for idleMs or the total time passes timeoutMs.
-async function runPi(args: string[], cwd: string): Promise<Run> {
+async function runPi(args: string[], cwd: string): Promise<Run & RunOutcome> {
   const [file = "", ...rest] = args;
   const env = { ...piEnv, HOME: reviewerHome };
   const proc = spawn(file, rest, { cwd, env, stdio: ["ignore", "pipe", "pipe"] });
   let lastEvent = Date.now();
-  let killedFor = "";
-  const kill = (reason: string) => {
-    killedFor = reason;
+  let killed: RunOutcome["killed"];
+  const kill = (reason: "total" | "idle") => {
+    killed = reason;
     proc.kill("SIGKILL");
   };
-  const total = setTimeout(() => kill(`over ${Math.round(timeoutMs / 1000)}s in total`), timeoutMs);
+  const total = setTimeout(() => kill("total"), timeoutMs);
   const idle = setInterval(() => {
-    if (Date.now() - lastEvent > idleMs) kill(`no event for ${Math.round(idleMs / 1000)}s`);
+    if (Date.now() - lastEvent > idleMs) kill("idle");
   }, 5000);
   let turns = 0;
   let out = "";
@@ -396,12 +400,13 @@ async function runPi(args: string[], cwd: string): Promise<Run> {
   progress(pending);
   clearTimeout(total);
   clearInterval(idle);
-  return { code: killedFor ? -1 : code, out, err: killedFor ? `killed: ${killedFor}` : errText };
+  return killed === undefined ? { code, out, err: errText } : { code: -1, out, err: errText, killed };
 }
 
 const usage = { tokens: 0, costUsd: 0 };
 
-// One reviewer run; a timeout or an empty answer is retried once.
+// One reviewer run. A failure is retried once, except a usage limit or the total timeout,
+// which a second try would hit again.
 async function runReviewer(
   worktree: string,
   contextFile: string,
@@ -435,16 +440,15 @@ async function runReviewer(
     const answer = parsePiStream(result.out);
     usage.tokens += answer.usage.tokens;
     usage.costUsd += answer.usage.costUsd;
-    if (result.code === 0 && answer.text.trim() !== "") return answer.text;
-    lastProblem =
-      result.code === 0
-        ? "empty answer"
-        : `exit ${result.code}: ${result.err.trim().slice(0, 300) || "timed out"}`;
+    const failure = runFailure(result, answer, { timeoutMs, idleMs });
+    if (failure === undefined) return answer.text;
+    if (!failure.retry) throw new Error(`the reviewer failed, nothing was posted: ${failure.problem}`);
+    lastProblem = failure.problem;
     console.error(
       `reviewer run ${attempt} failed (${lastProblem})${attempt === 1 ? ", retrying" : ""}`,
     );
   }
-  throw new Error(`the reviewer failed twice: ${lastProblem}`);
+  throw new Error(`the reviewer failed twice, nothing was posted: ${lastProblem}`);
 }
 
 async function reviewWithRetry(
@@ -476,7 +480,13 @@ async function main() {
   }
   const started = Date.now();
   const data = await fetchPr(pr);
-  const gate = reviewGate(data.earlierMarkers, data.sha, force || dryRun, data.attempt.incomplete);
+  const gate = reviewGate(
+    data.earlierMarkers,
+    data.sha,
+    force || dryRun,
+    data.attempt.incomplete,
+    reviewer,
+  );
   if (gate.action !== "run") {
     console.error(gate.message);
     process.exit(gate.action === "skip" ? 0 : 2);
@@ -582,6 +592,7 @@ async function main() {
     const body = renderBody({
       review,
       sha: data.sha,
+      reviewer,
       outside,
       threadNotes,
       notFixed,

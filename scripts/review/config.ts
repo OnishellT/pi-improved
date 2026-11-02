@@ -6,7 +6,9 @@ export function reviewConfig(env: Record<string, string | undefined>, home: stri
     provider: env["REVIEW_PROVIDER"] ?? "openai",
     model: env["REVIEW_MODEL"] ?? "gpt-6.1-terra",
     thinking: env["REVIEW_THINKING"] ?? "xhigh",
-    timeoutMs: Number(env["REVIEW_TIMEOUT_MS"] ?? 10 * 60_000),
+    // Total time of one reviewer run. Stalls are caught by idleMs, so this only bounds a run
+    // that keeps working; reviews of mid-size PRs at xhigh have taken 11-48 minutes.
+    timeoutMs: Number(env["REVIEW_TIMEOUT_MS"] ?? 60 * 60_000),
     idleMs: Number(env["REVIEW_IDLE_MS"] ?? 120_000),
     // Dedicated read-only pi profile, rebuilt from the repo's settings on every run.
     piDir: env["REVIEW_PI_DIR"] ?? join(home, ".pi", "reviewer-pi-improved"),

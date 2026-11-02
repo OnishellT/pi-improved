@@ -11,6 +11,12 @@ test("defaults: openai, gpt-6.1-terra, xhigh, profiles under ~/.pi", () => {
   );
 });
 
+test("the default total timeout is one hour, and both limits can be overridden", () => {
+  assert.deepEqual([reviewConfig({}, "/h").timeoutMs, reviewConfig({}, "/h").idleMs], [3_600_000, 120_000]);
+  const env = { REVIEW_TIMEOUT_MS: "2400000", REVIEW_IDLE_MS: "300000" };
+  assert.deepEqual([reviewConfig(env, "/h").timeoutMs, reviewConfig(env, "/h").idleMs], [2_400_000, 300_000]);
+});
+
 test("REVIEW_PROVIDER overrides the provider", () => {
   assert.equal(reviewConfig({ REVIEW_PROVIDER: "anthropic" }, "/h").provider, "anthropic");
 });
