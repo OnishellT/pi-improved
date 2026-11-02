@@ -104,6 +104,24 @@ export async function trustAcceptances(cwd: string, approved: (record: any) => b
 }
 
 /**
+ * One acceptance record in plain words: rule, place when the record has one, reason and who accepted it.
+ * agentlint's records name the rule by its standard and carry no file or line; a line that is not a record is shown as is.
+ */
+export function describeAcceptance(line: string): string {
+  let r: any;
+  try {
+    r = JSON.parse(line);
+  } catch {
+    return line;
+  }
+  if (!r || typeof r !== "object" || typeof r.reason !== "string") return line;
+  const rule = r.ruleId ?? r.source?.standardId ?? r.source?.detectorId ?? "agentlint rule";
+  const where = r.file ? ` at ${r.file}${r.line ? `:${r.line}` : ""}` : "";
+  const reason = r.reason.replace(/\s+/g, " ").trim();
+  return `- ${rule}${where}: "${reason.length > 200 ? `${reason.slice(0, 199)}…` : reason}" (by ${r.actor ?? r.authority ?? "unknown"})`;
+}
+
+/**
  * Records the user has not approved are shown in one confirm; declined, or with nobody to ask, the file goes back to the approved records.
  * Runs after every bash call and before the gate verifies, so a record written later (a background process) is caught before it can open the gate.
  * Returns the note for the model when it put the file back.
@@ -114,7 +132,7 @@ export async function checkAcceptances(ctx: Pick<ExtensionContext, "cwd" | "hasU
   const now = await records(ctx.cwd);
   // A changed record (a new reason, an exception that came back) is a line the user has not approved: they see it too.
   const added = now.filter((l) => !trusted.includes(l));
-  if (!added.length || (ctx.hasUI && (await ctx.ui.confirm("The agent recorded agentlint exceptions. Keep them?", added.join("\n"))))) {
+  if (!added.length || (ctx.hasUI && (await ctx.ui.confirm("Keep these agentlint exceptions? (No: they are removed)", added.map(describeAcceptance).join("\n"))))) {
     known.set(ctx.cwd, now);
     return;
   }
