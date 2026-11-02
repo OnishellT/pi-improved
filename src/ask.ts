@@ -3,11 +3,18 @@ import { Type } from "typebox";
 
 export const OTHER = "✏️  Other answer…";
 
-/** Pick one option or type a different answer; undefined when the user cancels. */
+/** Pick one option or type a different answer; undefined when the user cancels the pick. Backing out of the text box shows the options again. */
 export async function selectOrType(ctx: any, title: string, options: string[]): Promise<string | undefined> {
-  const answer = await ctx.ui.select(title, [...options, OTHER]);
-  return answer === OTHER ? ctx.ui.input(title) : answer;
+  for (;;) {
+    const answer = await ctx.ui.select(title, [...options, OTHER]);
+    if (answer !== OTHER) return answer;
+    const typed = await ctx.ui.input(title);
+    if (typed !== undefined) return typed;
+  }
 }
+
+/** ask_user without a UI: nobody can answer, in a task or in setup. */
+export const NO_UI = "No interactive UI, so nobody can answer. Make the choice that fits AGENTS.md and the ADRs and name it in your final summary (during /setup, list it as an open question in the docs).";
 
 const Question = Type.Object({
   question: Type.String({ description: "One concrete question" }),
@@ -25,7 +32,7 @@ export function registerAskUser(pi: ExtensionAPI) {
     exposure: "model-only",
     executionMode: "sequential",
     async execute(_id, { questions }, _signal, _update, ctx) {
-      if (!ctx.hasUI) throw new Error("No interactive UI: record these as open questions in the docs instead.");
+      if (!ctx.hasUI) throw new Error(NO_UI);
       const answers: { question: string; answer: string }[] = [];
       for (const [i, q] of questions.entries()) {
         const title = `(${i + 1}/${questions.length}) ${q.question}`;
