@@ -85,7 +85,7 @@ const rows = (models: PhaseModels) => PHASES.map(([key, name, unset]) => `${name
 
 export function registerModels(pi: ExtensionAPI) {
   pi.registerCommand("models", {
-    description: "Pick the model per phase (setup, implement, review, escalate); saved for all projects, `/models project` for this project only",
+    description: "Pick the model per phase (setup, implement, review, escalate); saved for all projects unless the project file sets that phase; `/models project` for this project only",
     handler: async (args, ctx) => {
       const root = ctx.cwd;
       const scope = args.trim();
