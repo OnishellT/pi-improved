@@ -25,6 +25,9 @@ const NONE = "No more";
 const DECLINE = "Don't ask again";
 /** Files listed in the approval dialog; the rest is counted. */
 const MAX_LISTED = 40;
+// Survives the reload that ends /setup: the reloaded copy of this file shows it once the chat is rebuilt.
+const NEXT_STEP = Symbol.for("pi-improved.setup.next");
+const pending = globalThis as { [NEXT_STEP]?: { root: string; text: string } };
 export const REPEAT_WARNING = "Repeating it reruns the interview and the docs on the strong setup model, which costs far more than a normal task. Do it only if the project changed a lot. Update it?";
 
 /** Returns what is missing from the setup output; empty means complete. */
@@ -196,7 +199,12 @@ export function registerSetup(pi: ExtensionAPI) {
       await ctx.waitForIdle();
       await restoreModel(pi, ctx, previous);
       ctx.ui.setStatus("setup", undefined);
-      if ((await readManifest(root)).setup === "done") await ctx.reload();
+      const done = await readManifest(root);
+      if (done.setup !== "done") return;
+      // A notice, shown after the reload: the reload rebuilds the chat and drops earlier notices, and setup_finish ends the run before the model could say it.
+      const text = done.models?.review ? "Setup done. Next: /task <what to do>." : "Setup done. Next: /models to pick a Review model (without one, no review runs), then /task <what to do>.";
+      pending[NEXT_STEP] = { root, text };
+      await ctx.reload();
     },
   });
 
@@ -292,10 +300,8 @@ export function registerSetup(pi: ExtensionAPI) {
         if (addedStep) m.agentlintStep = addedStep;
         m.completedAt = new Date().toISOString();
       });
-      // The model says it, not a notice: /setup reloads pi when setup is done, and the reload clears the notices.
-      const next = manifest.models?.review ? "Next: /task <what to do>." : "Next: /models to pick a Review model (without one, no review runs), then /task <what to do>.";
       // Headless, nobody approved: say so, with the verify result, so the summary reports it.
-      const text = ctx.hasUI ? `Setup complete and approved. End with this line for the user: "${next}" Then stop.` : `Setup complete, not approved: no UI to ask; the files are uncommitted for review with git diff.${verifyNote} Report this, then stop.`;
+      const text = ctx.hasUI ? "Setup complete and approved. Stop here." : `Setup complete, not approved: no UI to ask; the files are uncommitted for review with git diff.${verifyNote} Report this, then stop.`;
       return { content: [{ type: "text", text }], details: { verify }, terminate: true };
     },
   });
@@ -349,6 +355,11 @@ export function registerSetup(pi: ExtensionAPI) {
     const manifest = await readManifest(ctx.cwd).catch(() => undefined);
     if (!manifest) return;
     registerConnectors(pi, manifest.connectors);
+    const next = pending[NEXT_STEP];
+    if (event.reason === "reload" && next) {
+      delete pending[NEXT_STEP];
+      if (next.root === ctx.cwd) ctx.ui.notify(next.text, "info");
+    }
     // "declined" in the project file is from older versions, which stored the answer there.
     if (event.reason !== "startup" || ctx.mode !== "tui" || manifest.setup === "done" || manifest.setup === "declined") return;
     // Only at startup, so Later or Esc asks again on the next launch and not before.

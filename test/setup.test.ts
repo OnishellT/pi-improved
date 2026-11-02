@@ -262,18 +262,27 @@ test("setup_finish accepts an empty verify list when no check can run here, runs
   assert.deepEqual([manifest.setup, manifest.verify], ["done", []]);
 });
 
-test("setup_finish ends with the next step: /models when no Review model is set, else /task", async () => {
-  for (const [models, next] of [[undefined, /Next: \/models to pick a Review model \(without one, no review runs\), then \/task/], [{ review: "p/strong" }, /Next: \/task <what to do>\./]] as const) {
-    const root = await tempProject(documented);
-    await updateManifest(root, (m) => {
-      m.setup = "running";
-      m.models = models;
-    });
-    const { pi, tools } = fakePi();
+test("after the reload that ends /setup, a notice gives the next step: /models when no Review model is set, else /task", async () => {
+  for (const [models, next] of [[undefined, "Setup done. Next: /models to pick a Review model (without one, no review runs), then /task <what to do>."], [{ review: "p/strong" }, "Setup done. Next: /task <what to do>."]] as const) {
+    const root = await tempProject({ "package.json": "{}", ".pi/workflow.json": JSON.stringify({ language: "English", ...(models ? { models } : {}) }) });
+    const { pi, commands } = fakePi();
     registerSetup(pi);
-    const result = await tools.get("setup_finish").execute("1", { verify: ["true"], summary: "s" }, undefined, undefined, ctxFor(root, [true]).ctx);
-    assert.match(result.content[0].text, next);
-    if (models) assert.doesNotMatch(result.content[0].text, /\/models/);
+    const notices: string[] = [];
+    // The reloaded runtime is a fresh copy of the extension: only its session_start can show anything.
+    const reload = async () => {
+      const fresh = fakePi();
+      registerSetup(fresh.pi);
+      const after = ctxFor(root, []);
+      (after.ui as any).notify = (m: string) => void notices.push(m);
+      await fresh.emit("session_start", { reason: "reload" }, after.ctx);
+    };
+    // The model's run ends with setup_finish, which terminates it: nothing the tool result asks gets said.
+    const { ctx } = fakeCtx(root, ["No more", "No"], { mode: "tui", reload, waitForIdle: () => updateManifest(root, (m) => void (m.setup = "done")) });
+    await commands.get("setup").handler("", ctx);
+    assert.deepEqual(notices, [next]);
+    // Shown once: a later reload says nothing.
+    await reload();
+    assert.deepEqual(notices, [next]);
   }
 });
 
