@@ -147,6 +147,17 @@ test("a Nix outage in verify is \"did not run\": nothing is committed, pushed or
   assert.ok(!inner.has("git", "commit") && !inner.has("git", "push"));
 });
 
+test("an unreadable .pi/workflow.json stops /pr as \"verify did not run\" instead of skipping verify", async () => {
+  const inner = setup({ dirty: " M .pi/workflow.json\n" });
+  const asked: string[] = [];
+  const ui = { ...fakeUI([true, true]), confirm: async (t: string) => (asked.push(t), true) };
+  const out = await runPr(inner.exec, await tempProject({ ".pi/workflow.json": "<<<<<<< HEAD\n{" }), ui as any);
+  assert.equal(out.status, "not-ready");
+  assert.match(out.detail, /^Verify did not run, so nothing was committed or pushed: \.pi\/workflow\.json could not be read \(.+\)\. Fix the file, then run \/pr again\.$/);
+  assert.deepEqual(asked, []);
+  assert.ok(!inner.has("git", "commit") && !inner.has("git", "push"));
+});
+
 test("the preview lists the local evidence files and says they are not pushed; the body never mentions them", async () => {
   const root = await tempProject({ ".pi/workflow.json": JSON.stringify({ version: 1, setup: "done", verify: [], connectors: [] }), ".pi/evidence/b.log": "x", ".pi/evidence/shots/a.png": "x" });
   const notes: string[] = [];
