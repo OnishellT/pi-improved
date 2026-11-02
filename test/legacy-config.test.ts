@@ -31,12 +31,12 @@ test("pi's settings.json is never renamed: the notice says to remove the key", a
   await fs.access(path.join(dir, "settings.json"));
 });
 
-test("the project's .pi/self-compact.json is renamed after the move, and when workflow.json already has the key", async () => {
+test("the project's .pi/self-compact.json stays in place, so no backup lands in the repository, and the notice asks to delete it", async () => {
   const root = await tempProject({ ".pi/self-compact.json": JSON.stringify({ default: { force: "80%" } }) });
-  assert.match(migrateProject(root)[0], /^Moved \.pi\/self-compact\.json into \.pi\/workflow\.json \(old file renamed to \.pi\/self-compact\.json\.migrated\)\.$/);
-  assert.deepEqual((await fs.readdir(path.join(root, ".pi"))).sort(), ["self-compact.json.migrated", "workflow.json"]);
-  await fs.writeFile(path.join(root, ".pi/self-compact.json"), "{}");
-  assert.match(migrateProject(root)[0], /no longer read \(\.pi\/workflow\.json has selfCompact\)/);
+  assert.deepEqual(migrateProject(root), ["Moved .pi/self-compact.json into .pi/workflow.json. Delete .pi/self-compact.json: it is no longer read."]);
+  assert.deepEqual((await fs.readdir(path.join(root, ".pi"))).sort(), ["self-compact.json", "workflow.json"]);
+  assert.deepEqual(migrateProject(root), [".pi/self-compact.json is no longer read (.pi/workflow.json has selfCompact). Delete it."]);
+  assert.deepEqual((await fs.readdir(path.join(root, ".pi"))).sort(), ["self-compact.json", "workflow.json"]);
   assert.equal(JSON.parse(await fs.readFile(path.join(root, MANIFEST_PATH), "utf8")).selfCompact.default.force, "80%");
 });
 

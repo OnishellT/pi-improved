@@ -86,17 +86,14 @@ export function migrateProject(root: string): string[] {
     if (error.code !== "ENOENT") return []; // an invalid workflow.json is reported elsewhere; it is not overwritten
   }
   if (!isObject(own)) return [];
-  if (Object.hasOwn(own, "selfCompact")) {
-    const suffix = retire(old);
-    return [suffix ? retired(".pi/self-compact.json", "selfCompact", MANIFEST_PATH, suffix) : `.pi/self-compact.json is no longer read (${MANIFEST_PATH} has selfCompact). Delete it.`];
-  }
+  // The project file is never renamed: a backup inside the repository would show up in git status and in /pr's commit.
+  if (Object.hasOwn(own, "selfCompact")) return [`.pi/self-compact.json is no longer read (${MANIFEST_PATH} has selfCompact). Delete it.`];
   try {
     writeFileAtomic(file, `${JSON.stringify({ ...own, selfCompact: value }, null, 2)}\n`);
   } catch {
     return [];
   }
-  const suffix = retire(old);
-  return [suffix ? moved(".pi/self-compact.json", MANIFEST_PATH, suffix) : `Moved .pi/self-compact.json into ${MANIFEST_PATH}. Delete .pi/self-compact.json: it is no longer read.`];
+  return [`Moved .pi/self-compact.json into ${MANIFEST_PATH}. Delete .pi/self-compact.json: it is no longer read.`];
 }
 
 /** Both migrations; `root` left out migrates only the global files. Safe to call from every extension at startup: once a key is in place it moves nothing and says nothing. */

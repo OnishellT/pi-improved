@@ -216,10 +216,10 @@ test("migration copies only the keys the global file lacks, and never writes ove
 test("migration: a project's .pi/self-compact.json moves into its workflow.json once, without setup defaults", async () => {
   const root = await tempProject({ ".pi/self-compact.json": JSON.stringify({ models: { "a/b": { force: "70%" } } }) });
   const notices = migrateProject(root);
-  assert.match(notices[0], /Moved \.pi\/self-compact\.json into \.pi\/workflow\.json \(old file renamed/);
+  assert.match(notices[0], /Moved \.pi\/self-compact\.json into \.pi\/workflow\.json\. Delete \.pi\/self-compact\.json/);
   assert.deepEqual(await read(path.join(root, MANIFEST_PATH)), { selfCompact: { models: { "a/b": { force: "70%" } } } });
-  assert.equal(JSON.parse(await fs.readFile(path.join(root, ".pi/self-compact.json.migrated"), "utf8")).models["a/b"].force, "70%");
-  assert.deepEqual(migrateProject(root), []);
+  assert.equal(JSON.parse(await fs.readFile(path.join(root, ".pi/self-compact.json"), "utf8")).models["a/b"].force, "70%");
+  assert.match(migrateProject(root).join(), /^\.pi\/self-compact\.json is no longer read/);
   const m = await readManifest(root);
   assert.deepEqual([m.setup, m.selfCompact], ["pending", { models: { "a/b": { force: "70%" } } }]);
 
