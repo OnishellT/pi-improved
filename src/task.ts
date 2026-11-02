@@ -31,7 +31,7 @@ const TRACKERS = ["jira", "linear"];
 const tell = (ctx: any, message: string, level: "info" | "warning" | "error" = "info") => {
   ctx.ui.notify(message, level);
   if (ctx.hasUI) return;
-  console.error(`[pi-improved] ${message}`);
+  console.error(`[pi-improved] ${message.replace(/\s*\n\s*/g, " ")}`);
   if (level === "error") process.exitCode = 1;
 };
 /** What the user can do next with a task: only an implementing one can be called done. */
