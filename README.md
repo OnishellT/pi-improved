@@ -1,53 +1,100 @@
 # pi-improved
 
-Automatic project setup for Pi, so cheap models work with good context. The cheap model implements, code gates each step, and the strong model and the person step in only where they add value.
-
-## Install
-
-Requirements: Linux or macOS, Node >= 22.19 and **[Nix](https://nixos.org/download/)**. `pi install` itself runs git and npm, so both must be on your PATH (the flake's pi below has them). Nix is mandatory: tmux (the review and plan-check subagents run in tmux sessions), git, gh, bash and the headless Chromium for `show` and the isolated browser come from one pinned nixpkgs (the rev in `flake.lock`), downloaded on first use and cached by Nix, so nothing else has to be installed or kept in step. On Linux and WSL (needs systemd): `curl --proto '=https' --tlsv1.2 -L https://nixos.org/nix/install | sh -s -- --daemon`. On macOS: `curl --proto '=https' --tlsv1.2 -L https://nixos.org/nix/install | sh`. Intel Macs have no headless Chromium in nixpkgs, so `show` on HTML and the isolated browser are unavailable there. Without Nix, those features say so with the command for your OS, and `/doctor` reports it. Your own ssh stays the system's, `tern` and the desktop tools are not packaged, and the browser `/computer` can drive in relay mode is the one you installed. The rest ships with the package, including the [pi-subagent](https://github.com/OnishellT/pi-subagent) CLI (a fork that passes `PI_CODING_AGENT_DIR` to its children) and [agentlint](https://github.com/aurelienbobenrieth/agentlint). A pi-subagent installed in pi itself wins over the bundled one and keeps its own widget and `/subagent`.
+A pi extension that sets up your project so cheap models work with good context. The cheap model implements, code gates each step, and a strong model and you step in only where they add value.
 
 ```sh
 pi install git:github.com/OnishellT/pi-improved
 ```
 
-git over https uses one login, `gh auth login` (gh comes from Nix: without gh on your PATH, run `nix --extra-experimental-features 'nix-command flakes' run nixpkgs#gh -- auth login`): when your git has no helper Nix git can run for github.com (a helper given by name such as `libsecret` or `osxkeychain` is not found by it), pi-improved passes gh's helper on that one call and writes nothing to your git config.
+Then, in your project:
 
-To get pi itself, pinned and with its tools, from this repo's flake (nixpkgs `pi-coding-agent` with Node 22, git, tmux and gh on its PATH; x86_64-linux, aarch64-linux, aarch64-darwin):
+1. `/doctor` checks Node, Nix, the logins and the models. The first run downloads the Nix packages.
+2. `/models` picks a model per phase. Do it first if you want a stronger model for setup, or a review model (without one, no review runs). `/setup` says which model it runs on.
+3. `/setup` scans the repo, asks a few questions, and writes `AGENTS.md`, skills, ADRs and the verify steps. Pi offers it when you open a project without setup.
+4. `/task <what to do>` plans, implements, verifies, and asks you to confirm.
+
+Every command is in [Commands](#commands). The full flow is in [docs/WORKFLOW.md](docs/WORKFLOW.md).
+
+## Requirements
+
+- Linux or macOS, Node >= 22.19, git and npm on your PATH.
+- [Nix](https://nixos.org/download/), recommended. It provides tmux (the review and plan-check subagents), git, gh, bash and the headless Chromium (`show` on HTML or SVG, the isolated browser), all from the nixpkgs pinned in `flake.lock`. Without it those features are off, they say so with the install command for your OS, and `/doctor` reports it.
+  - Linux and WSL (needs systemd): `curl --proto '=https' --tlsv1.2 -L https://nixos.org/nix/install | sh -s -- --daemon`
+  - macOS: `curl --proto '=https' --tlsv1.2 -L https://nixos.org/nix/install | sh`
+  - Intel Macs have no headless Chromium in nixpkgs, so `show` on HTML and the isolated browser do not work there.
+- For pushes and `/pr`: one login, `gh auth login`. Without gh on your PATH: `nix --extra-experimental-features 'nix-command flakes' run nixpkgs#gh -- auth login`. Your git config is never changed.
+
+Not packaged: your ssh, `tern`, the desktop tools, and the browser `/computer` drives in relay mode. pi-subagent and agentlint ship with the package.
+
+Pi itself, pinned with Node 22, git, tmux and gh, from this repo's flake (x86_64-linux, aarch64-linux, aarch64-darwin):
 
 ```sh
 nix profile install github:OnishellT/pi-improved
 pi install git:github.com/OnishellT/pi-improved
 ```
 
-Both ways work: the flake is for a stable pi, and pi's own latest release does too.
+To try it from a clone: `npm install`, then `pi -e <clone>`. Run `npm install` again after every pull.
 
-To try without installing: `npm install` in your clone, then `pi -e <path to your clone>`. pi does not install a local path's dependencies, so run `npm install` there again after every pull.
+## Commands
 
-## Use
+| Command | What it does | When |
+|---|---|---|
+| `/doctor` | Checks the environment: Node, Nix and its packages, git and gh logins, subagent, agentlint and Bend when used, and that each configured model is available. Lists the config files in effect, bad values and keys it did not read. Shows a status while it runs. | After install, and when something fails. |
+| `/models [project]` | Picks a model per phase (`setup`, `implement`, `review`, `escalate`). Pick a phase, then its model, until Done. Esc saves nothing. Saved in the global file; `/models project` saves for this project only. | Before `/setup`, or when no review model is set. |
+| `/setup` | Scans the repo, asks the minimum, then has the model write `AGENTS.md`, domain skills, ADRs, a verify-app skill and the `verify` steps. You approve the result. | Once per repo. |
+| `/task <text \| KEY-1 \| spec.md>` | Plans and implements a task, then verifies it. `/task` alone shows the task and what to do next. `continue`, `done` and `cancel` act on it. | For any change you want planned and gated. |
+| `/verify` | Runs the project's `verify` steps by hand. Says "Verify did not run" when Nix or the toolchain could not start. | After a fix, before `/task done`. |
+| `/pr [base]` | Prepares the branch and the PR: summary, verify report, risk, ADRs, decisions. Commits, pushes and opens only after you confirm. | When the task is done. |
+| `/retro [n]` | Reviews the last finished tasks and proposes edits to `AGENTS.md`, ADRs or skills. Writes nothing without your yes. | After the reminder, or whenever you want. |
+| `/cost` | Cost, tokens and risk of the active task. With no active task, the latest finished tasks. | During a task. |
+| `/metrics` | Cost, tokens, time and review of the last 10 finished tasks. | To compare tasks. |
+| `/skills` | Picks the skills of one phase at a time. Esc leaves without saving. | To tune what each phase reads. |
+| `/computer` | Picks the browser and desktop the agent can drive. Off until you choose ([docs/COMPUTER.md](docs/COMPUTER.md)). | When the agent must use a browser or desktop. |
+| `/subagent` | Shows a subagent of this session: focuses or opens its pane in tmux or Tern. | To watch or steer a review or plan check. |
+| `/self-compact-info` | Shows the compaction thresholds and the context use. | To check the thresholds. |
+| `/self-compact-now [note]` | Compacts now with the configured summary rules and your note. Does not resume. | Before a new piece of work. |
 
-In your project:
+The usage report script (cost per day, model and subagent, from pi's session files) is in [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md#scripts).
 
-1. `/setup`: scan the repo, ask the minimum, then have the model write `AGENTS.md`, domain skills, ADRs and a verification skill. Pi offers it when you open a project without setup.
-2. `/models`: pick a model per phase (`setup`, `implement`, `review`, `escalate`). Saved in `.pi/workflow.json`.
-3. `/task <description or PAY-142>`: plan, implement, then confirm. The plan has no approval dialog: its open questions are asked while planning, and once it passes the gates the agent implements it. Code gates the end on `verify`, then a read-only review runs if the diff is high risk (set `models.review`; `review.minLevel` changes the level). The done dialog lists every file the task changed (ignored files left out, as in a commit), with its status and +/- lines, before you confirm. `/task done` closes the task by hand, `/task cancel` drops it.
-4. `/doctor`: show which config files are in effect, report limits and keys that were not read, check Node, subagent, Nix and the packages it provides (tmux, git, gh, bash, the headless browser; the first run downloads them), the git and gh logins for github.com, agentlint when the project uses it, Bend when the project keeps `LAWS.bend`, option values and skill names, and that each configured model is listed for a provider you are logged in to (if one is missing, run `/login <provider>`). It does not call the models, so one your account cannot use only fails on its first call.
+### Tools the agent gets
 
-`/pr [base]` prepares the branch and the PR with the static check results. `/cost` shows the active task's spend and `/metrics` the finished tasks'. `/verify` runs verification by hand. `/skills` picks the skills injected per phase. `/computer` picks the browser and desktop the agent can drive, off until you choose ([docs/COMPUTER.md](docs/COMPUTER.md)). The agent can show pictures in the chat: images, charts it plots, and HTML or SVG mockups (those use the headless Chromium from Nix).
+- `ask_user`: asks you a question, with options or open. Without a UI it tells the agent to choose and say so.
+- `task_plan`: records the plan of the active task. `setup_finish`: ends `/setup`. `understanding_done`: ends the understanding check.
+- `show`: shows a picture in the chat (images, charts it plots, HTML or SVG mockups). Terminals with the Kitty or iTerm2 image protocol draw it: Tern, Kitty, Ghostty, WezTerm, iTerm2, not inside tmux. Elsewhere, with pi's `terminal.showImages` off, and in `pi -p`, the picture is saved and the agent is told you saw only its path. In RPC mode the client gets the file.
+- `self_compact`: ends the turn so pi compacts and the agent resumes.
+- With `/computer`: the MCP servers `browser`, `my-browser` and `desktop`.
 
-### Self-compaction
+## How a task runs
 
-The `self-compact` extension tracks context usage and lets the agent request compaction with a handoff note. Calling `self_compact` ends the agent's turn; once the run is over pi compacts with the note, then sends a message that resumes the agent. When the compaction fails, pi shows the error and resumes the agent with it; after two failures in a row it stops compacting (forced or scheduled, and `self_compact` answers that it is not compacting) until a compaction succeeds. Escape drops the compaction, with no resume. At the force threshold the next tool call is blocked and the model is told to call `self_compact` with a note; if it does not, its next calls end the run and pi compacts and resumes without a note. When the agent's final answer crosses the threshold, pi compacts after the run and does not resume. `/compact` and `/self-compact-now` never resume. Configure soft notice, warning, and hard-limit thresholds with `--compact-notice`, `--compact-warning`, `--compact-force` (token counts or percentages, default 75%/85%/90%), and `--compact-buffer` for tokens kept free below the model limit (a token count such as `32k`, default 0), and `--compact-prompt` for the summary instructions. Per-model and project defaults are the `selfCompact` key of `~/.pi/agent/pi-improved.json` and of the project's `.pi/workflow.json` (schema: `{ default: { notice?, warning?, force?, buffer?, prompt? }, models: { "provider/model": {...} } }`); each file's profile for the model is resolved first, then the project's values win. The old `self-compact.json` files (global and `.pi/`) are copied into those keys once at startup and no longer read. The footer shows context usage and threshold markers. By default the summary keeps the latest request word for word and what failed, and drops tool output the work already used; a `prompt` replaces these rules. Use `/self-compact-info` to check current thresholds and `/self-compact-now [note]` to compact manually. Enforcement is skipped, with a one-time error, when thresholds are misordered, the buffer is not smaller than the context window, or force is at or above the context window minus the buffer. After a failed forced compaction, or one that leaves usage at the force threshold, it does not force again until usage drops below it.
+The plan has no approval dialog. Its open questions are asked while planning; Esc on one pauses the plan, and `/task continue` resumes it. Once the plan passes the gates, the agent implements it.
 
-Stages, gates, checks and internals: [docs/WORKFLOW.md](docs/WORKFLOW.md).
+At the end, code runs the `verify` steps. When the diff is risky enough (`review.minLevel`, default `high`) and a review model is set, a read-only review starts alongside verify. A failing verify goes back to the agent: the 2nd failure diagnoses, the 3rd moves to the `escalate` model, and after the retries you decide.
 
-## State
+The done dialog lists every file the task changed (ignored files left out, as in a commit), with its status and +/- lines, and one line on the risk and the review. You confirm, then an understanding check asks 2-3 questions about the change (`understanding`; answer "skip" to skip it). `/task done` closes the task by hand, `/task cancel` drops it. Every 5 finished tasks a notice suggests `/retro`.
+
+## Self-compaction
+
+The agent can end its turn with `self_compact` and a handoff note. Pi then compacts and resumes the agent on its own. `/compact` (pi's own) and `/self-compact-now` never resume.
+
+- Thresholds: notice, warning and force, default 75%, 85% and 90% of the context. At the force threshold the next tool call is blocked until the agent compacts.
+- Pi's footer stays. From the notice threshold on, a status entry reads `context 77% (notice) · compacts at 90%`.
+- When a compaction fails, the agent resumes with the error. After two failures in a row, compaction is off and the status reads `compaction off after 2 failures (run /compact to retry)`. A compaction that succeeds turns it back on.
+- `/self-compact-now [note]` uses the configured summary rules (`prompt`) plus your note. `/compact [instructions]` does not use them. If a compaction is already running, `/self-compact-now` says so and does nothing.
+
+Flags: `--compact-notice`, `--compact-warning`, `--compact-force` (token counts or percentages), `--compact-buffer` (tokens kept free below the model limit, such as `32k`, default 0) and `--compact-prompt` (summary instructions). The `selfCompact` key sets the same per model. Details: [docs/WORKFLOW.md](docs/WORKFLOW.md#self-compaction).
+
+## Config
 
 Two files hold the options:
 
-- `.pi/workflow.json` (versioned in git) is the project's. It also holds the state `/setup` writes.
-- `<agent dir>/pi-improved.json` (`~/.pi/agent`, or `PI_CODING_AGENT_DIR`) is yours, for every project. It takes any key of the table below except the state keys (`version`, `setup`, `language`, `startedAt`, `completedAt`, `verify`, `agentlint`, `connectors`), which belong to one repo and are ignored there. `/computer` writes to it.
+- `.pi/workflow.json` is the project's. It is committed to git, and it also holds the state `/setup` writes.
+- `<agent dir>/pi-improved.json` (`~/.pi/agent`, or `PI_CODING_AGENT_DIR`) is yours, for every project. It takes any key of the table below except the state keys: `version`, `setup`, `startedAt`, `completedAt`, `verify`, `agentlint`, `agentlintStep`, `agentlintDeclined`, `connectors`, `declinedConnectors`. `language` may sit there as the default for every new `/setup`; the project's value wins. `/models` and `/computer` write to it.
 
-The project file wins over the global one. Plain objects merge key by key (`models`, `review`, `limits`, `limits.fastPath`, `skills`, `selfCompact`); arrays and scalars are replaced. Commands that save (`/setup`, `/models`, `/skills`) write the project file only, and only what changed, so your global values are not copied into the repo. A `null` in the project file unsets a value the global file sets (`"models": { "review": null }` is what `/models` writes when you pick the session model for that phase). A bad `limits` value is dropped in its own file, so a bad project value falls back to the global one, then to the default. A global file that is not valid JSON counts as empty, with a notice at session start. `/doctor` lists both files, names the file that holds a bad value, and reports what it did not read, including `computer` or `subagentPanes` set in a project file (only the global file is read for those). The agent's write and edit tools cannot change the global file.
+The project file wins over the global one. Plain objects merge key by key (`models`, `review`, `limits`, `limits.fastPath`, `skills`, `selfCompact`); arrays and scalars are replaced. `/setup` and `/skills` write the project file only, and only what changed, so your global values are not copied into the repo. `/models` writes the global file, unless the project file already sets that phase or you run `/models project`. A `null` in the project file unsets a value the global file sets (`"models": { "review": null }` is what `/models project` writes when you turn Review off for this project).
+
+A bad value is dropped in its own file, so a bad project value falls back to the global one, then to the default. A global file that is not valid JSON counts as empty, with a notice at session start. `/doctor` names the file that holds a bad value (wrong type or out of range), and reports keys it did not read: unknown keys in `.pi/workflow.json` (a typo such as `modles`), state keys in the global file, and `computer` or `subagentPanes` in a project file. The agent's write and edit tools cannot change either file.
+
+Old config files are moved in once at startup. `computer.json` and `self-compact.json` in the agent dir are renamed to `<name>.migrated`. A project's `.pi/self-compact.json` is copied, and the notice asks you to delete it. `subagentPanes` in pi's `settings.json` is copied, and the notice asks you to remove it there.
 
 `.pi/workflow.json`:
 
@@ -55,94 +102,50 @@ The project file wins over the global one. Plain objects merge key by key (`mode
 { "version": 1, "setup": "done", "language": "English", "verify": ["npm run test"], "connectors": [{ "id": "jira", "mcp": { "url": "…" } }] }
 ```
 
-Every key the code reads. Setup and `/models` write most of them; the rest you edit by hand. The keys from `mode` on may also sit in the global file.
+Every key the code reads. `/setup` writes the state keys, `/models`, `/skills` and `/computer` write theirs, and you edit the rest by hand. The keys from `language` on may also sit in the global file.
 
 | Key | Type | Default | Effect |
 |---|---|---|---|
 | `version` | `1` | `1` | Format version. |
-| `setup` | `pending` \| `running` \| `done` \| `declined` | `pending` | Setup state. Gates run only when `done`. |
-| `language` | string | asked in `/setup` | Language of setup questions and docs. |
+| `setup` | `pending` \| `running` \| `done` | `pending` | Setup state. Gates run only when `done`. Older versions wrote `declined`; it is still read. "Don't ask again" on the setup offer is now kept for you only, in `<agent dir>/pi-improved-state.json`, never in the repo. |
 | `startedAt`, `completedAt` | ISO date | set by `/setup` | When setup started and finished. |
-| `verify` | string[] | `[]` | Shell commands run in order at the end of a task and by `/verify`. No commands, no gate. |
+| `verify` | string[] | `[]` | Shell commands run in order at the end of a task and by `/verify`. With none, nothing checks the change: the done dialog says so, and without a UI the task stays open for `/task done`. |
 | `agentlint` | string | none | agentlint command prefix when the project enforces its rules, e.g. `pnpm agentlint`. |
 | `agentlintStep` | string | set by `/setup` | The verify step that runs agentlint; its findings get per-finding approval. |
+| `agentlintDeclined` | boolean | none | `true` once you said no to agentlint rules in `/setup`; it does not ask again. `useAgentlint: "always"` still adds them. |
 | `connectors` | `{ id, mcp?: { url } }[]` | `[]` | Ticket trackers enabled in setup. |
-| `mode` | `direct` \| `flow` | `direct` | `direct`: `/task` is optional, recommended for risky changes. `flow`: `/task` is the main route. |
-| `models` | `{ setup, implement, review, escalate }` | session model | `provider/model` per phase, set with `/models`. `escalate` falls back to `review`, then `setup`. A model review needs `models.review`. |
+| `declinedConnectors` | string[] | none | Connectors you said no to in `/setup`; it does not ask about them again. Remove an id to be asked again. |
+| `language` | string | global file, else asked in `/setup` | Language of setup questions and docs. Set it in the global file to skip the question in every repo. |
+| `models` | `{ setup, implement, review, escalate }` | see effect | `provider/model` per phase, set with `/models`. A missing `setup` or `implement` uses the session model. `escalate` falls back to `review`, then `setup`. `review` has no fallback: unset means no diff review (`/models` shows it as Off). |
 | `skills` | `{ <phase>: string[] }` | built-in lists | Skills injected per phase. Phases: `setup`, `plan`, `implement`, `diagnose`, `review`, `learn`. Set with `/skills`. |
 | `skillsOnDemand` | `{ <phase>: string[] }` | built-in lists | Skills listed as a one-line index the agent reads only if needed. |
 | `useAgentlint` | `ask` \| `always` \| `never` | `ask` | Whether `/setup` adds agentlint rules (Node projects): `ask` asks, `always` adds them without asking, `never` neither asks nor enforces them. |
 | `useBend` | `ask` \| `always` \| `never` | `ask` | Whether `/setup` offers to record pure-logic invariants as Bend laws (`LAWS.bend`): `ask` asks, `always` drafts them without asking first, `never` leaves Bend out. A project that already has `LAWS.bend` is unaffected. |
 | `basePrompt` | boolean | `true` | `false` removes the `unslop` skill and working-style lines from the main prompt. |
 | `maxReport` | number | `4000` | Characters of failing-step output kept in a verify report. Minimum 200. |
-| `contextWarn` | number | `150000` | Context tokens at which a one-time notice suggests `/compact`. `0` turns it off. |
 | `review.minLevel` | `off` \| `low` \| `high` | `high` | Risk level from which a model review runs. `off` never reviews and is reported as "not requested". Needs `models.review`. |
 | `review.always` | boolean | `false` | Always review, always check the plan. Beats `never`. Needs `models.review` for the diff review. |
 | `review.never` | boolean | `false` | Never review and never check the plan. |
 | `review.plan` | boolean | unset | `true`: check every plan. `false`: never. Unset: only when the plan is risky. |
 | `review.paths` | string[] | `[]` | Globs that count as high risk. |
 | `review.maxLines`, `review.maxFiles` | number | `200`, `6` | Above these the diff is `low` risk. |
-| `review.highLines`, `review.highFiles` | number | `600`, `15` | Above these the diff is `high` risk. |
+| `review.highLines`, `review.highFiles` | number | `600`, `15` | Above these the diff is `high` risk. `limits.changeCap` (default 500) also makes a diff high risk, and it fires first at the defaults: raise both to loosen the review trigger. |
 | `limits.interviewQuestions` | integer >= 1 | `12` | Questions the `/setup` interview asks at most. |
 | `limits.agentlintRules` | integer >= 1 | `3` | agentlint rules offered at first in `/setup`. |
-| `limits.verifyRetries` | integer >= 0 | `2` | Automatic retries after a failed verify (and after contract misses) before the person is asked. |
-| `limits.failuresBeforeEscalation` | integer >= 1 | `2` | Failed verifies after which the `escalate` model takes the attempt. |
+| `limits.verifyRetries` | integer >= 0 | `3` | Automatic retries after a failed verify (and after contract misses) before you are asked. The escalated attempt is not held back by it. |
+| `limits.failuresBeforeEscalation` | integer >= 1 | `3` | Failed verifies after which the `escalate` model takes the attempt, even past `verifyRetries`. The 2nd failure diagnoses on the current model; at 2 or lower both happen together. |
 | `limits.planChecks` | integer >= 0 | `1` | Paid plan checks per task. `0` turns them off. |
-| `limits.retroEvery` | integer >= 0 | `5` | A retro every this many finished tasks. `0` turns it off. |
-| `limits.verifyEvery` | integer >= 0 | `5` | While implementing, every this many writes the first `verify` command runs (60 s cap) and its result is appended to the tool result. It is off for the rest of the task once a run takes 30 s or more or times out. `0` turns it off. |
-| `limits.changeCap` | integer >= 1 | `500` | Changed lines (lockfiles and generated or vendored paths excluded) above which a change is high risk and gets a model review. |
+| `limits.retroEvery` | integer >= 0 | `5` | Shows a `/retro` reminder every this many finished tasks, and sets how many tasks `/retro` reviews. `0` turns the reminder off. |
+| `limits.verifyEvery` | integer >= 0 | `0` | Off by default. Set a number to turn on progress checks: every this many writes while implementing, the first `verify` command runs (60 s cap) and its result is appended to the tool result. It is off for the rest of the task once a run takes 30 s or more or times out. |
+| `limits.changeCap` | integer >= 1 | `500` | Changed lines (lockfiles and generated or vendored paths excluded) above which a change is high risk and gets a model review. See also `review.highLines`. |
 | `limits.fastPath.files`, `.interface`, `.decisions` | integer >= 0 | `8`, `6`, `2` | Largest plan (files, interface entries, decisions) the "Plan recorded" notice calls small; above it, the size is listed as a risk reason. |
 | `computer` | `{ browser?, desktop? }` | off | Set by `/computer` ([docs/COMPUTER.md](docs/COMPUTER.md)). Global file only: a repo cannot choose what the agent drives. |
 | `subagentPanes` | `tern` | tmux only | `tern` opens subagent panes in Tern too. Global file only. |
-| `selfCompact` | `{ default?, models? }` | see Self-compaction | Self-compact thresholds per model. |
-| `understanding` | `off` \| `end` \| `plan+end` | `plan+end` | Inside `/task`: `plan+end` asks for the user's approach to the key decisions before the plan and runs a teach-back after verify; `end` only the teach-back; `off` neither. |
+| `selfCompact` | `{ default?, models? }` | see [Self-compaction](#self-compaction) | Thresholds per model: `{ default: { notice?, warning?, force?, buffer?, prompt? }, models: { "provider/model": {...} } }`. |
+| `understanding` | `off` \| `end` \| `plan+end` | `plan+end` | Inside `/task`: `plan+end` asks for your approach to the key decisions before the plan and runs a teach-back after verify; `end` only the teach-back; `off` neither. |
 
-A `limits` value that is not a whole number in range falls back to its default, and `/doctor` reports it.
-
-`.pi/task.json` is the active task. It is local, and setup adds it to `.gitignore`. The model's write and edit tools cannot change either file; the extension owns them.
-
-## Measuring cost
-
-`node scripts/usage-report.mjs [--since YYYY-MM-DD] [--until YYYY-MM-DD] [--root ~/.pi/agent]` sums
-`usage.cost.total` from the Pi session files and prints cost per day, per model and per subagent, plus the share
-of turns by context size (big contexts are where cost hides). Unreadable or unpriced data is listed as warnings,
-never as an error. Compare two periods with `--since/--until`.
+`.pi/task.json` is the active task. It is local, and setup adds it to `.gitignore`.
 
 ## Development
 
-Node >= 22.19 runs the `.ts` sources and tests directly, no build step.
-
-```sh
-npm test            # node --test test/*.test.ts
-npm run typecheck   # tsc -p .
-pi -e .             # try the extension from this checkout
-```
-
-Scripts in `scripts/`:
-
-- `postinstall.mjs`: copies the pi-subagent CLI out of `node_modules` into `.bundled/` (Node will not run TypeScript from `node_modules`). Warns on failure, never fails the install.
-- `usage-report.mjs`: the cost report above.
-- `skill-tokens.mjs [--json]`: skill sizes per phase and per skill.
-- `review-pr.ts <pr>`: the local pull request reviewer, below.
-
-### Reviewing pull requests
-
-`npm run review -- <pr> [--dry-run] [--force]` (run from a checkout with a git remote for the PR's repository) reviews a PR with pi and posts
-one GitHub review: inline comments, a summary and a confidence score from 1 (must not merge) to 5 (safe to merge).
-The reviewer reads the PR head in a throwaway worktree, read-only, with an empty home and no secrets in its environment.
-Its context is `README.md`, `docs/*.md`, any `CLAUDE.md`, `AGENTS.md` and `CONTRIBUTING.md`, the PR text, the linked
-issue, earlier review threads and the diff. Follow-up rounds judge only what changed since the last reviewed commit
-(a rebase onto a newer base or a rewritten history makes the round a full review, and the summary says so);
-a head that already has a review is skipped, and a fourth round needs `--force` unless the last review had confidence 4 or more. Markdown-only PRs are skipped (unless an earlier review is waiting on the code changed since)
-by design (there is no code to review).
-`--dry-run` prints the review instead of posting it, and it ignores both gates.
-
-It needs pi signed in to the reviewer's provider. Defaults: provider `openai`, model `gpt-6.1-terra`, thinking `xhigh`;
-override with `REVIEW_PROVIDER`, `REVIEW_MODEL` and `REVIEW_THINKING`. A run is killed after `REVIEW_TIMEOUT_MS`
-(10 minutes) or `REVIEW_IDLE_MS` without output (2 minutes). It keeps its own pi profile in
-`~/.pi/reviewer-pi-improved` (`REVIEW_PI_DIR`), rebuilt from `scripts/review/pi-settings.json`, with `auth.json`
-(and `models-store.json` when present) symlinked from the main pi dir: `PI_MAIN_DIR`, else `PI_CODING_AGENT_DIR`,
-else `~/.pi/agent`. A context over 1,000,000 characters stops the run before the model is called. The prompt and
-settings are read from the PR's base branch, so a PR cannot change the reviewer that judges it.
-
-pi-subagent is pinned to a commit in `package.json`; bump the sha deliberately. `package-lock.json` pins the rest; CI runs `npm ci`, the type check and the tests. Module map: [docs/WORKFLOW.md](docs/WORKFLOW.md#internals).
+Tests, scripts and the pull request reviewer: [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md).
