@@ -52,7 +52,10 @@ export function parsePiStream(stream: string): PiAnswer {
 }
 
 // A subscription, quota or billing limit: it resets in hours, so retrying it only wastes time.
-const usageLimit = /usage[ _]limit|quota|billing|out of budget|available balance/i;
+// Plain "quota" or "billing" is not enough (a transient error may mention either); the
+// machine-readable codes keep their underscores.
+const usageLimit =
+  /usage[ _]limit|insufficient_quota|quota[ _]exceeded|exceeded[\w ]{0,40}quota|billing_hard_limit|billing (?:hard )?limit|out of budget|available balance/i;
 
 export interface RunOutcome {
   code: number;
@@ -75,15 +78,17 @@ export function runFailure(
 ): RunFailure | undefined {
   const knobs = `raise REVIEW_TIMEOUT_MS (now ${limits.timeoutMs}) or REVIEW_IDLE_MS (now ${limits.idleMs}) and run again`;
   if (run.killed === "total") {
-    // The same limit would stop a second try at the same point.
+    // The time limit covers the whole review, so no time is left for a second try.
     return { problem: `stopped after ${Math.round(limits.timeoutMs / 1000)}s in total; ${knobs}`, retry: false };
   }
   if (run.killed === "idle") {
     return { problem: `stopped after no output for ${Math.round(limits.idleMs / 1000)}s; ${knobs}`, retry: true };
   }
   if (answer.error !== undefined) {
-    const text = answer.error.replace(/\s+/g, " ").trim().slice(0, 300);
-    return usageLimit.test(text)
+    // Classified on the whole text: the limit may be explained after the part that is shown.
+    const full = answer.error.replace(/\s+/g, " ").trim();
+    const text = full.slice(0, 300);
+    return usageLimit.test(full)
       ? {
           problem: `provider usage limit: ${text}\nWait for the limit to reset, or pick another reviewer with REVIEW_PROVIDER and REVIEW_MODEL.`,
           retry: false,

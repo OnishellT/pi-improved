@@ -6,8 +6,8 @@ export function reviewConfig(env: Record<string, string | undefined>, home: stri
     provider: env["REVIEW_PROVIDER"] ?? "openai",
     model: env["REVIEW_MODEL"] ?? "gpt-6.1-terra",
     thinking: env["REVIEW_THINKING"] ?? "xhigh",
-    // Total time of one reviewer run. Stalls are caught by idleMs, so this only bounds a run
-    // that keeps working; reviews of mid-size PRs at xhigh have taken 11-48 minutes.
+    // Total time of one review, retries included. Stalls are caught by idleMs, so this only
+    // bounds a review that keeps working; reviews of mid-size PRs at xhigh have taken 11-48 minutes.
     timeoutMs: Number(env["REVIEW_TIMEOUT_MS"] ?? 60 * 60_000),
     idleMs: Number(env["REVIEW_IDLE_MS"] ?? 120_000),
     // Dedicated read-only pi profile, rebuilt from the repo's settings on every run.
@@ -15,6 +15,11 @@ export function reviewConfig(env: Record<string, string | undefined>, home: stri
     // The owner's pi profile, whose credentials the reviewer profile links to.
     piMainDir: env["PI_MAIN_DIR"] ?? env["PI_CODING_AGENT_DIR"] ?? join(home, ".pi", "agent"),
   };
+}
+
+// Time left for one reviewer run: REVIEW_TIMEOUT_MS bounds the whole review, retries included.
+export function remainingMs(deadline: number, now: number): number {
+  return Math.max(0, deadline - now);
 }
 
 export const usageLine = "usage: npm run review -- <pr> [--dry-run] [--force]";

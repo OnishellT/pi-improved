@@ -75,3 +75,14 @@ test("a timeout names both limits; only the idle one is retried", () => {
   assert.deepEqual(runFailure({ code: 0, err: "" }, empty, limits), { problem: "empty answer", retry: true });
   assert.deepEqual(runFailure({ code: 2, err: "boom\n" }, empty, limits), { problem: "exit 2: boom", retry: true });
 });
+
+test("a usage limit is found past the shown text; a transient error that mentions quota or billing is retried", () => {
+  const late = `${"x ".repeat(200)}You exceeded your current quota.`;
+  assert.equal(runFailure({ code: 0, err: "" }, parsePiStream(providerError(late)), limits)?.retry, false);
+  for (const code of ["insufficient_quota", "quota_exceeded", "billing_hard_limit_reached"]) {
+    assert.equal(runFailure({ code: 0, err: "" }, parsePiStream(providerError(`error: ${code}`)), limits)?.retry, false, code);
+  }
+  for (const transient of ["503 billing service unavailable", "quota service timed out, try again"]) {
+    assert.equal(runFailure({ code: 0, err: "" }, parsePiStream(providerError(transient)), limits)?.retry, true, transient);
+  }
+});
