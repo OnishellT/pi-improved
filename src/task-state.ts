@@ -52,6 +52,8 @@ export interface Task {
   model?: string;
   /** Set when the gate sent the understanding check: `tree` is the snapshot verify last passed on, the only one `understanding_done` may close. */
   understanding?: { tree: string };
+  /** The verify steps in run order, saved when the task starts: the gate asks before it runs a list the task changed. Absent in tasks saved before it existed. */
+  savedVerify?: string[];
   startedAt: string;
   completedAt?: string;
 }
@@ -111,6 +113,12 @@ export async function updateTask(root: string, change: (task: Task) => void): Pr
   change(task);
   await writeTask(root, task);
   return task;
+}
+
+/** pi-improved changed the verify steps itself (/setup, the added agentlint step): the active task's saved list follows, so the gate does not ask about it. */
+export async function refreshSavedVerify(root: string, change: (saved: string[]) => string[]) {
+  const task = await readTask(root).catch(() => undefined);
+  if (task?.savedVerify && task.status !== "done") await writeTask(root, { ...task, savedVerify: change(task.savedVerify) });
 }
 
 /** True when `file` is listed in `files`. Entries ending in `/` cover a directory. */

@@ -4,6 +4,7 @@ import * as path from "node:path";
 import { agentlintCheck, agentlintCmd } from "./discover.ts";
 import { globalPath, globalPreferences, isObject, merge, readGlobal, withValidLimits, writeFileAtomic, writeFileAtomicAsync, type Limits } from "./config.ts";
 import { agentDir } from "./subagent-ext.ts";
+import { refreshSavedVerify } from "./task-state.ts";
 import type { ProfileFile } from "./self-compact/config.ts";
 
 export type SetupStatus = "pending" | "running" | "done" | "declined";
@@ -152,6 +153,8 @@ export async function readManifest(root: string): Promise<Manifest> {
       if (!m.verify.includes(step)) m.verify = [...m.verify, step];
       m.agentlintStep = step;
     }).catch(() => {});
+    // Added to the saved list too, not copied from the file: an edit the task made to the steps still reaches the gate's question.
+    await refreshSavedVerify(root, (saved) => [step, ...saved.filter((s) => s !== step)]).catch(() => {});
   }
   return manifest;
 }
