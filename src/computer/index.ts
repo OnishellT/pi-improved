@@ -19,7 +19,12 @@ export function describeBrowser(choice: unknown): string {
   if (typeof choice === "string") return choice;
   if (choice && typeof choice === "object" && !Array.isArray(choice)) {
     if ("mcp" in choice) return "custom MCP server";
-    if ("mode" in choice) return typeof choice.mode === "string" ? `${choice.mode}${choice.mode === "isolated" ? "" : ` (relay: ${describeBrowser((choice as { relay?: unknown }).relay ?? "auto")})`}` : "invalid";
+    if ("mode" in choice) {
+      if (typeof choice.mode !== "string") return "invalid";
+      if (choice.mode === "isolated") return "isolated";
+      const relay = describeBrowser((choice as { relay?: unknown }).relay ?? "auto");
+      return choice.mode === "relay" ? `relay (${relay})` : `${choice.mode} (relay: ${relay})`;
+    }
     const { name, portFile } = choice as { name?: unknown; portFile?: unknown };
     if (typeof portFile === "string") return `custom (${typeof name === "string" ? name : portFile})`;
   }
@@ -125,8 +130,10 @@ export async function registerComputer(pi: ExtensionAPI) {
         return;
       }
 
+      // Escape at any question cancels: nothing is saved.
       const next: ComputerConfig = { ...config };
       const mode = await ctx.ui.select(`Browser the agent can drive (now: ${describeBrowser(config.browser)})`, [KEEP, ...MODES.map(([label]) => label), OFF]);
+      if (mode === undefined) return;
       const picked = MODES.find(([label]) => label === mode)?.[1];
       if (mode === OFF) next.browser = "off";
       else if (picked) {
@@ -136,18 +143,19 @@ export async function registerComputer(pi: ExtensionAPI) {
           for (const s of browserStates()) if (s.installed || s.debugging) choices.set(`${s.name}${s.debugging ? " · remote debugging on" : ""}`, s.id);
           const chosen = await ctx.ui.select("Your browser (the one with your logins)", [...choices.keys()]);
           relay = chosen ? choices.get(chosen) : undefined;
+          if (relay === undefined) return;
         }
-        // Cancelled relay pick: keep what was there instead of guessing.
-        if (picked === "isolated") next.browser = { mode: "isolated" };
-        else if (relay !== undefined) next.browser = { mode: picked, relay };
+        next.browser = picked === "isolated" ? { mode: "isolated" } : { mode: picked, relay: relay! };
       }
 
       const missing = desktopMissing();
+      const inHyprland = missing.length > 0 && !missing.some((what) => what === "Linux" || what.startsWith("hyprctl"));
       if (!missing.length || config.desktop === "on") {
         const desktop = await ctx.ui.select(
           `Desktop: a private Hyprland session the agent drives (Pi must run inside Hyprland) (now: ${desktopState(config)}${missing.length ? `; missing: ${missing.join(", ")}` : ""})`,
           [KEEP, "On", "Off"],
         );
+        if (desktop === undefined) return;
         if (desktop === "On" || desktop === "Off") next.desktop = desktop === "On" ? "on" : "off";
       }
 
@@ -155,14 +163,17 @@ export async function registerComputer(pi: ExtensionAPI) {
       const problems = apply(next);
       // The isolated browser is left running for other sessions: turning it off is what stops it.
       const stopped = usesIsolated(config.browser) && !usesIsolated(next.browser) && (await stopIsolated());
+      // Hints only for what was just chosen, and for the browsers the dialog does not offer when it was left as it was.
+      const browserChanged = JSON.stringify(next.browser) !== JSON.stringify(config.browser);
       ctx.ui.notify(
         [
           ...(stopped ? ["The isolated browser was stopped."] : []),
-          `Browser: ${describeBrowser(next.browser)}. Desktop: ${desktopState(next)}. Config: ${globalPath()}.`,
-          ...(missing.length && next.desktop !== "on" ? [`Desktop is not offered here: it needs ${missing.join(", ")}.`] : []),
-          ...(usesRelay(next.browser) ? ["The first use of your browser asks you to approve remote debugging in it (chrome://inspect/#remote-debugging)."] : []),
-          ...(usesIsolated(next.browser) ? ["The isolated browser needs Nix; its first start downloads Chromium (run /doctor to fetch it first)."] : []),
-          "Any other Chromium browser (a port file) or MCP server (Playwright MCP…): edit that file.",
+          `Browser: ${describeBrowser(next.browser)}. Desktop: ${desktopState(next)}.`,
+          // Only on a Hyprland machine: elsewhere the desktop is not something this person can turn on.
+          ...(inHyprland && next.desktop !== "on" ? [`Desktop is not offered here: it needs ${missing.join(", ")}.`] : []),
+          ...(browserChanged && usesRelay(next.browser) ? ["The first use of your browser asks you to approve remote debugging in it (chrome://inspect/#remote-debugging)."] : []),
+          ...(browserChanged && usesIsolated(next.browser) ? ["The isolated browser needs Nix; its first start downloads Chromium (run /doctor to fetch it first)."] : []),
+          ...(mode === KEEP ? [`For another Chromium browser (a port file) or an MCP server, edit ${globalPath()}.`] : []),
           ...problems,
         ].join("\n"),
         problems.length ? "warning" : "info",

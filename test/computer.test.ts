@@ -165,9 +165,14 @@ test("/computer picks a browser from what is installed, saves it and applies it 
     assert.equal(ui.asked.length, 2, "mode, then the browser; no desktop question without Hyprland tools");
     assert.deepEqual(await readComputerConfig(p.agent), { browser: { mode: "relay", relay: "brave" } });
     assert.deepEqual(targetsOf(server(h, "browser")).map((t: any) => t.id), ["brave"]);
-    assert.match(notes[0], /Browser: relay \(relay: brave\)\. Desktop: off\./);
+    assert.match(notes[0], /^Browser: relay \(brave\)\. Desktop: off\.$/m);
     assert.match(notes[0], /approve remote debugging/);
-    assert.match(notes[0], /Desktop is not offered here: it needs .*hyprctl/);
+    assert.doesNotMatch(notes[0], /Desktop is not offered/, "not on a machine without Hyprland");
+    assert.doesNotMatch(notes[0], /edit /, "the other-browser hint is for when the browser was left as it was");
+
+    notes.length = 0;
+    await h.commands.get("computer").handler("", { ui: { ...fakeUI(["No changes"]), notify: (m: string) => notes.push(m) } });
+    assert.equal(notes[0], `Browser: relay (brave). Desktop: off.\nFor another Chromium browser (a port file) or an MCP server, edit ${path.join(p.agent, "pi-improved.json")}.`, "no hint for what did not change");
 
     await h.commands.get("computer").handler("", { ui: fakeUI(["Off"]) });
     assert.equal(server(h, "browser"), undefined);
@@ -298,6 +303,33 @@ test("cancelling every question changes nothing and writes nothing", async () =>
   });
 });
 
+test("Escape at the relay pick cancels: nothing is saved and nothing is printed", async () => {
+  const p = await person({ browser: { mode: "isolated" } });
+  await withEnv(p.env, async () => {
+    const h = fakePi();
+    await registerComputer(h.pi);
+    const notes: string[] = [];
+    await h.commands.get("computer").handler("", { ui: { ...fakeUI([RELAY, undefined]), notify: (m: string) => notes.push(m) } });
+    assert.deepEqual(await readComputerConfig(p.agent), { browser: { mode: "isolated" } });
+    assert.deepEqual(notes, []);
+  });
+});
+
+test("Escape at the browser question cancels at once, even where the desktop question would come next", { skip: process.platform !== "linux" }, async () => {
+  const p = await person();
+  for (const name of ["hyprctl", "hypruse", "dbus-run-session", "python3"]) await fs.writeFile(path.join(p.bin, name), "", { mode: 0o755 });
+  await withEnv(p.env, async () => {
+    const h = fakePi();
+    await registerComputer(h.pi);
+    const notes: string[] = [];
+    const ui = fakeUI([undefined]);
+    await h.commands.get("computer").handler("", { ui: { ...ui, notify: (m: string) => notes.push(m) } });
+    assert.equal(ui.asked.length, 1);
+    assert.deepEqual(notes, []);
+    await assert.rejects(fs.access(path.join(p.agent, "pi-improved.json")));
+  });
+});
+
 test("an mcp.json entry of the same name wins: nothing is registered or exported, and the person is told", { skip: process.platform !== "linux" }, async () => {
   const p = await person({ browser: "brave", desktop: "on" }, { mcpServers: { browser: { command: "x" }, desktop: { command: "y" } } });
   for (const name of ["hyprctl", "hypruse", "dbus-run-session", "python3"]) await fs.writeFile(path.join(p.bin, name), "", { mode: 0o755 });
@@ -394,5 +426,5 @@ test("old config values register as relay under the name `browser`", async () =>
 test("describeBrowser names the mode", () => {
   assert.equal(describeBrowser({ mode: "isolated" }), "isolated");
   assert.equal(describeBrowser({ mode: "both", relay: "brave" }), "both (relay: brave)");
-  assert.equal(describeBrowser({ mode: "relay" }), "relay (relay: auto)");
+  assert.equal(describeBrowser({ mode: "relay" }), "relay (auto)");
 });
