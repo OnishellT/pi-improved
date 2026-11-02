@@ -82,14 +82,14 @@ test("activity counts turns and tool calls, keeps the last context size, and nam
 test("runLine shows state, activity and stats; the time stops when the child goes idle", () => {
   const now = Date.parse("2026-10-27T10:01:05.000Z");
   const a = { turns: 2, tools: 5, tokens: 12_345, doing: "read" };
-  assert.equal(runLine(run("review", "busy"), a, now, 1), "⠙ [S] review · read · 2 turns · 5 tools · gpt-6-astra·medium · 12.3k tok · 1m 05s");
-  assert.equal(runLine(run("review", "busy"), { ...a, doing: "" }, now, 0), "⠋ [S] review · thinking… · 2 turns · 5 tools · gpt-6-astra·medium · 12.3k tok · 1m 05s");
-  assert.equal(runLine(run("review", "idle"), { turns: 1, tools: 1, tokens: 900, doing: "" }, now, 0), "✓ [S] review · idle · 1 turn · 1 tool · gpt-6-astra·medium · 900 tok · 30s");
-  assert.match(runLine(run("x", "starting"), a, now, 0), /^… \[S\] x · starting… · /);
-  assert.equal(runLine(run("review", "busy"), a, now, 1, undefined, 30), "⠙ [S] review · read · 2 turns…");
-  assert.equal(runLine(run("review", "busy"), a, now, 1, (c, t) => `<${c}>${t}</${c}>`, 12), "<accent>⠙ [S]</accent> revie…<muted></muted>");
+  assert.equal(runLine(run("review", "busy"), a, now, 1), "⠙ review · read · 2 turns · 5 tools · gpt-6-astra·medium · 12.3k tok · 1m 05s");
+  assert.equal(runLine(run("review", "busy"), { ...a, doing: "" }, now, 0), "⠋ review · thinking… · 2 turns · 5 tools · gpt-6-astra·medium · 12.3k tok · 1m 05s");
+  assert.equal(runLine(run("review", "idle"), { turns: 1, tools: 1, tokens: 900, doing: "" }, now, 0), "✓ review · idle · 1 turn · 1 tool · gpt-6-astra·medium · 900 tok · 30s");
+  assert.match(runLine(run("x", "starting"), a, now, 0), /^… x · starting… · /);
+  assert.equal(runLine(run("review", "busy"), a, now, 1, undefined, 30), "⠙ review · read · 2 turns · 5…");
+  assert.equal(runLine(run("review", "busy"), a, now, 1, (c, t) => `<${c}>${t}</${c}>`, 12), "<accent>⠙</accent> review · …<muted></muted>");
   const painted = runLine(run("x", "error"), a, now, 0, (c, t) => `<${c}>${t}</${c}>`);
-  assert.match(painted, /^<error>✗ \[S\]<\/error> x · error · <muted>2 turns · .* · 30s<\/muted>$/);
+  assert.match(painted, /^<error>✗<\/error> x · error · <muted>2 turns · .* · 30s<\/muted>$/);
 });
 
 test("widgetLines fits pi's 10 widget lines", () => {
@@ -104,7 +104,7 @@ test("widgetLines drops a child 5 minutes after it stopped working", () => {
   const now = Date.parse("2026-10-27T10:00:30.000Z");
   const later = (min: number) => now + min * 60_000;
   const runs = [run("busy", "busy"), run("done", "idle"), run("failed", "error")];
-  const names = (at: number, list = runs) => widgetLines(list, at, 0).map((l) => l.split(" ")[2]);
+  const names = (at: number, list = runs) => widgetLines(list, at, 0).map((l) => l.split(" ")[1]);
   assert.deepEqual(names(later(4)), ["busy", "done", "failed"]);
   assert.deepEqual(names(later(5)), ["busy"], "a working child stays however long it runs");
   assert.deepEqual(names(later(5), [{ ...runs[1], state: "busy" }]), ["done"], "and comes back when it works again");
@@ -177,7 +177,7 @@ test("/subagent opens the picked child's pane in Tern and falls back to pi-subag
     registerSubagentView(h.pi, true, { anchor: "7", backend: ternBackend(tern) }, live);
     let labels: string[] = [];
     await h.commands.get("subagent").handler("", ctx((l) => ((labels = l), l[0])));
-    assert.match(labels[0], /^✓ \[S\] facts \(a1\) · idle · 0 turns/);
+    assert.match(labels[0], /^✓ facts \(a1\) · idle · 0 turns/);
     assert.deepEqual(calls.map((c) => c.slice(0, 3)), [["split", "7", "right"], ["focus", "100"]]);
     calls.length = 0;
     await h.commands.get("subagent").handler("", ctx(() => undefined));

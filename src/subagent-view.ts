@@ -161,7 +161,7 @@ function elapsed(ms: number) {
 
 const isWorking = (r: Run) => r.state === "busy" || r.state === "starting";
 
-/** One line per child, cut to `width`: `⠋ [S] review · read · 2 turns · 5 tools · gpt-6-astra·medium · 12.3k tok · 41s`. */
+/** One line per child, cut to `width`: `⠋ review · read · 2 turns · 5 tools · gpt-6-astra·medium · 12.3k tok · 41s`. */
 export function runLine(r: Run, a: Activity, now: number, frame: number, paint: Paint = (_c, t) => t, width = Infinity): string {
   const working = isWorking(r);
   const icon = r.state === "busy" ? SPINNER[frame % SPINNER.length] : r.state === "idle" ? "✓" : r.state === "error" ? "✗" : "…";
@@ -169,7 +169,7 @@ export function runLine(r: Run, a: Activity, now: number, frame: number, paint: 
   const end = working ? now : Date.parse(r.updatedAt) || now;
   const stats = [plural(a.turns, "turn"), plural(a.tools, "tool"), r.model, `${tokens(a.tokens)} tok`, elapsed(end - Date.parse(r.createdAt))];
   const color = r.state === "idle" ? "success" : r.state === "error" ? "error" : "accent";
-  const head = `${icon} [S]`;
+  const head = icon;
   const body = ` ${r.name} · ${doing} · `;
   let text = [...`${head}${body}${stats.join(" · ")}`];
   if (text.length > width) text = [...text.slice(0, Math.max(0, width - 1)), "…"];
