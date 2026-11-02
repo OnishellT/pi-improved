@@ -4,7 +4,8 @@ import * as path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+/** The pi-improved folder (the package root), where `npm install` fetches the bundled pi-subagent. */
+export const packageRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 /** The agent dir as pi and the bundled pi-subagent read it: PI_CODING_AGENT_DIR with `~` and a file:// URL expanded, or ~/.pi/agent. */
 export function agentDir(): string {
@@ -15,7 +16,7 @@ export function agentDir(): string {
   if (dir.startsWith("file://")) return fileURLToPath(dir);
   return dir;
 }
-export const bundledExtension = () => path.join(root, ".bundled", "pi-subagent", "index.ts");
+export const bundledExtension = () => path.join(packageRoot, ".bundled", "pi-subagent", "index.ts");
 
 /** pi-subagent installed the documented way (clone into extensions/) or as a pi package. */
 export function hasGlobalSubagent(dir = agentDir()): boolean {
