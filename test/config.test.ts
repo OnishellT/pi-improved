@@ -131,8 +131,8 @@ test("/models and /skills keep values from the global file out of the repo", asy
     const astra = { provider: "openai", id: "gpt-6-astra" };
     const f = fakePi();
     registerModels(f.pi);
-    const ui = { ...fakeUI(["openai/gpt-6-luna", "No changes", "No changes", "No changes"]), notify: () => {} };
-    await f.commands.get("models").handler("", { cwd: root, ui, modelRegistry: { getAvailable: () => [luna, astra] } });
+    const ui = { ...fakeUI(["Setup: session model", "openai/gpt-6-luna", "Done"]), notify: () => {} };
+    await f.commands.get("models").handler("project", { cwd: root, ui, modelRegistry: { getAvailable: () => [luna, astra] } });
     assert.deepEqual((await read(path.join(root, MANIFEST_PATH))).models, { setup: "openai/gpt-6-luna" });
     assert.equal((await readManifest(root)).models?.review, "openai/gpt-6-astra");
 
@@ -448,16 +448,18 @@ test("choosing the session model for a phase only the global file sets stores an
     const astra = { provider: "openai", id: "gpt-6-astra" };
     const f = fakePi();
     registerModels(f.pi);
-    // Review goes back to the session model; every other phase keeps what it has.
-    const ui = { ...fakeUI([]), select: async (title: string): Promise<string> => (/^Review/.test(title) ? "Use the session model" : "No changes") };
-    await f.commands.get("models").handler("", { cwd: root, ui, modelRegistry: { getAvailable: () => [luna, astra] } });
+    // Review goes Off (no session fallback); /models picks the Review row, then Done.
+    let turn = 0;
+    let want = "Off: no review and no plan check";
+    const ui = { ...fakeUI([]), select: async (title: string, options: string[]): Promise<string> => (title === "Which phase to change?" ? (turn++ % 2 ? "Done" : options.find((o) => /^Review/.test(o))!) : want) };
+    await f.commands.get("models").handler("project", { cwd: root, ui, modelRegistry: { getAvailable: () => [luna, astra] } });
     const own = await read(path.join(root, MANIFEST_PATH));
     assert.deepEqual(own.models, { review: null });
     const merged = await readManifest(root);
     assert.deepEqual(merged.models, { setup: "openai/gpt-6-luna" }, "review is unset, the other global model still applies");
     // Picking a model again replaces the null.
-    ui.select = async (title: string) => (/^Review/.test(title) ? "openai/gpt-6-luna" : "No changes");
-    await f.commands.get("models").handler("", { cwd: root, ui, modelRegistry: { getAvailable: () => [luna, astra] } });
+    want = "openai/gpt-6-luna";
+    await f.commands.get("models").handler("project", { cwd: root, ui, modelRegistry: { getAvailable: () => [luna, astra] } });
     assert.equal((await read(path.join(root, MANIFEST_PATH))).models.review, "openai/gpt-6-luna");
     // The same for skills: restoring a phase to its defaults while the global file customises it.
     const own2 = patchMap<Record<string, string[]>>(undefined, { plan: ["retro"] }, {}, { plan: ["retro"] });
