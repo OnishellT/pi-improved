@@ -39,15 +39,15 @@ To try it from a clone: `npm install`, then `pi -e <clone>`. Run `npm install` a
 
 | Command | What it does | When |
 |---|---|---|
-| `/doctor` | Checks the environment: Node, Nix and its packages, git and gh logins, subagent, agentlint and Bend when used, and that each configured model is available. Lists the config files in effect, bad values and keys it did not read. Shows a status while it runs. | After install, and when something fails. |
-| `/models [project]` | Picks a model per phase (`setup`, `implement`, `review`, `escalate`). Pick a phase, then its model, until Done. Esc saves nothing. Saved in the global file; `/models project` saves for this project only. | Before `/setup`, or when no review model is set. |
+| `/doctor` | Checks the environment: Node, Nix and its packages, git and gh logins, subagent, agentlint and Bend when used, and that each configured model is available. Also checks the skill phases and names, and the desktop when `/computer` turns it on. Lists the config files in effect, bad values and keys it did not read (`mode` is a legacy key, tolerated and not read). Shows a status while it runs. At session start, a warning names the checks that fail (config problems or something missing) and says to run `/doctor`. | After install, and when something fails. |
+| `/models [project]` | Picks a model per phase (`setup`, `implement`, `review`, `escalate`). Pick a phase, then its model, until Done. Esc saves nothing. Saved in the global file, unless the project file sets that phase; `/models project` saves for this project only. | Before `/setup`, or when no review model is set. |
 | `/setup` | Scans the repo, asks the minimum, then has the model write `AGENTS.md`, domain skills, ADRs, a verify-app skill and the `verify` steps. You approve the result. | Once per repo. |
 | `/task <text \| KEY-1 \| spec.md>` | Plans and implements a task, then verifies it. `/task` alone shows the task and what to do next. `continue`, `done` and `cancel` act on it. | For any change you want planned and gated. |
 | `/verify` | Runs the project's `verify` steps by hand. Says "Verify did not run" when Nix is missing or fails, or `.pi/workflow.json` cannot be read. | After a fix, before `/task done`. |
 | `/pr [base]` | Prepares the branch and the PR: summary, verify report, risk, ADRs, decisions. Commits, pushes and opens only after you confirm. | When the task is done. |
 | `/retro [n]` | Reviews the last finished tasks and proposes edits to `AGENTS.md`, ADRs or skills. Writes nothing without your yes. | After the reminder, or whenever you want. |
 | `/cost` | Cost, tokens and risk of the active task. With no active task, the latest finished tasks. | During a task. |
-| `/metrics` | Cost, tokens, time and review of the last 10 finished tasks. | To compare tasks. |
+| `/metrics` | Cost, tokens, time and review of the last 10 finished tasks, and how their plan checks ended (ok, fix, skipped: it did not run). | To compare tasks. |
 | `/skills` | Picks the skills of one phase at a time. Esc leaves without saving. | To tune what each phase reads. |
 | `/computer` | Picks the browser and desktop the agent can drive. Off until you choose ([docs/COMPUTER.md](docs/COMPUTER.md)). | When the agent must use a browser or desktop. |
 | `/subagent` | Shows a subagent of this session: focuses or opens its pane in tmux or Tern. | To watch or steer a review or plan check. |
@@ -58,7 +58,7 @@ The usage report script (cost per day, model and subagent, from pi's session fil
 
 ### Tools the agent gets
 
-- `ask_user`: asks you a question, with options or open. Without a UI it tells the agent to choose and say so.
+- `ask_user`: asks you up to 5 questions at once, each with 2-4 options (recommended first) or open. Without a UI it tells the agent to choose and say so; while planning a task, pi takes the recommended option.
 - `task_plan`: records the plan of the active task. `setup_finish`: ends `/setup`. `understanding_done`: ends the understanding check.
 - `show`: shows a picture in the chat (images, charts it plots, HTML or SVG mockups). Terminals with the Kitty or iTerm2 image protocol draw it: Tern, Kitty, Ghostty, WezTerm, iTerm2, not inside tmux. Elsewhere, with pi's `terminal.showImages` off, and in `pi -p`, the picture is saved and the agent is told you saw only its path. In RPC mode the client gets the file.
 - `self_compact`: ends the turn so pi compacts and the agent resumes.
@@ -70,7 +70,7 @@ The plan has no approval dialog. Its open questions are asked while planning; Es
 
 At the end, code runs the `verify` steps. When the diff is risky enough (`review.minLevel`, default `high`) and a review model is set, a read-only review starts alongside verify. A failing verify goes back to the agent: the 2nd failure diagnoses, the 3rd moves to the `escalate` model, and after the retries you decide.
 
-The done dialog lists every file the task changed (ignored files left out, as in a commit), with its status and +/- lines, and one line on the risk and the review. You confirm, then an understanding check asks 2-3 questions about the change (`understanding`; answer "skip" to skip it). Without a UI (print or JSON mode) there is no dialog and no understanding check: a verified task closes on its own. `/task done` closes the task by hand, `/task cancel` drops it. Every 5 finished tasks a notice suggests `/retro`.
+The done dialog lists every file the task changed (ignored files left out, as in a commit), with its status and +/- lines, and one line on the risk and the review. You confirm, then an understanding check asks 2-3 questions about the change (`understanding`; answer "skip" to skip it). Without a UI (print or JSON mode) there is no dialog and no understanding check: a verified task closes on its own, and a run that ends with verify red writes one line to stderr and exits with code 1. `/task done` closes the task by hand, `/task cancel` drops it. Every 5 finished tasks a notice suggests `/retro`.
 
 ## Self-compaction
 
@@ -92,7 +92,7 @@ Two files hold the options:
 
 The project file wins over the global one. Plain objects merge key by key (`models`, `review`, `limits`, `limits.fastPath`, `skills`, `selfCompact`); arrays and scalars are replaced. `/setup` and `/skills` write the project file only, and only what changed, so your global values are not copied into the repo. The one exception is `language`: `/setup` records the language it used in the project file. `/models` writes the global file, unless the project file already sets that phase or you run `/models project`. A `null` in the project file unsets a value the global file sets (`"models": { "review": null }` is what `/models project` writes when you turn Review off for this project).
 
-A bad `limits` value is dropped in its own file, so it falls back to the global one, then to the default. Other keys are not checked per file: a bad project value there replaces the global one and is read as it is, so it can turn a feature off or make it fail (an invalid `review.minLevel` turns the diff review off). Run `/doctor` after editing either file. A global file that is not valid JSON counts as empty, with a notice at session start. `/doctor` names the file that holds a bad preference (wrong type or out of range; `language` is not checked), and reports keys it did not read: unknown keys in `.pi/workflow.json` (a typo such as `modles`), state keys in the global file, and `computer` or `subagentPanes` in a project file. The agent's write and edit tools cannot change either file.
+A bad `limits` value is dropped in its own file, so it falls back to the global one, then to the default. Other keys are not checked per file: a bad project value there replaces the global one and is read as it is, so it can turn a feature off or make it fail (an invalid `review.minLevel` turns the diff review off). Run `/doctor` after editing either file. A global file that is not valid JSON counts as empty, with a notice at session start. `/doctor` names the file that holds a bad preference (wrong type or out of range; `language` is not checked), and reports keys it did not read: unknown keys in `.pi/workflow.json` (a typo such as `modles`), state keys in the global file, and `computer` or `subagentPanes` in a project file. Each note names the file, and says to rename or remove an unknown or state key. Paths show relative to the project, or with `~`. The agent's write and edit tools cannot change either file.
 
 Old config files are moved in once at startup. `computer.json` and `self-compact.json` in the agent dir are renamed to `<name>.migrated`. A project's `.pi/self-compact.json` is copied, and the notice asks you to delete it. `subagentPanes` in pi's `settings.json` is copied, and the notice asks you to remove it there.
 
