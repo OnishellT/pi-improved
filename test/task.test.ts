@@ -778,14 +778,18 @@ test("while paused, task_plan is refused; a cancelled ask_user round pauses plan
   assert.ok(sent[0].includes(APPROACH_FIRST));
   await emit("tool_result", { toolName: "mcp__jira__get_issue", content: [{ type: "text", text: "Add `computeTotal` to src/fee.ts" }] }, { cwd: root });
   const c = noting(ctxFor([]));
-  const input = { questions: [{ question: "Rounding?", options: ["half-up", "banker"] }, { question: "Negative amounts?", options: ["throw", "zero"] }] };
-  await emit("tool_result", { toolName: "ask_user", input, details: { answers: [{ question: "Rounding?", answer: "half-up" }] }, content: [] }, c.ctx);
+  const input = { questions: [{ question: "How would you round?" }, { question: "Rounding?", options: ["half-up", "banker"] }, { question: "Negative amounts?", options: ["throw", "zero"] }] };
+  const answers = [{ question: "How would you round?", answer: "Half-up, in cents" }, { question: "Rounding?", answer: "half-up" }];
+  await emit("tool_result", { toolName: "ask_user", input, details: { answers }, content: [] }, c.ctx);
   assert.deepEqual(c.notes, ["Planning paused at: Negative amounts?. /task continue resumes planning, /task cancel drops it."]);
   assert.equal(await emit("agent_before_settle", { outcome: "completed" }, c.ctx), undefined);
+  assert.match((await emit("tool_call", { toolName: "ask_user", input }, c.ctx)).reason, /Planning is paused/);
+  assert.equal(await emit("tool_call", { toolName: "read", input: {} }, c.ctx), undefined);
   const iface = [{ file: "src/fee.ts", exports: ["computeTotal"], source: "ticket" }];
   await assert.rejects(tools.get("task_plan").execute("1", plan([], { interface: iface }), undefined, undefined, ctxFor([]).ctx), /Planning is paused/);
   await commands.get("task").handler("continue", ctxFor([]).ctx);
   assert.ok(!sent[1].includes(APPROACH_FIRST));
+  assert.equal(await emit("tool_call", { toolName: "ask_user", input }, c.ctx), undefined);
   // the ticket read before the pause still gives computeTotal: nothing is asked
   const quiet = ctxFor([]);
   await tools.get("task_plan").execute("1", plan([], { interface: iface }), undefined, undefined, quiet.ctx);
@@ -795,4 +799,13 @@ test("while paused, task_plan is refused; a cancelled ask_user round pauses plan
   const failed = noting(ctxFor([]));
   await emit("tool_result", { toolName: "ask_user", input, isError: true, content: [] }, failed.ctx);
   assert.deepEqual(failed.notes, []);
+});
+
+test("continuing after the approach question itself was cancelled asks for the approach again", async () => {
+  const { commands, ctxFor, emit, sent } = await setup();
+  await commands.get("task").handler("Add fee", ctxFor([]).ctx);
+  const input = { questions: [{ question: "How would you store the fee?" }] };
+  await emit("tool_result", { toolName: "ask_user", input, details: { answers: [] }, content: [] }, ctxFor([]).ctx);
+  await commands.get("task").handler("continue", ctxFor([]).ctx);
+  assert.ok(sent[1].includes(APPROACH_FIRST));
 });

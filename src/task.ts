@@ -79,6 +79,8 @@ export function registerTask(pi: ExtensionAPI) {
   let paused = false;
   /** The task the answers below belong to: continuing it keeps them. */
   let planning: string | undefined;
+  /** The user answered the approach question (open ask_user questions) for that task: continuing it does not ask again. */
+  let approached = false;
   /** What the planner read from the tracker (MCP) while planning: the ticket, as evidence for interface names. */
   const ticketText = new Map<string, string>();
   /** Answers already given for a question text, so a task_plan retry does not ask it again. Reset per task. */
@@ -95,17 +97,18 @@ export function registerTask(pi: ExtensionAPI) {
   const start = async (ctx: any, manifest: Manifest, task: Task) => {
     nudges = 0;
     paused = false;
-    // Continuing the task planned in this session keeps its answers and tracker text, and does not ask for the approach again.
+    // Continuing the task planned in this session keeps its answers and tracker text, and does not ask again for an approach the user gave.
     const resumed = planning === task.id;
     if (!resumed) {
       answers.clear();
       asked.clear();
       ticketText.delete(ctx.cwd);
+      approached = false;
       planning = task.id;
     }
     const previous = await usePhaseModel(pi, ctx, "implement");
     if (previous && !task.model) await updateTask(ctx.cwd, (t) => void (t.model = previous));
-    pi.sendUserMessage(taskPrompt(task.title, task.ticket, tracker(manifest), await relatedTasks(ctx.cwd, task.body ?? task.title), await skillsBlock(ctx.cwd, "plan"), task.spec, task.body, !resumed && understandingOf(manifest) === "plan+end" && ctx.hasUI));
+    pi.sendUserMessage(taskPrompt(task.title, task.ticket, tracker(manifest), await relatedTasks(ctx.cwd, task.body ?? task.title), await skillsBlock(ctx.cwd, "plan"), task.spec, task.body, !approached && understandingOf(manifest) === "plan+end" && ctx.hasUI));
     return ctx.waitForIdle();
   };
 
@@ -356,6 +359,10 @@ export function registerTask(pi: ExtensionAPI) {
     },
   });
 
+  // A paused plan waits for the user: the agent may not open another dialog before they write.
+  pi.on("tool_call", async (event) => {
+    if (paused && event.toolName === "ask_user") return { block: true, reason: "Planning is paused: the user cancelled a question. Stop and wait for the user." };
+  });
   pi.on("before_agent_start", async (event) => {
     if (event.messageType !== "user") return;
     nudges = 0;
@@ -377,7 +384,10 @@ export function registerTask(pi: ExtensionAPI) {
     for (const [i, a] of given.entries()) {
       // An open question asks for the user's reasoning (their approach), not a choice: the plan builds on it, no ADR records it.
       const options = questions[i]?.options;
-      if (!options) continue;
+      if (!options) {
+        approached = true;
+        continue;
+      }
       recorded++;
       asked.set(a.question, { question: a.question, options, answer: a.answer });
       answers.set(JSON.stringify([a.question, options]), a.answer);
