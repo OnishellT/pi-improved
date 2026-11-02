@@ -108,7 +108,7 @@ export function registerModels(pi: ExtensionAPI) {
       if (!changed.length) return ctx.ui.notify("Models: no changes.", "info");
 
       // A phase the project file sets is changed there (it wins over the global file); the rest goes to the global file, unless asked for this project only.
-      // A project `models: null` hides the whole global map, so everything goes to the project file, which then lists every phase it must keep unset.
+      // A project `models: null` hides the whole global map, so everything goes to the project file, which then sets every other phase to null, so a phase added to the global file later stays hidden too.
       const own = (await readProjectManifest(root)).models;
       const hidden = own === null;
       const inProject = changed.filter((key) => projectOnly || hidden || Object.hasOwn(own ?? {}, key));
@@ -138,7 +138,7 @@ export function registerModels(pi: ExtensionAPI) {
           updateManifest(root, (m) => {
             const inherited = globalMap("models");
             const models = hidden
-              ? (Object.fromEntries(PHASES.flatMap(([k]): [string, string | null][] => (next[k] !== undefined ? [[k, next[k]!]] : inherited?.[k] !== undefined ? [[k, null]] : []))) as PhaseModels)
+              ? (Object.fromEntries(PHASES.map(([k]): [string, string | null] => [k, next[k] ?? null])) as PhaseModels)
               : patchMap(m.models ?? undefined, only(current, inProject), only(next, inProject), inherited);
             if (models && Object.keys(models).length) m.models = models;
             else delete m.models;
