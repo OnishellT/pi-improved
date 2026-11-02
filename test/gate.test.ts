@@ -73,7 +73,7 @@ test("an exception the user never saw is undone before the gate verifies", async
   await fs.writeFile(file, '{"id":"late"}\n');
   await h.run();
   await h.settle();
-  assert.deepEqual(h.ui.asked, ["The agent recorded agentlint exceptions. Keep them?"]);
+  assert.deepEqual(h.ui.asked, ["Keep these agentlint exceptions? (No: they are removed)"]);
   assert.equal(await fs.readFile(file, "utf8").catch(() => undefined), undefined);
 });
 

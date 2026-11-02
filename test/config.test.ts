@@ -333,13 +333,15 @@ test("retroEvery sets the retro cadence; 0 turns it off", async () => {
     const listeners = new Map<string, (d: unknown) => unknown>();
     f.pi.events = { on: (name: string, fn: any) => listeners.set(name, fn) };
     registerLearn(f.pi);
+    const notes: string[] = [];
+    await f.emit("session_start", {}, { hasUI: true, ui: { notify: (m: string) => notes.push(m) } });
     for (let i = 1; i <= tasks; i++) await listeners.get(TASK_DONE_EVENT)!({ root, hasUI: true, task: { id: `T-${i}`, title: "T", status: "done", allowedExtra: [], startedAt: "", plan: { summary: "S", steps: [], files: ["a.ts"], interface: [], seams: [], decisions: [] } } });
-    return f.sent;
+    return notes;
   };
   assert.equal((await run(undefined, 5)).length, 1);
   const every2 = await run({ retroEvery: 2 }, 5);
   assert.equal(every2.length, 2);
-  assert.match(every2[0], /Retro: 2 tasks[\s\S]*last 2 records/);
+  assert.match(every2[0], /^2 tasks finished\. Run \/retro to review the last 2\.$/);
   assert.equal((await run({ retroEvery: 0 }, 10)).length, 0);
   assert.equal((await run({ retroEvery: -1 }, 5)).length, 1, "a bad value is the default");
 });
