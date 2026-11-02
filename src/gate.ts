@@ -222,8 +222,9 @@ export function registerGate(pi: ExtensionAPI) {
         if (contractRetries >= verifyRetries) {
           const missing = "The plan's interface is still missing after the automatic retries.";
           // Headless, nobody can answer: say why the run ended red, with what is missing. With a UI, show it before asking.
-          if (!ctx.hasUI) ctx.ui.notify(`${missing}${open}\n\n${tail(formatContract(problems))}`, "warning");
-          else ctx.ui.notify(tail(formatContract(problems)), "warning");
+          // In full: the list is one short line per pinned name, and any one left out is one the user cannot judge.
+          if (!ctx.hasUI) ctx.ui.notify(`${missing}${open}\n\n${formatContract(problems)}`, "warning");
+          else ctx.ui.notify(formatContract(problems), "warning");
           const choice = ctx.hasUI ? await ctx.ui.select(`${missing} What now?`, ["Keep trying", "Leave it as is"]) : undefined;
           if (choice !== "Keep trying") {
             if (ctx.hasUI) ctx.ui.notify(STAYS_OPEN, "info");
