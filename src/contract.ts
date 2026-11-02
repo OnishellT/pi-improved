@@ -21,16 +21,32 @@ export const stemTokens = (file: string) =>
     .split(/[-_.\s]+/)
     .filter(Boolean);
 
+/** A word without its plural or simple inflection, lowercased: users → user, listing → list, services → servic, service → servic. */
+export const baseForm = (w: string) => {
+  const s = w.toLowerCase();
+  let stem = s;
+  if (s.length > 4 && s.endsWith("ies")) stem = `${s.slice(0, -3)}y`;
+  else {
+    // `class` and `status` end in s but are not plurals.
+    const suffix = ["ing", "ed", "es", "s"].find((x) => s.endsWith(x) && s.length - x.length >= 3 && !(x === "s" && /(ss|us)$/.test(s)));
+    if (suffix) stem = s.slice(0, -suffix.length);
+  }
+  return stem.length > 3 && stem.endsWith("e") ? stem.slice(0, -1) : stem;
+};
+
 /**
  * Names of an interface entry that the cited evidence (ticket, doc, existing file) never mentions.
  * Exports must appear as whole words (case-insensitive); a new file's stem must have every token in the text.
+ * Plurals and simple inflections count for single words (`users` gives `user`, `listing` gives `list`).
  * Language-agnostic on purpose: plain text, no parsing.
  */
 export function missingNames(entry: InterfaceEntry, evidence: string, newFile: boolean): string[] {
-  const missing = entry.exports.filter((name) => !hasName(name, evidence, "i"));
+  const forms = new Set((evidence.match(/[A-Za-z0-9]+/g) ?? []).map(baseForm));
+  const present = (name: string) => hasName(name, evidence, "i") || (/^[A-Za-z0-9]+$/.test(name) && forms.has(baseForm(name)));
+  const missing = entry.exports.filter((name) => !present(name));
   if (newFile) {
     const tokens = stemTokens(entry.file);
-    if (tokens.length && !tokens.every((t) => word(t, "i").test(evidence))) missing.push(path.basename(entry.file));
+    if (tokens.length && !tokens.every(present)) missing.push(path.basename(entry.file));
   }
   return missing;
 }

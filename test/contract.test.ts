@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { test } from "node:test";
-import { checkContract, formatContract, missingNames, relatesTo, stemTokens } from "../src/contract.ts";
+import { baseForm, checkContract, formatContract, missingNames, relatesTo, stemTokens } from "../src/contract.ts";
 import { fifo, tempProject } from "./helpers.ts";
 
 const plan = (iface: any[]) => ({ summary: "", steps: [], files: [], decisions: [], interface: iface, seams: [] });
@@ -83,4 +83,19 @@ test("relatesTo: a shared question word (should, which, about) is not a shared t
   assert.equal(relatesTo("Should we use Redis or Memcached for sessions?", "the build should be fast"), false);
   assert.equal(relatesTo("Which store holds sessions?", "# Sessions\nkept in Redis"), true);
   assert.equal(relatesTo("Should we use Make?", "Make is the build tool."), true);
+});
+
+test("missingNames: plurals and simple inflections in the evidence count for a new file's stem and a one-word export", () => {
+  const ticket = "Add user listing: list all users and their services.";
+  assert.deepEqual(missingNames({ file: "src/user-service.ts", exports: ["listUsers"] }, ticket, true), ["listUsers"]);
+  assert.deepEqual(missingNames({ file: "src/user-service.ts", exports: ["users", "list"] }, ticket, true), []);
+  assert.deepEqual(missingNames({ file: "src/entries.ts", exports: [] }, "Size each entry.", true), []);
+  // a different word is still missing
+  assert.deepEqual(missingNames({ file: "src/user-store.ts", exports: [] }, ticket, true), ["user-store.ts"]);
+});
+
+test("baseForm strips plurals and -ing/-ed, and leaves words that only end in s alone", () => {
+  for (const [a, b] of [["users", "user"], ["listing", "list"], ["services", "service"], ["entries", "entry"], ["classes", "class"], ["statuses", "status"]]) assert.equal(baseForm(a), baseForm(b), `${a} ~ ${b}`);
+  assert.notEqual(baseForm("class"), baseForm("cla"));
+  assert.equal(baseForm("is"), "is");
 });
