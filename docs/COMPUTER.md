@@ -1,10 +1,12 @@
 # Computer use
 
-Optional second extension (`src/computer/`). It lets the agent drive a browser and a desktop. Off until you choose.
+The `src/computer/` extension lets the agent drive a browser and a desktop. It loads with the package and stays off until you choose.
 
 ## Use
 
-`/computer` lists the browsers installed, marks those with remote debugging on, and saves your pick under the `computer` key of `pi-improved.json` in the Pi agent dir (`~/.pi/agent`, or `PI_CODING_AGENT_DIR`), keeping the other keys of that file. User level on purpose: logins belong to you, not to a repo, so a project's `.pi/workflow.json` cannot set it. An old `computer.json` is copied into that key once, at startup, and no longer read. It applies at once, with no restart.
+`/computer` asks for the browser mode, then (in relay or both mode) your browser, then the desktop when its tools exist. Escape at any question cancels and saves nothing. The result is one line, such as `Browser: both (relay: auto). Desktop: off.`, with hints only for what you just chose. Inside a Hyprland session it says which desktop tools are missing. When you leave the browser unchanged, it names the config file to edit for another Chromium browser or an MCP server.
+
+The pick goes under the `computer` key of `pi-improved.json` in the pi agent dir (`~/.pi/agent`, or `PI_CODING_AGENT_DIR`); the other keys of that file stay. It is per user on purpose: logins belong to you, not to a repo, so a project's `.pi/workflow.json` cannot set it. It applies at once, with no restart. An old `computer.json` is moved into that key once, at startup, and renamed to `computer.json.migrated`.
 
 ## Config
 
@@ -19,7 +21,17 @@ The value of the `computer` key:
 | `browser` | `off` (default). `{ "mode": "isolated" }`: a private headless Chromium, no approval. `{ "mode": "relay", "relay": … }`: your own browser. `{ "mode": "both", "relay": … }`: both. `relay` is `auto` (the first browser with remote debugging on: helium, chrome, chromium, brave, edge, vivaldi), a preset id, or `{ "portFile": "/abs/path/DevToolsActivePort", "name": "Mine" }` for any other Chromium browser. The old values `"auto"`, a preset id and `{ "portFile" }` still work and mean relay. `{ "mcp": { "command": "npx", "args": ["@playwright/mcp@latest"] } }` for any MCP server, used as given. |
 | `desktop` | `off` (default), `on` |
 
-Isolated (and relay mode) is the MCP server `browser`, the desktop is `desktop`. In `both`, the isolated one is `browser` and yours is `my-browser`; its description tells the model to use `my-browser` only when the task needs your logins. `/computer` asks for the mode first, then, for relay and both, which browser. A server of the same name in the agent dir's `mcp.json` wins, even a disabled one: the extension then registers nothing and warns, so remove that entry to use the bundled one. (Project-level MCP config is not checked.)
+Each mode registers these MCP servers. The model's tools carry the server name as prefix.
+
+| Mode | MCP server | Who approves |
+|---|---|---|
+| `isolated` | `browser` | nobody: a private headless Chromium |
+| `relay` | `browser` | you, in your browser, on the first `open` |
+| `both` | `browser` (isolated) and `my-browser` (yours) | you, for `my-browser` only; its description tells the model to use it only when the task needs your logins |
+
+The desktop is the server `desktop`.
+
+A server of the same name in the agent dir's `mcp.json` wins, even a disabled one. The extension then registers nothing for it and warns: `mcp.json already defines "browser" and wins over this extension: remove that entry to use the bundled one.` Project-level MCP config is not checked.
 
 ## Isolated browser
 
