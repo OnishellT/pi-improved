@@ -288,7 +288,7 @@ export function registerSetup(pi: ExtensionAPI) {
       const lines = (await run("git", ["-C", root, "status", "--porcelain", "--untracked-files=all"])).split("\n").filter((l) => l.trim());
       const changed = lines.length ? [...lines.slice(0, MAX_LISTED), ...(lines.length > MAX_LISTED ? [`… and ${lines.length - MAX_LISTED} more`] : [])].join("\n") : "(no changes detected by git)";
       // Nobody can approve without a UI: the files stay uncommitted, for the person to review with git diff.
-      const approved = !ctx.hasUI || (await ctx.ui.confirm("Approve the setup?", `${summary}${verifyNote}\n\nFiles:\n${changed}\n\nReview it with git diff before answering.`));
+      const approved = !ctx.hasUI || (await ctx.ui.confirm("Approve the setup?", `${summary}${verifyNote}\n\nFiles:\n${changed}\n\nReview it before answering: git status --short --untracked-files=all lists every file, git diff shows the changes.`));
       if (!approved) {
         const feedback = await ctx.ui.input("What should change?");
         throw new Error(`The user did not approve. Feedback: ${feedback || "(none)"}. Apply it and call setup_finish again.`);
