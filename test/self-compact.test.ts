@@ -29,13 +29,19 @@ async function session({ setupRunning = false } = {}) {
   const compactions: { options: any; duringRun: boolean }[] = [];
   const errors: string[] = [];
   const warnings: string[] = [];
+  const infos: string[] = [];
+  const statuses: (string | undefined)[] = [];
   const state = { tokens: 0, running: true };
   const ctx: any = {
     cwd,
     hasUI: true,
     mode: "print",
     model: { provider: "p", id: "m", contextWindow: 100_000 },
-    ui: { notify: (text: string, type: string) => void (type === "warning" ? warnings : errors).push(text), setWidget() {}, setFooter() {} },
+    // No setFooter or setWidget: pi's footer stays, and the context state is one status entry.
+    ui: {
+      notify: (text: string, type: string) => void (type === "warning" ? warnings : type === "info" ? infos : errors).push(text),
+      setStatus: (key: string, text: string | undefined) => void (key === "context" && statuses.push(text)),
+    },
     getContextUsage: () => ({ tokens: state.tokens, contextWindow: 100_000 }),
     compact: (options: any) => void compactions.push({ options, duringRun: state.running }),
   };
@@ -46,7 +52,8 @@ async function session({ setupRunning = false } = {}) {
   const selfCompactTool = (note?: string) => h.tools.get("self_compact").execute("id", { note }, undefined, undefined, ctx);
   /** Ends the run: pi awaits the agent_settled handlers, which is what keeps `pi -p` from exiting early. */
   const settle = (aborted = false) => ((state.running = false), h.emit("agent_settled", { aborted }, ctx));
-  return { h, ctx, at, call, selfCompactTool, settle, compactions, errors, warnings, resumes };
+  const status = () => statuses.at(-1);
+  return { h, ctx, at, call, selfCompactTool, settle, compactions, errors, warnings, infos, status, resumes };
 }
 
 const notice = (result: any) => result?.entries?.[0]?.content as string | undefined;
@@ -66,6 +73,54 @@ test("notice, then warning, each once per tier", async () => {
   assert.match(notice(await s.at(86_000))!, /warning threshold reached/);
   assert.equal(await s.at(87_000), undefined);
   assert.equal(s.compactions.length, 0);
+});
+
+test("the notice and warning go to the model only; the force tier stays in the chat", async () => {
+  const s = await session();
+  assert.equal((await s.at(76_000))?.entries[0].display, false);
+  assert.equal((await s.at(86_000))?.entries[0].display, false);
+  assert.equal((await s.at(91_000, 1))?.entries[0].display, true);
+});
+
+test("the context state is a status entry, shown only from the notice threshold on", async () => {
+  const s = await session();
+  assert.equal(s.status(), undefined);
+  await s.at(50_000);
+  assert.equal(s.status(), undefined, "below the notice threshold pi's own footer is enough");
+  await s.at(77_000);
+  assert.equal(s.status(), "context 77% · compacts at 90%");
+  await s.h.emit("session_compact", {}, s.ctx);
+  await s.at(30_000);
+  assert.equal(s.status(), undefined);
+  await s.h.emit("session_shutdown", {}, s.ctx);
+  assert.equal(s.status(), undefined);
+});
+
+test("after two failed compactions, the status and /self-compact-info say compaction is off and how to retry", async () => {
+  const s = await session();
+  for (let i = 0; i < 2; i++) {
+    await s.selfCompactTool("note");
+    const settling = s.settle();
+    await tick();
+    s.compactions[i].options.onError(new Error("provider down"));
+    await settling;
+    await s.call(20_000);
+  }
+  assert.equal(s.status(), "compaction off after 2 failures (run /compact to retry)");
+  await s.at(20_000);
+  assert.equal(s.status(), "compaction off after 2 failures (run /compact to retry)", "a turn below the thresholds keeps it");
+  await s.h.commands.get("self-compact-info").handler("", s.ctx);
+  assert.match(s.infos.at(-1)!, / Compaction off after 2 failures \(run \/compact to retry\)\.$/);
+  await s.h.emit("session_compact", {}, s.ctx);
+  assert.equal(s.status(), undefined, "a compaction that succeeds turns it back on");
+});
+
+test("/self-compact-now says so when a compaction is already running", async () => {
+  const s = await session();
+  await s.h.commands.get("self-compact-now").handler("", s.ctx);
+  await s.h.commands.get("self-compact-now").handler("", s.ctx);
+  assert.equal(s.compactions.length, 1);
+  assert.deepEqual(s.warnings, ["A compaction is already running. Wait for it to finish."]);
 });
 
 test("self_compact ends the turn, compacts with its note once the run is over, then resumes the agent", async () => {

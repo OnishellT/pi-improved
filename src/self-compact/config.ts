@@ -95,11 +95,3 @@ export function thresholdState(usage: number, limit: number, config: Config): "b
   if (usage >= values[0]) return "notice";
   return "below";
 }
-
-/**
- * Remove carriage returns, newlines, and tabs from text, replacing them with spaces and trimming.
- * Used to clean status text for single-line footer display.
- */
-export function sanitizeStatus(text: string): string {
-  return text.replace(/[\r\n\t]+/g, " ").trim();
-}
