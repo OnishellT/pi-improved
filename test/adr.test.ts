@@ -39,6 +39,7 @@ test("ADRs are written only once the plan is recorded, once per decision across 
   const first = ctxFor(["cents", undefined]);
   await assert.rejects(run(first.ctx), /cancelled/);
   assert.equal(await adrs(), 0);
+  await h.emit("before_agent_start", { messageType: "user" }, first.ctx);
   const retry = ctxFor(["half-up"]);
   await run(retry.ctx);
   assert.deepEqual(retry.ui.asked, ["Rounding?"], "the answered decision is not asked again");

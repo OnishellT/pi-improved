@@ -157,7 +157,7 @@ test("a cancelled planning question stops the plan, which stays planning", async
 });
 
 test("a retried plan reuses an answer only while the question's options stay the same", async () => {
-  const { commands, tools, ctxFor } = await setup();
+  const { commands, tools, ctxFor, emit } = await setup();
   await commands.get("task").handler("Add fee", ctxFor([]).ctx);
   const run = (answers: unknown[], options: string[]) => {
     const c = ctxFor(answers);
@@ -165,10 +165,14 @@ test("a retried plan reuses an answer only while the question's options stay the
     return { ui: c.ui, done: tools.get("task_plan").execute("1", plan(decisions), undefined, undefined, c.ctx) };
   };
   // The second question is cancelled: the retry asks only that one again.
+  // Each retry follows a user message: a cancel pauses planning until the user writes.
+  const reply = () => emit("before_agent_start", { messageType: "user" }, ctxFor([]).ctx);
   await assert.rejects(run(["a", undefined], ["a", "b"]).done, /cancelled/);
+  await reply();
   const same = run([undefined], ["a", "b"]);
   await assert.rejects(same.done, /cancelled/);
   assert.deepEqual(same.ui.asked, ["R?"]);
+  await reply();
   const changed = run(["c", "x"], ["a", "c"]);
   await changed.done;
   assert.deepEqual(changed.ui.asked, ["Q?", "R?"]);
@@ -765,4 +769,30 @@ test("/task alone and /task done while planning say what to do next", async () =
   await commands.get("task").handler("cancel", ctxFor([]).ctx);
   await commands.get("task").handler("continue", none.ctx);
   assert.deepEqual(none.notes, ["No task to continue. Use /task <description or ticket>."]);
+});
+
+test("while paused, task_plan is refused; a cancelled ask_user round pauses planning too; /task continue keeps tracker text and skips the approach question", async () => {
+  const { commands, tools, ctxFor, emit, sent, root } = await setup();
+  await updateManifest(root, (m) => void (m.connectors = [{ id: "jira" }]));
+  await commands.get("task").handler("PAY-12", ctxFor([]).ctx);
+  assert.ok(sent[0].includes(APPROACH_FIRST));
+  await emit("tool_result", { toolName: "mcp__jira__get_issue", content: [{ type: "text", text: "Add `computeTotal` to src/fee.ts" }] }, { cwd: root });
+  const c = noting(ctxFor([]));
+  const input = { questions: [{ question: "Rounding?", options: ["half-up", "banker"] }, { question: "Negative amounts?", options: ["throw", "zero"] }] };
+  await emit("tool_result", { toolName: "ask_user", input, details: { answers: [{ question: "Rounding?", answer: "half-up" }] }, content: [] }, c.ctx);
+  assert.deepEqual(c.notes, ["Planning paused at: Negative amounts?. /task continue resumes planning, /task cancel drops it."]);
+  assert.equal(await emit("agent_before_settle", { outcome: "completed" }, c.ctx), undefined);
+  const iface = [{ file: "src/fee.ts", exports: ["computeTotal"], source: "ticket" }];
+  await assert.rejects(tools.get("task_plan").execute("1", plan([], { interface: iface }), undefined, undefined, ctxFor([]).ctx), /Planning is paused/);
+  await commands.get("task").handler("continue", ctxFor([]).ctx);
+  assert.ok(!sent[1].includes(APPROACH_FIRST));
+  // the ticket read before the pause still gives computeTotal: nothing is asked
+  const quiet = ctxFor([]);
+  await tools.get("task_plan").execute("1", plan([], { interface: iface }), undefined, undefined, quiet.ctx);
+  assert.equal(quiet.ui.asked.length, 0);
+  // an ask_user call that failed (no UI) is not a cancel
+  await commands.get("task").handler("Next", ctxFor(["Replace it"]).ctx);
+  const failed = noting(ctxFor([]));
+  await emit("tool_result", { toolName: "ask_user", input, isError: true, content: [] }, failed.ctx);
+  assert.deepEqual(failed.notes, []);
 });
