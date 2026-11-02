@@ -801,6 +801,22 @@ test("while paused, task_plan is refused; a cancelled ask_user round pauses plan
   assert.deepEqual(failed.notes, []);
 });
 
+test("a cancelled /setup interview round does not pause planning, and /task cancel clears a pause", async () => {
+  const { commands, ctxFor, emit, root } = await setup();
+  await commands.get("task").handler("Add fee", ctxFor([]).ctx);
+  const input = { questions: [{ question: "Which tracker?", options: ["jira", "none"] }] };
+  await updateManifest(root, (m) => void (m.setup = "running"));
+  const during = noting(ctxFor([]));
+  await emit("tool_result", { toolName: "ask_user", input, details: { answers: [] }, content: [] }, during.ctx);
+  assert.deepEqual(during.notes, []);
+  assert.equal(await emit("tool_call", { toolName: "ask_user", input }, during.ctx), undefined);
+  await updateManifest(root, (m) => void (m.setup = "done"));
+  await emit("tool_result", { toolName: "ask_user", input, details: { answers: [] }, content: [] }, ctxFor([]).ctx);
+  assert.match((await emit("tool_call", { toolName: "ask_user", input }, ctxFor([]).ctx)).reason, /Planning is paused/);
+  await commands.get("task").handler("cancel", ctxFor([]).ctx);
+  assert.equal(await emit("tool_call", { toolName: "ask_user", input }, ctxFor([]).ctx), undefined);
+});
+
 test("continuing after an approach question was cancelled asks again, and a partial round asks only its open questions", async () => {
   const { commands, ctxFor, emit, sent } = await setup();
   await commands.get("task").handler("Add fee", ctxFor([]).ctx);

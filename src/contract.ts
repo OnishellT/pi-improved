@@ -23,14 +23,14 @@ export const stemTokens = (file: string) =>
 
 /** A word without its plural or simple inflection, lowercased: users → user, listing → list, services → servic, service → servic. */
 export const baseForm = (w: string) => {
+  const strip = (s: string, suffixes: string[]) => {
+    const x = suffixes.find((x) => s.endsWith(x) && s.length - x.length >= 3 && !(x === "s" && /(ss|us)$/.test(s)));
+    return x ? s.slice(0, -x.length) : s;
+  };
   const s = w.toLowerCase();
-  let stem = s;
-  if (s.length > 4 && s.endsWith("ies")) stem = `${s.slice(0, -3)}y`;
-  else {
-    // `class` and `status` end in s but are not plurals.
-    const suffix = ["ing", "ed", "es", "s"].find((x) => s.endsWith(x) && s.length - x.length >= 3 && !(x === "s" && /(ss|us)$/.test(s)));
-    if (suffix) stem = s.slice(0, -suffix.length);
-  }
+  // The plural first, then -ing/-ed, so `listings` and `listing` both reach `list`. `class` and `status` end in s but are not plurals.
+  const plural = s.length > 4 && s.endsWith("ies") ? `${s.slice(0, -3)}y` : strip(s, ["es", "s"]);
+  const stem = strip(plural, ["ing", "ed"]);
   return stem.length > 3 && stem.endsWith("e") ? stem.slice(0, -1) : stem;
 };
 
