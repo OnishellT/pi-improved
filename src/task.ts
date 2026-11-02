@@ -95,16 +95,24 @@ export function registerTask(pi: ExtensionAPI) {
   const start = async (ctx: any, manifest: Manifest, task: Task) => {
     nudges = 0;
     paused = false;
-    if (planning !== task.id) {
+    // Continuing the task planned in this session keeps its answers and tracker text, and does not ask for the approach again.
+    const resumed = planning === task.id;
+    if (!resumed) {
       answers.clear();
       asked.clear();
+      ticketText.delete(ctx.cwd);
       planning = task.id;
     }
-    ticketText.delete(ctx.cwd);
     const previous = await usePhaseModel(pi, ctx, "implement");
     if (previous && !task.model) await updateTask(ctx.cwd, (t) => void (t.model = previous));
-    pi.sendUserMessage(taskPrompt(task.title, task.ticket, tracker(manifest), await relatedTasks(ctx.cwd, task.body ?? task.title), await skillsBlock(ctx.cwd, "plan"), task.spec, task.body, understandingOf(manifest) === "plan+end" && ctx.hasUI));
+    pi.sendUserMessage(taskPrompt(task.title, task.ticket, tracker(manifest), await relatedTasks(ctx.cwd, task.body ?? task.title), await skillsBlock(ctx.cwd, "plan"), task.spec, task.body, !resumed && understandingOf(manifest) === "plan+end" && ctx.hasUI));
     return ctx.waitForIdle();
+  };
+
+  /** The user cancelled a planning question: say how to go on, and hold the plan until they write or run /task continue. */
+  const pause = (ctx: any, question: string) => {
+    paused = true;
+    ctx.ui.notify(`Planning paused at: ${oneLine(question, 80)}. ${nextSteps({ status: "planning" } as Task)}`, "info");
   };
 
   /** Ask once per question and options; a cancelled dialog pauses the plan. With no UI nobody can answer: the recommended (first) option is taken. */
@@ -119,8 +127,7 @@ export function registerTask(pi: ExtensionAPI) {
     }
     const answer = await selectOrType(ctx, question, options);
     if (answer === undefined) {
-      paused = true;
-      ctx.ui.notify(`Planning paused at: ${oneLine(question, 80)}. ${nextSteps({ status: "planning" } as Task)}`, "info");
+      pause(ctx, question);
       throw new Error(`The user cancelled the ${what} question, so the plan stops here. Stop and wait for the user.`);
     }
     answers.set(key, answer);
@@ -316,6 +323,7 @@ export function registerTask(pi: ExtensionAPI) {
       const root = ctx.cwd;
       const task = await readTask(root);
       if (task?.status !== "planning") throw new Error("No task is being planned. The user starts one with /task.");
+      if (paused) throw new Error("Planning is paused: the user cancelled a question. Stop and wait for the user.");
 
       await checkShape(root, params);
       const evidence = await evidenceFor(root, task);
@@ -363,7 +371,8 @@ export function registerTask(pi: ExtensionAPI) {
     if (event.toolName !== "ask_user" || (await readTask(ctx.cwd).catch(() => undefined))?.status !== "planning") return;
     const questions = (event.input.questions ?? []) as { question: string; options?: string[] }[];
     const given = ((event as any).details?.answers ?? []) as { question: string; answer: string }[];
-    // Answers come back in question order; a cancel drops the rest.
+    // Answers come back in question order; a cancel drops the rest and pauses the plan.
+    if (!(event as any).isError && given.length < questions.length) pause(ctx, questions[given.length].question);
     let recorded = 0;
     for (const [i, a] of given.entries()) {
       // An open question asks for the user's reasoning (their approach), not a choice: the plan builds on it, no ADR records it.
