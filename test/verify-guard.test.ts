@@ -154,3 +154,31 @@ test("a saved list rewritten in task.json by bash does not fool the gate in the 
     process.exitCode = code;
   }
 });
+
+test("a task.json rewritten with another id and no saved list still meets the list held in memory", async () => {
+  const t = await setup({ saved: ["check"], verify: ["check"], hasUI: false, pass: false, extra: { limits: { verifyRetries: 3, failuresBeforeEscalation: 9 } } });
+  const [error, code] = [console.error, process.exitCode];
+  console.error = () => {};
+  try {
+    await t.settle();
+    const { savedVerify: _, ...task } = JSON.parse(await fs.readFile(path.join(t.root, ".pi/task.json"), "utf8"));
+    await fs.writeFile(path.join(t.root, ".pi/task.json"), JSON.stringify({ ...task, id: "forged" }));
+    await updateManifest(t.root, (m) => void (m.verify = ["true"]));
+    const second: any = await t.settle();
+    assert.match(second.entries[0].content, /verify steps changed during the task[\s\S]*- check/);
+    assert.deepEqual(t.ran, ["check"]);
+  } finally {
+    console.error = error;
+    process.exitCode = code;
+  }
+});
+
+test("a task that started with no verify steps is told to remove the added ones", async () => {
+  const tui = await setup({ saved: [], verify: ["true"], answers: ["Keep the old ones"] });
+  const kept: any = await tui.settle();
+  assert.match(kept.entries[0].content, /started with, none: remove the ones added to \.pi\/workflow\.json\./);
+  const headless = await setup({ saved: [], verify: ["true"], hasUI: false });
+  const refused: any = await headless.settle();
+  assert.match(refused.entries[0].content, /The task started with no verify steps: remove the ones added to \.pi\/workflow\.json\./);
+  assert.doesNotMatch(refused.entries[0].content, /Put back/);
+});
