@@ -26,8 +26,6 @@ const DECLINE = "Don't ask again";
 /** Files listed in the approval dialog; the rest is counted. */
 const MAX_LISTED = 40;
 // Survives the reload that ends /setup: the reloaded copy of this file shows it once the chat is rebuilt.
-const NEXT_STEP = Symbol.for("pi-improved.setup.next");
-const pending = globalThis as { [NEXT_STEP]?: { root: string; text: string } };
 export const REPEAT_WARNING = "Repeating it reruns the interview and the docs on the strong setup model, which costs far more than a normal task. Do it only if the project changed a lot. Update it?";
 
 /** Returns what is missing from the setup output; empty means complete. */
@@ -147,6 +145,8 @@ export function registerSetup(pi: ExtensionAPI) {
 
       const resuming = manifest.setup !== "done" && Boolean(manifest.startedAt);
       const found = await discover(root, run);
+      // The interview dialogs follow: a "scanning" status left under them reads as still busy.
+      stop();
       const language = manifest.language ?? (await ctx.ui.select("Which language for questions and docs?", ["Español", "English"]));
       if (!language) return stop();
       const chosen = await chooseConnectors(ctx, found.connectors, manifest.connectors, manifest.declinedConnectors ?? []);
@@ -201,9 +201,10 @@ export function registerSetup(pi: ExtensionAPI) {
       ctx.ui.setStatus("setup", undefined);
       const done = await readManifest(root);
       if (done.setup !== "done") return;
-      // A notice, shown after the reload: the reload rebuilds the chat and drops earlier notices, and setup_finish ends the run before the model could say it.
+      // A message in the session, not a notice: the reload rebuilds the chat from the session, and pi's own "Reloaded…" status replaces an info notice.
+      // setup_finish ends the run before the model could say it.
       const text = done.models?.review ? "Setup done. Next: /task <what to do>." : "Setup done. Next: /models to pick a Review model (without one, no review runs), then /task <what to do>.";
-      pending[NEXT_STEP] = { root, text };
+      pi.sendMessage({ customType: "setup-next", content: text, display: true });
       await ctx.reload();
     },
   });
@@ -355,11 +356,6 @@ export function registerSetup(pi: ExtensionAPI) {
     const manifest = await readManifest(ctx.cwd).catch(() => undefined);
     if (!manifest) return;
     registerConnectors(pi, manifest.connectors);
-    const next = pending[NEXT_STEP];
-    if (event.reason === "reload" && next) {
-      delete pending[NEXT_STEP];
-      if (next.root === ctx.cwd) ctx.ui.notify(next.text, "info");
-    }
     // "declined" in the project file is from older versions, which stored the answer there.
     if (event.reason !== "startup" || ctx.mode !== "tui" || manifest.setup === "done" || manifest.setup === "declined") return;
     // Only at startup, so Later or Esc asks again on the next launch and not before.

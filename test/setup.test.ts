@@ -262,28 +262,33 @@ test("setup_finish accepts an empty verify list when no check can run here, runs
   assert.deepEqual([manifest.setup, manifest.verify], ["done", []]);
 });
 
-test("after the reload that ends /setup, a notice gives the next step: /models when no Review model is set, else /task", async () => {
+test("/setup ends by putting the next step in the session, so the reload's rebuilt chat shows it: /models when no Review model is set, else /task", async () => {
   for (const [models, next] of [[undefined, "Setup done. Next: /models to pick a Review model (without one, no review runs), then /task <what to do>."], [{ review: "p/strong" }, "Setup done. Next: /task <what to do>."]] as const) {
     const root = await tempProject({ "package.json": "{}", ".pi/workflow.json": JSON.stringify({ language: "English", ...(models ? { models } : {}) }) });
     const { pi, commands } = fakePi();
+    const events: string[] = [];
+    // pi rebuilds the chat from the session on reload and then shows its own "Reloaded…" status, which replaces an info notice.
+    pi.sendMessage = (m: any) => void events.push(`message ${m.display} ${m.content}`);
     registerSetup(pi);
-    const notices: string[] = [];
-    // The reloaded runtime is a fresh copy of the extension: only its session_start can show anything.
-    const reload = async () => {
-      const fresh = fakePi();
-      registerSetup(fresh.pi);
-      const after = ctxFor(root, []);
-      (after.ui as any).notify = (m: string) => void notices.push(m);
-      await fresh.emit("session_start", { reason: "reload" }, after.ctx);
-    };
-    // The model's run ends with setup_finish, which terminates it: nothing the tool result asks gets said.
-    const { ctx } = fakeCtx(root, ["No more", "No"], { mode: "tui", reload, waitForIdle: () => updateManifest(root, (m) => void (m.setup = "done")) });
+    const { ctx, ui } = fakeCtx(root, ["No more", "No"], { mode: "tui", reload: async () => void events.push("reload"), waitForIdle: () => updateManifest(root, (m) => void (m.setup = "done")) });
+    (ui as any).notify = () => {};
     await commands.get("setup").handler("", ctx);
-    assert.deepEqual(notices, [next]);
-    // Shown once: a later reload says nothing.
-    await reload();
-    assert.deepEqual(notices, [next]);
+    assert.deepEqual(events, [`message true ${next}`, "reload"]);
   }
+});
+
+test("/setup clears the scanning status before the interview dialogs open", async () => {
+  const root = await tempProject({ "package.json": "{}" });
+  const { pi, commands } = fakePi();
+  registerSetup(pi);
+  let status: string | undefined;
+  const { ctx, ui } = ctxFor(root, [undefined]);
+  (ui as any).setStatus = (_key: string, text?: string) => void (status = text);
+  const select = ui.select.bind(ui);
+  const seen: (string | undefined)[] = [];
+  (ui as any).select = (q: string) => (seen.push(status), select(q));
+  await commands.get("setup").handler("", ctx);
+  assert.deepEqual(seen, [undefined]);
 });
 
 test("the approval lists the files after .gitignore is fixed, capped at 40 with a count of the rest", async () => {
