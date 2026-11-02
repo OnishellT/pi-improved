@@ -165,13 +165,13 @@ test("/doctor shows the files in effect and reports bad limits and ignored globa
     const ctx: any = { cwd: root, hasUI: true, ui: { notify() {} } };
     const checks = await runDoctor(fakePi(() => ({ code: 0 })).pi, ctx, undefined, { has: async () => true });
     const config = checks.find((c) => c.name === "Config")!;
-    assert.match(config.detail, new RegExp(`global ${path.join(dir, "pi-improved.json").replaceAll(".", "\\.")}; project ${path.join(root, MANIFEST_PATH).replaceAll(".", "\\.")}`));
+    assert.match(config.detail, /^global [^;]*pi-improved\.json; project \.pi\/workflow\.json;/);
     assert.equal(config.ok, false);
     assert.match(config.detail, /Not read from the global file[^\n]*setup, future/);
     const limits = checks.find((c) => c.name === "Limits")!;
     assert.equal(limits.ok, false);
-    assert.match(limits.detail, new RegExp(`${path.join(root, MANIFEST_PATH).replaceAll(".", "\\.")}: limits\\.retroEvery must be a whole number >= 0, not 2\\.5: ignored`));
-    assert.match(limits.detail, new RegExp(`${path.join(dir, "pi-improved.json").replaceAll(".", "\\.")}: limits\\.verifyRetries must be a whole number >= 0, not -2`));
+    assert.match(limits.detail, new RegExp(`${MANIFEST_PATH.replaceAll(".", "\\.")}: limits\\.retroEvery must be a whole number >= 0, not 2\\.5: ignored`));
+    assert.match(limits.detail, new RegExp(`pi-improved\\.json: limits\\.verifyRetries must be a whole number >= 0, not -2`));
   });
   await withGlobal(undefined, async () => {
     const root = await tempProject({});

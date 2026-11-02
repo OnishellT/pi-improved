@@ -1,4 +1,5 @@
 import * as fs from "node:fs";
+import * as os from "node:os";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { BEND_INSTALL, findBend } from "./bend.ts";
@@ -40,8 +41,8 @@ const GH_LOGIN = `\`gh auth login\` (no gh on your PATH: \`nix --extra-experimen
 const realNix: NixProbe = { has: hasNix, resolve: nixPackage, credentials: () => credentialStatus() };
 
 /** Nix itself, then (when `resolve` is given) each package it provides. A failure says what to do, not "timed out". */
-async function nixChecks(nix: NixProbe, loggedIn: () => Promise<boolean>): Promise<Check[]> {
-  if (!(await nix.has())) return [{ name: "Nix", ok: false, detail: installMessage() }];
+async function nixChecks(nix: NixProbe, hasNix: boolean, loggedIn: () => Promise<boolean>): Promise<Check[]> {
+  if (!hasNix) return [{ name: "Nix", ok: false, detail: installMessage() }];
   const checks: Check[] = [{ name: "Nix", ok: true, detail: "ok" }];
   const resolve = nix.resolve;
   if (!resolve) return checks;
@@ -93,7 +94,7 @@ const scalar = (check: KeyCheck): Rule => (v, key) => {
 const fields = (checks: Record<string, KeyCheck>): Rule => (value, key) =>
   !isObject(value)
     ? scalar(object)(value, key)
-    : Object.entries(value).flatMap(([sub, v]) => (v === null ? [] : Object.hasOwn(checks, sub) ? scalar(checks[sub])(v, `${key}.${sub}`) : [`${key}.${sub} is not a known key`]));
+    : Object.entries(value).flatMap(([sub, v]) => (v === null ? [] : Object.hasOwn(checks, sub) ? scalar(checks[sub])(v, `${key}.${sub}`) : [`${key}.${sub} is not a known key: rename or remove it`]));
 const modelId: KeyCheck = (v) => (typeof v === "string" && /^[^/]+\/.+/.test(v) ? undefined : `must be "provider/model-id", not ${shown(v)}`);
 const globs: KeyCheck = (v) => (Array.isArray(v) && v.every((p) => typeof p === "string") ? undefined : `must be a list of globs, not ${shown(v)}`);
 const choice = ["ask", "always", "never"];
@@ -128,6 +129,18 @@ const KEY_CHECKS: Record<string, Rule> = {
 export const settingProblems = (config: Record<string, any>): string[] =>
   PREFERENCE_KEYS.flatMap((key) => (config[key] === undefined || config[key] === null || !KEY_CHECKS[key] ? [] : KEY_CHECKS[key](config[key], key)));
 
+/** A path as short as it can be read: relative inside the project, with `~` inside home. */
+export function shortPath(file: string, cwd: string): string {
+  const inside = (dir: string) => {
+    const rel = path.relative(dir, file);
+    return rel && !rel.startsWith("..") && !path.isAbsolute(rel) ? rel : undefined;
+  };
+  const rel = inside(cwd);
+  if (rel) return rel;
+  const home = inside(os.homedir());
+  return home ? path.join("~", home) : file;
+}
+
 /** Environment checks. Never throws. `nix.resolve` is left out at session start: the first build downloads hundreds of MB, so nothing that needs Nix runs then. */
 export async function runDoctor(pi: ExtensionAPI, ctx: ExtensionContext, version = process.versions.node, nix: NixProbe = realNix): Promise<Check[]> {
   const probe = async (cmd: string, args: string[]) => {
@@ -138,14 +151,16 @@ export async function runDoctor(pi: ExtensionAPI, ctx: ExtensionContext, version
     }
   };
   const subagent = resolveBin("subagent");
+  const short = (file: string) => shortPath(file, ctx.cwd);
+  const nixOk = await nix.has();
   // `subagent list` runs through Nix (tmux): at session start, with no `resolve`, that would start a build. Look the file up instead.
   const subagentOk = nix.resolve ? await probe(subagent, ["list"]) : fs.existsSync(subagent) || Boolean(which(subagent));
   const checks: Check[] = [];
   checks.push({ name: "Node", ok: nodeOk(version), detail: nodeOk(version) ? version : `${version}: needs >= ${MIN_NODE.join(".")}` });
-  checks.push({ name: "subagent", ok: subagentOk, detail: subagentOk ? subagent : "not found or not running (run `npm install` in the package folder, or reinstall with `pi install git:github.com/OnishellT/pi-improved`)" });
+  checks.push({ name: "subagent", ok: subagentOk, detail: subagentOk ? short(subagent) : nixOk ? "not found or not running (run `npm install` in the package folder, or reinstall with `pi install git:github.com/OnishellT/pi-improved`)" : "cannot run without Nix: install Nix first (see the Nix line)" });
   const ext = hasGlobalSubagent() ? "global" : fs.existsSync(bundledExtension()) ? "bundled" : undefined;
   checks.push({ name: "subagent extension", ok: Boolean(ext), detail: extensionDetail(ext) });
-  checks.push(...(await nixChecks(nix, () => probe("gh", ["auth", "status"]))));
+  checks.push(...(await nixChecks(nix, nixOk, () => probe("gh", ["auth", "status"]))));
 
   let manifest: Manifest | undefined;
   try {
@@ -166,24 +181,24 @@ export async function runDoctor(pi: ExtensionAPI, ctx: ExtensionContext, version
   const notes: string[] = [];
   if (globalError) notes.push(`${globalError}: the global file is ignored until it is fixed`);
   const notRead = Object.keys(globalConfig).filter((key) => !PREFERENCE_KEYS.includes(key));
-  if (notRead.length) notes.push(`Not read from the global file (state or unknown keys): ${notRead.join(", ")}`);
+  if (notRead.length) notes.push(`Not read from the global file (state or unknown keys): ${notRead.join(", ")}. Rename or remove them in ${short(files.global.file)}`);
   const unknown = Object.keys(project ?? {}).filter((key) => !PREFERENCE_KEYS.includes(key) && !STATE_KEYS.includes(key));
-  if (unknown.length) notes.push(`Not read from the project file (unknown keys): ${unknown.join(", ")}`);
+  if (unknown.length) notes.push(`Not read from the project file (unknown keys): ${unknown.join(", ")}. Rename or remove them in ${short(files.project.file)}`);
   const projectOnly = ["computer", "subagentPanes"].filter((key) => project && Object.hasOwn(project, key));
-  if (projectOnly.length) notes.push(`${files.project.file} sets ${projectOnly.join(", ")}: ignored, these are read from the global file only`);
+  if (projectOnly.length) notes.push(`${short(files.project.file)} sets ${projectOnly.join(", ")}: ignored, these are read from the global file only`);
   checks.push({
     name: "Config",
     ok: !notes.length,
-    detail: `${Object.entries(files).map(([name, f]) => `${name} ${f.file}${f.exists ? "" : " (not found)"}`).join("; ")}; the project file wins${notes.length ? `. ${notes.join(". ")}` : ""}`,
+    detail: `${Object.entries(files).map(([name, f]) => `${name} ${short(f.file)}${f.exists ? "" : " (not found)"}`).join("; ")}; the project file wins${notes.length ? `. ${notes.join(". ")}` : ""}`,
   });
   const problems = [
-    ...checkLimits(globalConfig.limits).problems.map((p) => `${files.global.file}: ${p}`),
-    ...checkLimits(project?.limits).problems.map((p) => `${files.project.file}: ${p}`),
+    ...checkLimits(globalConfig.limits).problems.map((p) => `${short(files.global.file)}: ${p}`),
+    ...checkLimits(project?.limits).problems.map((p) => `${short(files.project.file)}: ${p}`),
   ];
   if (problems.length) checks.push({ name: "Limits", ok: false, detail: problems.join("; ") });
   const settings = [
-    ...settingProblems(globalConfig).map((p) => `${files.global.file}: ${p}`),
-    ...settingProblems(project ?? {}).map((p) => `${files.project.file}: ${p}`),
+    ...settingProblems(globalConfig).map((p) => `${short(files.global.file)}: ${p}`),
+    ...settingProblems(project ?? {}).map((p) => `${short(files.project.file)}: ${p}`),
   ];
   if (settings.length) checks.push({ name: "Settings", ok: false, detail: settings.join("; ") });
   // agentlint matters only to a project whose verify or policy runs it.
@@ -229,6 +244,9 @@ export async function runDoctor(pi: ExtensionAPI, ctx: ExtensionContext, version
   return checks;
 }
 
+/** Checks about the user's config files, not the machine. */
+const CONFIG_CHECKS = ["Manifest", "Config", "Limits", "Settings", "Skills"];
+
 let warned = false;
 
 export function registerDoctor(pi: ExtensionAPI, nix: NixProbe = realNix) {
@@ -250,6 +268,10 @@ export function registerDoctor(pi: ExtensionAPI, nix: NixProbe = realNix) {
     if (warned || !ctx.hasUI) return;
     warned = true;
     const bad = (await runDoctor(pi, ctx, undefined, { has: nix.has })).filter((c) => !c.ok);
-    if (bad.length) ctx.ui.notify(`Something is missing in the environment (${bad.map((c) => c.name).join(", ")}). Run /doctor.`, "warning");
+    if (!bad.length) return;
+    // A typo in a config file is not "missing": name which side is wrong.
+    const names = (config: boolean) => bad.filter((c) => CONFIG_CHECKS.includes(c.name) === config).map((c) => c.name);
+    const parts = [names(true).length && `your config has problems (${names(true).join(", ")})`, names(false).length && `missing or not working: ${names(false).join(", ")}`].filter(Boolean);
+    ctx.ui.notify(`pi-improved: ${parts.join("; ")}. Run /doctor to see what to fix.`, "warning");
   });
 }

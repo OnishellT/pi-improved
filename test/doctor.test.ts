@@ -1,8 +1,9 @@
 import * as fs from "node:fs/promises";
+import * as os from "node:os";
 import * as path from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { extensionDetail, nodeOk, registerDoctor, runDoctor, type NixProbe } from "../src/doctor.ts";
+import { extensionDetail, nodeOk, registerDoctor, runDoctor, shortPath, type NixProbe } from "../src/doctor.ts";
 import { fakePi, tempProject, withEnv } from "./helpers.ts";
 
 const models = [{ provider: "anthropic", id: "opus" }];
@@ -198,4 +199,28 @@ test("the desktop is checked only while it is on, and names what it needs", asyn
 test("a missing subagent extension says how to get it back", () => {
   assert.match(extensionDetail(undefined), /Run `npm install` in the package folder/);
   assert.equal(extensionDetail("bundled"), "bundled");
+});
+
+test("/doctor says to rename or remove an unknown key, naming the file by its path in the project", async () => {
+  const t = await setup(() => ({ code: 0 }), true, undefined, { modles: {}, review: { typo: true } });
+  await t.commands.get("doctor").handler("", t.ctx);
+  const msg = t.notes[0].msg;
+  assert.match(msg, /✗ Config: [^\n]*unknown keys\): modles\. Rename or remove them in \.pi\/workflow\.json/);
+  assert.match(msg, /✗ Settings: \.pi\/workflow\.json: review\.typo is not a known key: rename or remove it/);
+  assert.ok(!msg.includes(t.ctx.cwd), "no absolute project path");
+});
+
+test("shortPath: relative inside the project, ~ inside home, absolute elsewhere", () => {
+  const home = os.homedir();
+  assert.equal(shortPath(path.join(home, "p", ".pi", "workflow.json"), path.join(home, "p")), path.join(".pi", "workflow.json"));
+  assert.equal(shortPath(path.join(home, ".pi", "agent", "pi-improved.json"), path.join(home, "p")), path.join("~", ".pi", "agent", "pi-improved.json"));
+  assert.equal(shortPath("/opt/x/y", path.join(home, "p")), "/opt/x/y");
+});
+
+test("/doctor without Nix says the subagent needs Nix first, not npm install", async () => {
+  const t = await setup(() => ({ code: 1 }), true, undefined, {}, { has: async () => false, resolve: async () => assert.fail("no Nix to build with") });
+  await t.commands.get("doctor").handler("", t.ctx);
+  const line = t.notes[0].msg.split("\n").find((l) => l.startsWith("✗ subagent:"))!;
+  assert.match(line, /needs? Nix|without Nix/);
+  assert.doesNotMatch(line, /npm install/);
 });
