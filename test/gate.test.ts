@@ -848,9 +848,11 @@ test("with no verify retries a missing interface asks the user instead of passin
   assert.equal((await t.settle()).entries[0].customType, "contract-gate");
 });
 
-test("headless, a missing interface after the retries ends the run with one notice naming what is missing", async () => {
+test("headless, a missing interface after the retries ends the run with one notice naming everything that is missing", async () => {
   const t = await setup({ pass: true, task: true });
-  const plan = { summary: "s", steps: [], files: ["src/fee.ts"], decisions: [], interface: [{ file: "src/fee.ts", exports: ["fee"], source: "ticket" }], seams: [] };
+  // Enough missing names that a 600-character tail would drop the first one.
+  const many = Array.from({ length: 40 }, (_, i) => ({ file: `src/fees/calculator${i}.ts`, exports: ["fee"], source: "ticket" }));
+  const plan = { summary: "s", steps: [], files: ["src/fee.ts"], decisions: [], interface: [{ file: "src/fee.ts", exports: ["fee"], source: "ticket" }, ...many], seams: [] };
   await fs.writeFile(path.join(t.root, ".pi/task.json"), JSON.stringify({ ...task, plan }));
   await fs.writeFile(path.join(t.root, ".pi/workflow.json"), JSON.stringify({ version: 1, setup: "done", verify: ["check"], connectors: [], limits: { verifyRetries: 0 } }));
   t.ctx.hasUI = false;
@@ -858,6 +860,7 @@ test("headless, a missing interface after the retries ends the run with one noti
   assert.equal(await t.settle(), undefined);
   assert.equal(t.notes.length, 1);
   assert.match(t.notes[0], /^The plan's interface is still missing after the automatic retries\. The task stays open: \/task done closes it\.\n\nInterface contract not met[\s\S]*src\/fee\.ts/);
+  assert.match(t.notes[0], /src\/fee\.ts[\s\S]*src\/fees\/calculator39\.ts/);
 });
 
 test("a requested review without models.review is announced once; the Risk line says there is no review model", async () => {
