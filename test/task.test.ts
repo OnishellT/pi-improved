@@ -707,6 +707,15 @@ test("without a UI, /task before setup says so on stderr and exits 1; /task alon
   assert.deepEqual(await stderrOf(() => t.commands.get("task").handler("Add fee", ctx)), { lines: ["[pi-improved] Run /setup first."], exitCode: 1 });
   assert.equal(await readTask(t.root), undefined);
   assert.deepEqual(await stderrOf(() => t.commands.get("task").handler("", ctx)), { lines: ["[pi-improved] No active task. Use /task <description or ticket>."], exitCode: undefined });
+  // An unreadable task file whose error spans lines still gives one stderr line.
+  await fs.mkdir(path.join(t.root, ".pi"), { recursive: true });
+  await fs.writeFile(path.join(t.root, ".pi", "task.json"), "{\n  \"title\": x\n}\n");
+  const broken = await stderrOf(() => t.commands.get("task").handler("Add fee", ctx));
+  assert.equal(broken.lines.length, 1);
+  assert.doesNotMatch(broken.lines[0], /\n/);
+  assert.match(broken.lines[0], /\/task cancel removes it\.$/);
+  assert.equal(broken.exitCode, 1);
+  await fs.rm(path.join(t.root, ".pi", "task.json"));
   // With a UI the notice is enough: nothing on stderr.
   assert.deepEqual(await stderrOf(() => t.commands.get("task").handler("Add fee", t.ctxFor([]).ctx)), { lines: [], exitCode: undefined });
 });
