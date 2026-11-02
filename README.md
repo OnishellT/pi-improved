@@ -70,7 +70,7 @@ The plan has no approval dialog. Its open questions are asked while planning; Es
 
 At the end, code runs the `verify` steps. When the diff is risky enough (`review.minLevel`, default `high`) and a review model is set, a read-only review starts alongside verify. A failing verify goes back to the agent: the 2nd failure diagnoses, the 3rd moves to the `escalate` model, and after the retries you decide.
 
-The done dialog lists every file the task changed (ignored files left out, as in a commit), with its status and +/- lines, and one line on the risk and the review. You confirm, then an understanding check asks 2-3 questions about the change (`understanding`; answer "skip" to skip it). Without a UI (print or JSON mode) there is no dialog and no understanding check: a verified task closes on its own, and a run that ends with verify red writes one line to stderr and exits with code 1. `/task done` closes the task by hand, `/task cancel` drops it. Every 5 finished tasks a notice suggests `/retro`.
+The done dialog lists every file the task changed (ignored files left out, as in a commit), with its status and +/- lines, and one line on the risk and the review. You confirm, then an understanding check asks 2-3 questions about the change (`understanding`; answer "skip" to skip it). Without a UI (print or JSON mode) there is no dialog and no understanding check: a verified task closes on its own, and a run that ends with verify red writes one line to stderr and exits with code 1. So does a `/task` that cannot act, such as one before `/setup` or while another task is open. `/task done` closes the task by hand, `/task cancel` drops it. Every 5 finished tasks a notice suggests `/retro`.
 
 ## Self-compaction
 

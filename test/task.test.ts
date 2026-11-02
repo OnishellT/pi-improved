@@ -674,15 +674,41 @@ test("a session that starts with an open task says so once; a reload or a done t
   assert.equal(notes.length, 2);
 });
 
-test("without a UI, /task with a task already open says how to end it instead of returning silently", async () => {
+/** Runs `fn` with console.error captured and process.exitCode restored after: print mode drops notices, so headless /task says it on stderr. */
+async function stderrOf(fn: () => Promise<unknown>) {
+  const [error, code] = [console.error, process.exitCode];
+  const lines: string[] = [];
+  console.error = (...a: unknown[]) => void lines.push(a.join(" "));
+  process.exitCode = undefined;
+  try {
+    await fn();
+    return { lines, exitCode: process.exitCode };
+  } finally {
+    console.error = error;
+    process.exitCode = code;
+  }
+}
+
+test("without a UI, /task with a task already open says how to end it on stderr and exits 1", async () => {
   const t = await setup();
   await t.commands.get("task").handler("First", t.ctxFor([]).ctx);
   const notes: string[] = [];
   const { ctx } = fakeCtx(t.root, [], { hasUI: false });
   ctx.ui.notify = (m: string) => void notes.push(m);
-  await t.commands.get("task").handler("Second", ctx);
+  const end = await stderrOf(() => t.commands.get("task").handler("Second", ctx));
   assert.equal(notes[0], "A task is already planning: First. /task continue resumes planning, /task cancel drops it.");
+  assert.deepEqual(end, { lines: [`[pi-improved] ${notes[0]}`], exitCode: 1 });
   assert.equal((await readTask(t.root))!.title, "First");
+});
+
+test("without a UI, /task before setup says so on stderr and exits 1; /task alone shows the task on stderr and exits 0", async () => {
+  const t = await setup(false);
+  const ctx = fakeCtx(t.root, [], { hasUI: false }).ctx;
+  assert.deepEqual(await stderrOf(() => t.commands.get("task").handler("Add fee", ctx)), { lines: ["[pi-improved] Run /setup first."], exitCode: 1 });
+  assert.equal(await readTask(t.root), undefined);
+  assert.deepEqual(await stderrOf(() => t.commands.get("task").handler("", ctx)), { lines: ["[pi-improved] No active task. Use /task <description or ticket>."], exitCode: undefined });
+  // With a UI the notice is enough: nothing on stderr.
+  assert.deepEqual(await stderrOf(() => t.commands.get("task").handler("Add fee", t.ctxFor([]).ctx)), { lines: [], exitCode: undefined });
 });
 
 test("plan check: one that did not run does not use up the budget", async () => {
