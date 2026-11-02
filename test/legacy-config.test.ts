@@ -39,3 +39,9 @@ test("the project's .pi/self-compact.json is renamed after the move, and when wo
   assert.match(migrateProject(root)[0], /no longer read \(\.pi\/workflow\.json has selfCompact\)/);
   assert.equal(JSON.parse(await fs.readFile(path.join(root, MANIFEST_PATH), "utf8")).selfCompact.default.force, "80%");
 });
+
+test("an earlier .migrated backup is never overwritten", async () => {
+  const dir = await tempProject({ "pi-improved.json": JSON.stringify({ computer: { desktop: "on" } }), "computer.json": JSON.stringify({ desktop: "off" }), "computer.json.migrated": "first" });
+  assert.match(migrateGlobal(dir)[0], /renamed it to computer\.json\.migrated\.2\.$/);
+  assert.equal(await fs.readFile(path.join(dir, "computer.json.migrated"), "utf8"), "first");
+});

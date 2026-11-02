@@ -214,7 +214,7 @@ export async function runDoctor(pi: ExtensionAPI, ctx: ExtensionContext, version
   );
   if (skillProblems.length) checks.push({ name: "Skills", ok: false, detail: skillProblems.join("; ") });
 
-  const wanted = Object.values(manifest?.models ?? {}).filter((m): m is string => Boolean(m));
+  const wanted = Object.values(isObject(manifest?.models) ? manifest.models : {}).filter((m): m is string => typeof m === "string" && m.length > 0);
   if (wanted.length && ctx.modelRegistry) {
     const available = new Set(ctx.modelRegistry.getAvailable().map((m) => `${m.provider}/${m.id}`));
     const missing = [...new Set(wanted)].filter((m) => !available.has(m));

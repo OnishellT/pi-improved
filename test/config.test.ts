@@ -197,7 +197,7 @@ test("migration: legacy global files are copied once, left untouched, and notice
   assert.deepEqual(migrateGlobal(dir), [], "the second startup moves and says nothing");
   // After that only the new file is read: a changed legacy file is ignored, and a key already there is never overwritten.
   await write(path.join(dir, "computer.json"), { desktop: "off" });
-  assert.match(migrateGlobal(dir).join(), /^computer\.json is no longer read \(.*pi-improved\.json has computer\): renamed it to computer\.json\.migrated\.$/);
+  assert.match(migrateGlobal(dir).join(), /^computer\.json is no longer read \(.*pi-improved\.json has computer\): renamed it to computer\.json\.migrated\.2\.$/);
   assert.equal(readGlobal(dir).computer.desktop, "on");
 });
 
@@ -450,7 +450,7 @@ test("choosing the session model for a phase only the global file sets stores an
     registerModels(f.pi);
     // Review goes Off (no session fallback); /models picks the Review row, then Done.
     let turn = 0;
-    let want = "Off: no review and no plan check";
+    let want = "Off: no diff review (the plan check uses the setup model)";
     const ui = { ...fakeUI([]), select: async (title: string, options: string[]): Promise<string> => (title === "Which phase to change?" ? (turn++ % 2 ? "Done" : options.find((o) => /^Review/.test(o))!) : want) };
     await f.commands.get("models").handler("project", { cwd: root, ui, modelRegistry: { getAvailable: () => [luna, astra] } });
     const own = await read(path.join(root, MANIFEST_PATH));
