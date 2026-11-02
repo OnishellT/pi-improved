@@ -281,7 +281,7 @@ test("verifyRetries and failuresBeforeEscalation drive the gate", async () => {
   assert.equal(none.results[0], undefined, "no retries: it asks at once and the answer stops it");
   assert.equal(none.asked.length, 1);
   const more = await run({ verifyRetries: 3, failuresBeforeEscalation: 3 }, 3);
-  assert.deepEqual(more.results.map((r: any) => r.entries[0].customType), ["verify-gate", "verify-gate", "verify-diagnose"], "the third failure diagnoses");
+  assert.deepEqual(more.results.map((r: any) => r.entries[0].customType), ["verify-gate", "verify-diagnose", "verify-gate"], "the second failure diagnoses; the third escalates");
   assert.equal(more.asked.length, 0);
 });
 
