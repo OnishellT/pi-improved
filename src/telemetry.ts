@@ -92,6 +92,13 @@ function understandingLine(records: any[]): string[] {
   return [`Understanding (${checks.length} tasks): ${["done", "skipped", "no-ui", "off"].map(rate).join(", ")}${gaps}`];
 }
 
+/** How the last tasks' plan checks ended (the last one of each task); skipped: it did not run. Not code reviews. */
+function planLine(records: any[]): string[] {
+  const last = records.map((r) => [...(r.metrics.reviews ?? [])].reverse().find((x: any) => String(x.status).startsWith("plan-"))?.status).filter(Boolean);
+  const count = (status: string) => `${status} ${last.filter((s) => s === `plan-${status}`).length}`;
+  return last.length ? [`Plan checks (${last.length} tasks): ${["ok", "fix", "skipped"].map(count).join(", ")}`] : [];
+}
+
 export async function metricsReport(root: string): Promise<string> {
   const records = (await readMemory(root)).filter((r) => r.metrics);
   if (!records.length) return "No metrics yet: they are saved when each task ends.";
@@ -112,7 +119,7 @@ export async function metricsReport(root: string): Promise<string> {
   // The saving is a guess (the mean paid review times the skipped ones), so it needs at least one paid review and says so.
   const mean = paid.length ? paid.reduce((s, x) => s + x.cost, 0) / paid.length : 0;
   const skippedLine = !avoided ? [] : [`Reviews skipped as low risk: ${avoided}${paid.length ? ` (estimated $${(avoided * mean).toFixed(2)} saved)` : ""}`];
-  return [`Last ${rows.length} tasks (id, cost, tokens in+out, seconds, verify failures, reviews; skipped: the review did not run; n/a: review not requested):`, ...lines, `Mean cost per task: $${avg.toFixed(3)}`, ...skippedLine, ...understandingLine(records.slice(-10))].join("\n");
+  return [`Last ${rows.length} tasks (id, cost, tokens in+out, seconds, verify failures, reviews; skipped: the review did not run; n/a: review not requested):`, ...lines, `Mean cost per task: $${avg.toFixed(3)}`, ...skippedLine, ...planLine(records.slice(-10)), ...understandingLine(records.slice(-10))].join("\n");
 }
 
 /**

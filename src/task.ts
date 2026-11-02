@@ -21,6 +21,7 @@ import { QUESTION_NUDGE, TASK_NUDGE, approachResume, assistantText, endsOnQuesti
 
 const MAX_NUDGES = 2; // "call task_plan" / "use ask_user" reminders per user message
 const MAX_TICKET_TEXT = 300_000; // characters of tracker output kept as evidence
+const START_TIMEOUT = 30_000; // how long /task waits for the planner run to start
 // A request that is only a ticket key (`PAY-142`); `PAY-142 add fees` or `UTF-8 handling` is free text.
 const TICKET = /^[A-Z][A-Z0-9]+-\d+$/;
 const TRACKERS = ["jira", "linear"];
@@ -78,6 +79,11 @@ const setupRunning = async (root: string) => (await readManifest(root).catch(() 
 
 export function registerTask(pi: ExtensionAPI) {
   let nudges = 0;
+  let onStart: (() => void) | undefined;
+  pi.on("agent_start", () => {
+    onStart?.();
+    onStart = undefined;
+  });
   /** The user cancelled a planning question: no "call task_plan" nudge until they write again. */
   let paused = false;
   /** The task the answers below belong to: continuing it keeps them. */
@@ -120,7 +126,13 @@ export function registerTask(pi: ExtensionAPI) {
     const previous = await usePhaseModel(pi, ctx, "implement");
     if (previous && !task.model) await updateTask(ctx.cwd, (t) => void (t.model = previous));
     plannerPrompt = taskPrompt(task.title, task.ticket, tracker(manifest), await relatedTasks(ctx.cwd, task.body ?? task.title), await skillsBlock(ctx.cwd, "plan"), task.spec, task.body, !approached && understandingOf(manifest) === "plan+end" && ctx.hasUI && (approach ? approachResume(approach.answered, approach.open) : true));
+    // sendUserMessage does not wait for the run: idle before it starts would end a print-mode /task (pi -p) before planning.
+    const started = new Promise<void>((resolve) => {
+      onStart = resolve;
+      setTimeout(resolve, START_TIMEOUT).unref();
+    });
     pi.sendUserMessage(plannerPrompt);
+    await started;
     return ctx.waitForIdle();
   };
 
@@ -215,7 +227,9 @@ export function registerTask(pi: ExtensionAPI) {
   /** One short strong-model read of the plan: cheaper than reviewing the diff it produces, and it fixes names before they exist. */
   const runPlanCheck = async (ctx: any, root: string, task: Task, plan: Plan, evidence: string, manifest: Manifest, signal?: AbortSignal) => {
     const checker = manifest.models?.review ?? manifest.models?.setup;
-    if (!checker || !planCheckWanted(manifest, plan.files) || (task.planChecks ?? 0) >= limitsOf(manifest).planChecks) return;
+    // Not wanted (or no model to run it): /metrics shows it as plan-skipped, with no cost.
+    if (!checker || !planCheckWanted(manifest, plan.files)) return void pi.events?.emit(REVIEW_EVENT, { root, status: PLAN_STATUS.skipped, model: checker ?? "none", seconds: 0 } satisfies ReviewPayload);
+    if ((task.planChecks ?? 0) >= limitsOf(manifest).planChecks) return;
     ctx.ui.setStatus("plan-check", `checking the plan with ${checker}…`);
     const t0 = Date.now();
     const check = await checkPlan(pi.exec.bind(pi), root, task, plan, evidence, checker, signal).finally(() => ctx.ui.setStatus("plan-check", undefined));
@@ -398,6 +412,17 @@ export function registerTask(pi: ExtensionAPI) {
     // The /setup interview asks through ask_user too, while a task may be open: its rounds are not the planner's.
     if (await setupRunning(ctx.cwd)) return;
     const questions = (event.input.questions ?? []) as { question: string; options?: string[] }[];
+    // With no UI nobody answers: pi takes each recommended (first) option, as task_plan does, and the plan records it as chosen without the user.
+    if ((event as any).isError && !ctx.hasUI) {
+      const closed = questions.filter((q) => q.options?.length);
+      for (const q of closed) {
+        ctx.ui.notify(`No UI: took "${q.options![0]}" for: ${oneLine(q.question, 80)}`, "info");
+        asked.set(q.question, { question: q.question, options: q.options!, answer: `${q.options![0]} (${WITHOUT_USER})` });
+        answers.set(JSON.stringify([q.question, q.options]), q.options![0]);
+      }
+      if (closed.length) return { content: [{ type: "text" as const, text: "No UI, so pi took the first option of each question with options. These are recorded as plan decisions: follow them, and do not list these topics again in task_plan decisions." }], isError: false };
+      return;
+    }
     const given = ((event as any).details?.answers ?? []) as { question: string; answer: string }[];
     // Answers come back in question order; a cancel drops the rest and pauses the plan.
     if (!(event as any).isError && given.length < questions.length) pause(ctx, questions[given.length].question);
