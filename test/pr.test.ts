@@ -63,7 +63,7 @@ test("body: template kept, no verify steps, no evidence to-do even when evidence
   assert.ok(body.startsWith("## Checklist\n- [ ] x\n\n---"));
   assert.match(body, /no verification steps/);
   assert.doesNotMatch(body, /Evidence|Attach|\.pi\/evidence/);
-  assert.match(body, /Not assessed: the project has no \.pi\/workflow\.json\./);
+  assert.match(body, /Not assessed: \.pi\/workflow\.json could not be read\./);
   assert.match(body, /- abc1234 add it/);
 });
 

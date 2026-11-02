@@ -85,7 +85,7 @@ export function buildBody({ task, facts, verify, risk }: BodyInput): string {
   const verified =
     !verify ? "Not run." : verify === "none" ? "The project has no verification steps." : `${verify.ok ? "Passed" : "FAILED"}:\n\n\`\`\`\n${verify.text}\n\`\`\``;
   // The reasons show whatever the review policy decided.
-  const riskText = !risk ? "Not assessed: the project has no .pi/workflow.json." : risk.reasons.length ? `${risk.review ? "Risky" : `Risk ${risk.level}`}: ${risk.reasons.join("; ")}.` : "Low risk: no reason found.";
+  const riskText = !risk ? "Not assessed: .pi/workflow.json could not be read." : risk.reasons.length ? `${risk.review ? "Risky" : `Risk ${risk.level}`}: ${risk.reasons.join("; ")}.` : "Low risk: no reason found.";
   const sections: [string, string][] = [
     ["Summary", summary || "(no task plan: see the commits)"],
     ["How it was verified", verified],
