@@ -108,7 +108,7 @@ model's last review had confidence 4 or more; rounds by other models do not coun
 both, and --dry-run ignores both. The review stops after REVIEW_TIMEOUT_MS in total, retries
 included (default 60 min), or after REVIEW_IDLE_MS without output (default 120 s).
 Env: REVIEW_PROVIDER, REVIEW_MODEL, REVIEW_THINKING, REVIEW_TIMEOUT_MS, REVIEW_IDLE_MS, REVIEW_PI_DIR,
-PI_MAIN_DIR (default PI_CODING_AGENT_DIR, then ~/.pi/agent). See README.md.`;
+PI_MAIN_DIR (default PI_CODING_AGENT_DIR, then ~/.pi/agent). See docs/DEVELOPMENT.md.`;
 
 interface Thread {
   id: string;
