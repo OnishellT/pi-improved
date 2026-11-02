@@ -115,6 +115,8 @@ test("each exception shows its own detector and fingerprint; the place from agen
   assert.equal(describeAcceptance(rec("fee", "cccc2222dddd"), checked), '- money (fee #cccc2222): "ok" (by agent:pi)');
   assert.deepEqual(await lastCheck(await tempDir("pi-none-")), []);
   assert.equal(describeAcceptance("not json"), "not json");
+  const long = "x".repeat(300);
+  assert.ok(describeAcceptance(JSON.stringify({ reason: long, actor: "a" })).includes(`"${long}"`), "the whole reason is shown");
 });
 
 test("a declined or unapprovable exception is undone, however the command was spelled", async () => {

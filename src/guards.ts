@@ -147,7 +147,7 @@ export function describeAcceptance(line: string, checked: CheckedFinding[] = [])
   const place = (file?: string, line?: number) => (file ? ` at ${file}${line ? `:${line}` : ""}` : "");
   const hint = found?.file ? `; last check: ${found.ruleId ?? rule}${place(found.file, found.line)}` : "";
   const reason = r.reason.replace(/\s+/g, " ").trim();
-  return `- ${rule}${id ? ` (${id})` : ""}${place(r.file, r.line)}: "${reason.length > 200 ? `${reason.slice(0, 199)}…` : reason}" (by ${r.actor ?? r.authority ?? "unknown"})${hint}`;
+  return `- ${rule}${id ? ` (${id})` : ""}${place(r.file, r.line)}: "${reason}" (by ${r.actor ?? r.authority ?? "unknown"})${hint}`;
 }
 
 /**
