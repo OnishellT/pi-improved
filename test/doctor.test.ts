@@ -95,7 +95,7 @@ test("/doctor checks types and ranges in both files and names unknown project ke
     assert.doesNotMatch(settings, /implement/, "null unsets a value");
     assert.match(t.notes[0].msg, /✗ Config: [^\n]*Not read from the project file \(unknown keys\): modles/);
   });
-  const fine = await setup(() => ({ code: 0 }), true, undefined, { basePrompt: false, maxReport: 500, review: { paths: ["db/**"], minLevel: "low" } });
+  const fine = await setup(() => ({ code: 0 }), true, undefined, { basePrompt: false, maxReport: 500, review: { paths: ["db/**"], minLevel: "low" }, declinedConnectors: ["linear"] });
   await fine.commands.get("doctor").handler("", fine.ctx);
   assert.doesNotMatch(fine.notes[0].msg, /Settings|unknown keys/);
 });
