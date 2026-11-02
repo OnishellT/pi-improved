@@ -102,6 +102,8 @@ function shownText(ctx: { hasUI?: boolean; mode?: string }, file: string, showIm
   if (!ctx.hasUI) return `No picture was shown: there is no UI. Saved at ${file}${kept}.`;
   if (ctx.mode === "tui" && !showImages) return `Saved at ${file}${kept}. Pi's image display is off (terminal.showImages), so the user sees only the path.`;
   if (ctx.mode === "tui" && !getCapabilities().images) return `Saved at ${file}${kept}. This terminal cannot draw pictures, so the user sees only the path.`;
+  // RPC and the like: the client gets the file and may or may not draw it.
+  if (ctx.mode !== "tui") return `Saved at ${file}${kept}. Sent to the client, which shows it if it can draw pictures.`;
   return `Shown to the user${size}: ${file}${kept}`;
 }
 
@@ -166,7 +168,8 @@ export function registerShow(pi: ExtensionAPI, exec: Run = run, browser: () => P
       const note = (text: string) => new Text(theme.fg(context.isError ? "error" : "muted", text), context.outputPad, 0);
       const view = new Container();
       view.addChild(new Spacer(1));
-      if (isPartial || !file || !context.showImages) {
+      // Without an image protocol pi-tui's Image would print only the file's basename: the text has the full path.
+      if (isPartial || !file || !context.showImages || !getCapabilities().images) {
         view.addChild(note(result.content.map((c) => (c.type === "text" ? c.text : "")).join("")));
         return view;
       }

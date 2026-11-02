@@ -149,7 +149,8 @@ export async function registerComputer(pi: ExtensionAPI) {
       }
 
       const missing = desktopMissing();
-      const inHyprland = missing.length > 0 && !missing.some((what) => what === "Linux" || what.startsWith("hyprctl"));
+      // Hyprland sets this in its session, also when hyprctl is not on pi's PATH.
+      const inHyprland = missing.length > 0 && !missing.includes("Linux") && (!!process.env.HYPRLAND_INSTANCE_SIGNATURE || !missing.some((what) => what.startsWith("hyprctl")));
       if (!missing.length || config.desktop === "on") {
         const desktop = await ctx.ui.select(
           `Desktop: a private Hyprland session the agent drives (Pi must run inside Hyprland) (now: ${desktopState(config)}${missing.length ? `; missing: ${missing.join(", ")}` : ""})`,

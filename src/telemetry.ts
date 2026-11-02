@@ -100,19 +100,19 @@ export async function metricsReport(root: string): Promise<string> {
     const sum = (k: string) => phases.reduce((s, p) => s + (p[k] ?? 0), 0);
     const reviews: any[] = r.metrics.reviews ?? [];
     // Plan checks are not diff reviews: the verdict column leaves them out; their cost still counts.
-    const verdicts = reviews.filter((x) => !String(x.status).startsWith("plan-")).map((x) => (x.status === "skipped-low-risk" ? "skipped" : x.status === "not-requested" ? "n/a" : x.discarded ? `${x.status} (discarded)` : x.status)).join(",") || "-";
+    const verdicts = reviews.filter((x) => !String(x.status).startsWith("plan-")).map((x) => (x.status === "skipped-low-risk" ? "skipped (low risk)" : x.status === "not-requested" ? "n/a" : x.discarded ? `${x.status} (discarded)` : x.status)).join(",") || "-";
     const reviewCost = reviews.reduce((s, x) => s + (x.cost ?? 0), 0);
     return { id: String(r.ticket ?? r.id), cost: sum("cost") + reviewCost, tokens: sum("input") + sum("output"), seconds: sum("seconds"), fails: r.metrics.verifyFailures ?? 0, verdicts };
   });
   const lines = rows.map((r) => `${r.id.padEnd(14)} $${r.cost.toFixed(3).padStart(7)} ${String(r.tokens).padStart(9)} tok ${String(Math.round(r.seconds)).padStart(6)} s  verify✗ ${r.fails}  review: ${r.verdicts}`);
   const avg = rows.reduce((s, r) => s + r.cost, 0) / rows.length;
   const all: any[] = records.flatMap((r) => r.metrics.reviews ?? []);
-  const paid = all.filter((x) => x.status !== "skipped-low-risk" && x.status !== "not-requested" && !String(x.status).startsWith("plan-") && x.cost !== undefined);
+  const paid = all.filter((x) => x.status !== "skipped-low-risk" && x.status !== "not-requested" && !String(x.status).startsWith("plan-") && x.cost > 0);
   const avoided = all.filter((x) => x.status === "skipped-low-risk").length;
   // The saving is a guess (the mean paid review times the skipped ones), so it needs at least one paid review and says so.
   const mean = paid.length ? paid.reduce((s, x) => s + x.cost, 0) / paid.length : 0;
   const skippedLine = !avoided ? [] : [`Reviews skipped as low risk: ${avoided}${paid.length ? ` (estimated $${(avoided * mean).toFixed(2)} saved)` : ""}`];
-  return [`Last ${rows.length} tasks (id, cost, tokens in+out, seconds, verify failures, reviews; n/a: review not requested):`, ...lines, `Mean cost per task: $${avg.toFixed(3)}`, ...skippedLine, ...understandingLine(records.slice(-10))].join("\n");
+  return [`Last ${rows.length} tasks (id, cost, tokens in+out, seconds, verify failures, reviews; skipped: the review did not run; n/a: review not requested):`, ...lines, `Mean cost per task: $${avg.toFixed(3)}`, ...skippedLine, ...understandingLine(records.slice(-10))].join("\n");
 }
 
 /**
