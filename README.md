@@ -43,7 +43,7 @@ To try it from a clone: `npm install`, then `pi -e <clone>`. Run `npm install` a
 | `/models [project]` | Picks a model per phase (`setup`, `implement`, `review`, `escalate`). Pick a phase, then its model, until Done. Esc saves nothing. Saved in the global file; `/models project` saves for this project only. | Before `/setup`, or when no review model is set. |
 | `/setup` | Scans the repo, asks the minimum, then has the model write `AGENTS.md`, domain skills, ADRs, a verify-app skill and the `verify` steps. You approve the result. | Once per repo. |
 | `/task <text \| KEY-1 \| spec.md>` | Plans and implements a task, then verifies it. `/task` alone shows the task and what to do next. `continue`, `done` and `cancel` act on it. | For any change you want planned and gated. |
-| `/verify` | Runs the project's `verify` steps by hand. Says "Verify did not run" when Nix or the toolchain could not start. | After a fix, before `/task done`. |
+| `/verify` | Runs the project's `verify` steps by hand. Says "Verify did not run" when Nix is missing or fails, or `.pi/workflow.json` cannot be read. | After a fix, before `/task done`. |
 | `/pr [base]` | Prepares the branch and the PR: summary, verify report, risk, ADRs, decisions. Commits, pushes and opens only after you confirm. | When the task is done. |
 | `/retro [n]` | Reviews the last finished tasks and proposes edits to `AGENTS.md`, ADRs or skills. Writes nothing without your yes. | After the reminder, or whenever you want. |
 | `/cost` | Cost, tokens and risk of the active task. With no active task, the latest finished tasks. | During a task. |
@@ -70,7 +70,7 @@ The plan has no approval dialog. Its open questions are asked while planning; Es
 
 At the end, code runs the `verify` steps. When the diff is risky enough (`review.minLevel`, default `high`) and a review model is set, a read-only review starts alongside verify. A failing verify goes back to the agent: the 2nd failure diagnoses, the 3rd moves to the `escalate` model, and after the retries you decide.
 
-The done dialog lists every file the task changed (ignored files left out, as in a commit), with its status and +/- lines, and one line on the risk and the review. You confirm, then an understanding check asks 2-3 questions about the change (`understanding`; answer "skip" to skip it). `/task done` closes the task by hand, `/task cancel` drops it. Every 5 finished tasks a notice suggests `/retro`.
+The done dialog lists every file the task changed (ignored files left out, as in a commit), with its status and +/- lines, and one line on the risk and the review. You confirm, then an understanding check asks 2-3 questions about the change (`understanding`; answer "skip" to skip it). Without a UI (print or JSON mode) there is no dialog and no understanding check: a verified task closes on its own. `/task done` closes the task by hand, `/task cancel` drops it. Every 5 finished tasks a notice suggests `/retro`.
 
 ## Self-compaction
 
@@ -92,7 +92,7 @@ Two files hold the options:
 
 The project file wins over the global one. Plain objects merge key by key (`models`, `review`, `limits`, `limits.fastPath`, `skills`, `selfCompact`); arrays and scalars are replaced. `/setup` and `/skills` write the project file only, and only what changed, so your global values are not copied into the repo. `/models` writes the global file, unless the project file already sets that phase or you run `/models project`. A `null` in the project file unsets a value the global file sets (`"models": { "review": null }` is what `/models project` writes when you turn Review off for this project).
 
-A bad value is dropped in its own file, so a bad project value falls back to the global one, then to the default. A global file that is not valid JSON counts as empty, with a notice at session start. `/doctor` names the file that holds a bad value (wrong type or out of range), and reports keys it did not read: unknown keys in `.pi/workflow.json` (a typo such as `modles`), state keys in the global file, and `computer` or `subagentPanes` in a project file. The agent's write and edit tools cannot change either file.
+A bad `limits` value is dropped in its own file, so it falls back to the global one, then to the default. Other keys are not checked per file: a bad project value there replaces the global one, and the code that reads it uses its default. A global file that is not valid JSON counts as empty, with a notice at session start. `/doctor` names the file that holds a bad value (wrong type or out of range), and reports keys it did not read: unknown keys in `.pi/workflow.json` (a typo such as `modles`), state keys in the global file, and `computer` or `subagentPanes` in a project file. The agent's write and edit tools cannot change either file.
 
 Old config files are moved in once at startup. `computer.json` and `self-compact.json` in the agent dir are renamed to `<name>.migrated`. A project's `.pi/self-compact.json` is copied, and the notice asks you to delete it. `subagentPanes` in pi's `settings.json` is copied, and the notice asks you to remove it there.
 

@@ -24,7 +24,7 @@ Scripts in `scripts/`:
 `npm run review -- <pr> [--dry-run] [--force]` reviews a PR with pi and posts one GitHub review: inline comments, a summary, and a confidence score from 1 (must not merge) to 5 (safe to merge). Run it from a checkout with a git remote for the PR's repository.
 
 - The reviewer reads the PR head in a throwaway worktree, read-only, with an empty home and no secrets in its environment.
-- Its context is `README.md`, `docs/*.md`, any `CLAUDE.md`, `AGENTS.md` and `CONTRIBUTING.md`, the PR text, the linked issue, earlier review threads and the diff.
+- Its context is `README.md`, `docs/*.md`, the root `CLAUDE.md`, `AGENTS.md` and `CONTRIBUTING.md` when present, the PR text, the linked issue, earlier review threads and the diff.
 - Follow-up rounds judge only what changed since the last reviewed commit. A rebase onto a newer base or a rewritten history makes the round a full review, and the summary says so.
 - A head that already has a review is skipped. A fourth round by the same reviewer model needs `--force`, unless that model's last review had confidence 4 or more. Rounds by another model do not count, so switching `REVIEW_PROVIDER` or `REVIEW_MODEL` starts a fresh count. Reviews posted before the model was recorded count for no model.
 - Markdown-only PRs are skipped by design, since there is no code to review, unless an earlier review is waiting on code changed since.
