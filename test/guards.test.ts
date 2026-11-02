@@ -101,7 +101,7 @@ test("an agentlint exception the user approves stays, and they see the new recor
   assert.equal(await bash("npm test", () => write("")), undefined);
 });
 
-test("two exceptions under one rule are told apart: by the place agentlint's last check gives, else by detector and fingerprint", async () => {
+test("each exception shows its own detector and fingerprint; the place from agentlint's last check (model-writable) is only a hint after them", async () => {
   const fs = await import("node:fs/promises");
   const { join } = await import("node:path");
   const source = (detectorId: string) => ({ standardId: "money", standardRevision: 1, detectorId, detectorVersion: 1, bindingId: "b", bindingDigest: "x" });
@@ -111,7 +111,7 @@ test("two exceptions under one rule are told apart: by the place agentlint's las
   await fs.mkdir(join(dir, ".agentlint", ".cache"), { recursive: true });
   await fs.writeFile(join(dir, ".agentlint", ".cache", "last-check.json"), JSON.stringify({ version: 1, findings: [{ selector: "1", hash, ruleId: "money-review", file: "src/pay.ts", line: 12, column: 1 }] }));
   const checked = await lastCheck(dir);
-  assert.equal(describeAcceptance(rec("round", "aaaa1111bbbb"), checked), '- money-review at src/pay.ts:12: "ok" (by agent:pi)');
+  assert.equal(describeAcceptance(rec("round", "aaaa1111bbbb"), checked), '- money (round #aaaa1111): "ok" (by agent:pi); last check: money-review at src/pay.ts:12');
   assert.equal(describeAcceptance(rec("fee", "cccc2222dddd"), checked), '- money (fee #cccc2222): "ok" (by agent:pi)');
   assert.deepEqual(await lastCheck(await tempDir("pi-none-")), []);
   assert.equal(describeAcceptance("not json"), "not json");
