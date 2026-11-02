@@ -494,6 +494,25 @@ test("headless, the escalated attempt runs past the retries; the next failure en
   assert.equal((await readTask(t.ctx.cwd))?.status, "implementing");
 });
 
+test("headless, a later prompt of the same run that passes verify gives the exit code back", async () => {
+  const t = await parallel({}, [], "Error: boom");
+  await updateManifest(t.ctx.cwd, (m) => void (m.limits = { verifyRetries: 0, failuresBeforeEscalation: 3 }));
+  t.ctx.hasUI = false;
+  t.gate.resolve();
+  const end = await headlessEnd(async () => {
+    process.exitCode = undefined;
+    assert.equal(await t.settle(), undefined);
+    assert.equal(process.exitCode, 1);
+    // pi -p with a second message: a new user turn that fixes the code.
+    await t.emit("before_agent_start", { messageType: "user" }, t.ctx);
+    await t.emit("tool_result", { toolName: "write" }, t.ctx);
+    t.setCode(0);
+    await t.settle();
+    assert.equal(process.exitCode, undefined);
+  });
+  assert.equal(end.lines.length, 1);
+});
+
 test("with a UI, a red end sets no exit code and writes nothing to stderr", async () => {
   const t = await setup({ task: true, answers: ["Leave it as is"] });
   await updateManifest(t.root, (m) => void (m.limits = { verifyRetries: 0, failuresBeforeEscalation: 3 }));
@@ -556,7 +575,10 @@ test("the premise lines go with every repeat from the escalation point on, inclu
   const first = await one.settle();
   assert.equal(first.entries[0].customType, "verify-diagnose");
   assert.doesNotMatch(first.entries[0].content, /every fix so far assumed/);
+  assert.equal(one.notes.at(-1), "Verify failed 1 time: p/strong takes this attempt and 8 more, then you decide.");
+  // Later retries on the escalated model say their attempt.
   const second = await one.settle();
+  assert.match(second.entries[0].content, /^Verify failed \(2 of 9\): retrying\./);
   assert.equal(second.entries[0].customType, "verify-gate");
   assert.match(second.entries[0].content, /Fix it, then finish\.[\s\S]*every fix so far assumed/);
   one.setOut("Error: y 2");
