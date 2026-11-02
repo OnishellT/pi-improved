@@ -11,7 +11,7 @@ import { fakeUI, tempProject } from "./helpers.ts";
 
 const plan = { summary: "Add the thing", steps: ["step one"], files: [], decisions: [] as any[], interface: [], seams: [{ name: "parser", testFile: "t", catches: "bad input", misses: "io" }] };
 const task: any = { id: "t", title: "Add the thing", ticket: "42", status: "done", allowedExtra: [], startedAt: "", plan };
-const facts: PrFacts = { branch: "task/42", base: "origin/main", commits: ["abc1234 add it"], changes: ["A\tdocs/adr/0002-x.md", "M\tsrc/a.ts"], dirty: ["?? docs/adr/0003-y.md"], gh: true, origin: "git@x:y.git", hasEvidenceSkill: false };
+const facts: PrFacts = { branch: "task/42", base: "origin/main", commits: ["abc1234 add it"], changes: ["A\tdocs/adr/0002-x.md", "M\tsrc/a.ts"], dirty: ["?? docs/adr/0003-y.md"], gh: true, origin: "git@x:y.git", evidence: [] };
 
 test("branch name: ticket, else title slug, never Claude or Anthropic", () => {
   assert.equal(branchName(task), "task/42");
@@ -58,11 +58,12 @@ test("body: the intent leads the summary; a predates list left in an old task.js
   assert.doesNotMatch(failed, /predate|FAIL old/);
 });
 
-test("body: template kept, evidence note, no verify steps", () => {
-  const body = buildBody({ task: undefined, facts: { ...facts, template: "## Checklist\n- [ ] x\n", hasEvidenceSkill: true }, verify: "none" });
+test("body: template kept, no verify steps, no evidence to-do even when evidence exists", () => {
+  const body = buildBody({ task: undefined, facts: { ...facts, template: "## Checklist\n- [ ] x\n", evidence: [".pi/evidence/home.png"] }, verify: "none" });
   assert.ok(body.startsWith("## Checklist\n- [ ] x\n\n---"));
   assert.match(body, /no verification steps/);
-  assert.match(body, /## Evidence/);
+  assert.doesNotMatch(body, /Evidence|Attach|\.pi\/evidence/);
+  assert.match(body, /Not assessed: the project has no \.pi\/workflow\.json\./);
   assert.match(body, /- abc1234 add it/);
 });
 
@@ -112,6 +113,34 @@ test("failing verify asks before going on; declining stops", async () => {
   assert.equal(out.status, "declined");
   assert.deepEqual(ui.asked, ["Verify failed"]);
   assert.ok(!has("git", "push"));
+});
+
+test("a Nix outage in verify is \"did not run\": nothing is committed, pushed or offered, and a status shows while verify runs", async () => {
+  const inner = setup({ dirty: " M src/a.ts\n" });
+  const statuses: (string | undefined)[] = [];
+  const exec: any = async (cmd: string, args: string[]) => {
+    if (cmd === "bash") {
+      statuses.push("ran");
+      return { code: 127, stdout: "", stderr: `${installMessage("linux", "x64")}`, killed: false };
+    }
+    return inner.exec(cmd, args);
+  };
+  const ui = { ...fakeUI([]), setStatus: (_k: string, v?: string) => statuses.push(v) };
+  const out = await runPr(exec, await project(), ui as any);
+  assert.equal(out.status, "not-ready");
+  assert.match(out.detail, /^Verify did not run, so nothing was committed or pushed\. Nix is required[\s\S]*Then restart pi\.\nAfter that, run \/pr again\.$/);
+  assert.doesNotMatch(out.detail, /FAILED|anyway/);
+  assert.deepEqual(statuses, ["running verify…", "ran", undefined]);
+  assert.ok(!inner.has("git", "commit") && !inner.has("git", "push"));
+});
+
+test("the preview lists the local evidence files and says they are not pushed; the body never mentions them", async () => {
+  const root = await tempProject({ ".pi/workflow.json": JSON.stringify({ version: 1, setup: "done", verify: [], connectors: [] }), ".pi/evidence/b.log": "x", ".pi/evidence/shots/a.png": "x" });
+  const notes: string[] = [];
+  const ui = { ...fakeUI([false]), notify: (m: string) => notes.push(m) };
+  await runPr(setup().exec, root, ui as any);
+  assert.match(notes[0], /\nEvidence in \.pi\/evidence\/ \(not pushed; attach what reviewers need to the PR\):\n\.pi\/evidence\/b\.log\n\.pi\/evidence\/shots\/a\.png\n$/);
+  assert.equal(notes[0].match(/\.pi\/evidence/g)!.length, 3);
 });
 
 test("a failing git status stops /pr instead of passing for a clean tree", async () => {

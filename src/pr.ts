@@ -2,17 +2,17 @@ import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { exists } from "./config.ts";
 import type { Exec } from "./git.ts";
 import { readManifest } from "./manifest.ts";
 import { isNixFailure, NixError } from "./nix.ts";
 import { commitSubject, mayCommit } from "./quality.ts";
 import { assessRisk } from "./risk.ts";
 import { isLocalState, LOCAL_STATE, oneLine, readTask, type Task } from "./task-state.ts";
-import { formatVerify, runVerify, validCap, verifySteps } from "./verify.ts";
+import { formatVerify, infraFailure, runVerify, validCap, verifySteps } from "./verify.ts";
 
 const TEMPLATES = [".github/pull_request_template.md", ".github/PULL_REQUEST_TEMPLATE.md", "docs/pull_request_template.md", "pull_request_template.md"];
-const EVIDENCE_SKILL = ".pi/skills/verify-app/SKILL.md";
+/** Where the verify-app skill saves screenshots and logs (setup-prompt.ts). Machine-local: never committed, so never in the PR body. */
+const EVIDENCE_DIR = ".pi/evidence";
 const ADR_DIR = "docs/adr/";
 const ATTRIBUTION = /co-authored-by|\b(generated|written|created|authored|assisted) (with|by)\b.*\b(claude code|claude|anthropic|chatgpt|copilot|gemini)\b/i;
 
@@ -27,7 +27,8 @@ export interface PrFacts {
   gh: boolean;
   origin?: string;
   template?: string;
-  hasEvidenceSkill: boolean;
+  /** Files under `.pi/evidence/`, for the preview only: they are not pushed. */
+  evidence: string[];
 }
 
 /** Drops attribution lines (co-author trailers, "Generated with ... Claude Code"); product names in the work itself stay. */
@@ -84,18 +85,23 @@ export function buildBody({ task, facts, verify, risk }: BodyInput): string {
   const verified =
     !verify ? "Not run." : verify === "none" ? "The project has no verification steps." : `${verify.ok ? "Passed" : "FAILED"}:\n\n\`\`\`\n${verify.text}\n\`\`\``;
   // The reasons show whatever the review policy decided.
-  const riskText = !risk ? "Not assessed." : risk.reasons.length ? `${risk.review ? "Risky" : `Risk ${risk.level}`}: ${risk.reasons.join("; ")}.` : "Low risk: no reason found.";
+  const riskText = !risk ? "Not assessed: the project has no .pi/workflow.json." : risk.reasons.length ? `${risk.review ? "Risky" : `Risk ${risk.level}`}: ${risk.reasons.join("; ")}.` : "Low risk: no reason found.";
   const sections: [string, string][] = [
     ["Summary", summary || "(no task plan: see the commits)"],
     ["How it was verified", verified],
     ["Risk", riskText],
     ["New ADRs", adrs.length ? adrs.map((f) => `- ${f}`).join("\n") : "(none)"],
   ];
-  if (facts.hasEvidenceSkill) sections.push(["Evidence", `Attach the evidence that the project's verification skill (${EVIDENCE_SKILL}) describes: screenshots, logs, output.`]);
   if (plan?.seams.length) sections.push(["Tests", plan.seams.map((s) => `- ${s.name}: catches ${s.catches}${s.misses ? `; misses ${s.misses}` : ""}`).join("\n")]);
   const generated = sections.map(([h, b]) => `## ${h}\n${b}`).join("\n\n");
   const body = facts.template ? `${facts.template.trimEnd()}\n\n---\n\n${generated}` : generated;
   return `${scrub(body)}\n`;
+}
+
+/** Files under `.pi/evidence/`, relative to the repo, sorted. */
+async function listEvidence(root: string): Promise<string[]> {
+  const all = await fs.readdir(path.join(root, EVIDENCE_DIR), { recursive: true, withFileTypes: true }).catch(() => []);
+  return all.filter((e) => e.isFile()).map((e) => path.relative(root, path.join(e.parentPath, e.name))).sort();
 }
 
 const lines = (text: string) => text.split("\n").map((l) => l.trim()).filter(Boolean);
@@ -140,7 +146,7 @@ export async function gatherFacts(exec: Exec, root: string, wanted?: string): Pr
     gh: (await run("gh", ["--version"])) !== undefined,
     origin: (await run("git", ["remote", "get-url", "origin"]))?.trim() || undefined,
     template,
-    hasEvidenceSkill: await exists(path.join(root, EVIDENCE_SKILL)),
+    evidence: await listEvidence(root),
   };
 }
 
@@ -151,7 +157,7 @@ export type PrOutcome = { status: "not-ready" | "shown" | "declined" | "failed" 
  * It always pushes to `origin`, whatever the base ref is, and `gh --version` only proves gh is installed:
  * a missing `gh auth login` shows up late, as "gh pr create failed".
  */
-export async function runPr(exec: Exec, root: string, ui: Pick<ExtensionContext["ui"], "confirm" | "notify">, wantedBase?: string): Promise<PrOutcome> {
+export async function runPr(exec: Exec, root: string, ui: Pick<ExtensionContext["ui"], "confirm" | "notify"> & Partial<Pick<ExtensionContext["ui"], "setStatus">>, wantedBase?: string): Promise<PrOutcome> {
   let facts: PrFacts | undefined;
   try {
     facts = await gatherFacts(exec, root, wantedBase?.trim() || undefined);
@@ -178,7 +184,11 @@ export async function runPr(exec: Exec, root: string, ui: Pick<ExtensionContext[
   // Verify runs before anything is committed: /pr commits only a tree that passes.
   let verify: BodyInput["verify"] = "none";
   if (manifest?.verify.length) {
-    const result = await runVerify(verifySteps(manifest), exec, root, undefined, validCap(manifest.maxReport));
+    ui.setStatus?.("pr", "running verify…");
+    const result = await runVerify(verifySteps(manifest), exec, root, undefined, validCap(manifest.maxReport)).finally(() => ui.setStatus?.("pr", undefined));
+    // Nix missing or broken is not a red test: nothing is known about the code, so there is nothing to commit or open.
+    const infra = infraFailure(result);
+    if (infra) return { status: "not-ready", detail: `Verify did not run, so nothing was committed or pushed. ${infra.trim()}\nAfter that, run /pr again.` };
     verify = { ok: result.ok, text: formatVerify(result) };
     // Verify can write files (reports, caches): the commit offer lists the tree as it is now.
     facts = (await gatherFacts(exec, root, facts.base)) ?? facts;
@@ -203,7 +213,10 @@ export async function runPr(exec: Exec, root: string, ui: Pick<ExtensionContext[
 
   const title = prTitle(task, facts.commits);
   const body = buildBody({ task, facts: { ...facts, branch }, verify, risk });
-  ui.notify(`${title}\n\n${body}${facts.dirty.length ? `\nNot in the PR until committed:\n${facts.dirty.join("\n")}\n` : ""}`, "info");
+  const evidence = facts.evidence.length
+    ? `\nEvidence in ${EVIDENCE_DIR}/ (not pushed; attach what reviewers need to the PR):\n${facts.evidence.slice(0, 20).join("\n")}${facts.evidence.length > 20 ? `\n…and ${facts.evidence.length - 20} more` : ""}\n`
+    : "";
+  ui.notify(`${title}\n\n${body}${facts.dirty.length ? `\nNot in the PR until committed:\n${facts.dirty.join("\n")}\n` : ""}${evidence}`, "info");
 
   if (!facts.gh || !facts.origin) return { status: "shown", detail: `${facts.gh ? "" : "gh is not installed. "}${facts.origin ? "" : "There is no origin remote. "}Push and open the PR yourself with the title and body above.` };
   if (!(await ui.confirm("Open the PR?", `Push ${branch} to origin and open a PR against ${baseName}?`))) return { status: "declined", detail: "Nothing was pushed. The body stays above." };
