@@ -871,3 +871,46 @@ test("continuing after an approach question was cancelled asks again, and a part
   await commands.get("task").handler("continue", ctxFor([]).ctx);
   assert.ok(!sent[3].includes(APPROACH_FIRST) && !sent[3].includes("Ask only what is still open"));
 });
+
+test("/task waits for the planner run to start before it waits for idle, so pi -p does not end before planning", async () => {
+  const { commands, ctxFor, emit, pi } = await setup();
+  pi.sendUserMessage = () => {}; // as in pi: the run starts later
+  const order: string[] = [];
+  const { ctx } = ctxFor([]);
+  ctx.waitForIdle = async () => void order.push("idle");
+  const done = commands.get("task").handler("Add fee", ctx);
+  await new Promise((r) => setTimeout(r, 20));
+  assert.equal(order.length, 0);
+  order.push("start");
+  await emit("agent_start", {}, ctx);
+  await done;
+  assert.deepEqual(order, ["start", "idle"]);
+});
+
+test("without a UI, a failed ask_user round while planning takes the first options, and the plan records them as chosen without the user", async () => {
+  const { commands, tools, emit, root } = await setup();
+  const c = noting(fakeCtx(root, [], { hasUI: false }));
+  await commands.get("task").handler("Add fee", c.ctx);
+  const input = { questions: [{ question: "Fee unit?", options: ["cents", "percent"] }, { question: "Anything else?" }] };
+  const result = await emit("tool_result", { toolName: "ask_user", input, isError: true, content: [{ type: "text", text: "No interactive UI" }] }, c.ctx);
+  assert.equal(result.isError, false);
+  assert.match(result.content[0].text, /took the first option/);
+  assert.deepEqual(c.notes, ['No UI: took "cents" for: Fee unit?']);
+  await tools.get("task_plan").execute("1", plan(), undefined, undefined, c.ctx);
+  const unit = (await readTask(root))!.plan!.decisions.find((d) => d.question === "Fee unit?")!;
+  assert.match(unit.answer!, /^cents \(chosen without the user/);
+  assert.match(await fs.readFile(path.join(root, unit.source!), "utf8"), /cents \(chosen without the user/);
+});
+
+test("plan check: one that is not wanted is reported as plan-skipped with no cost", async () => {
+  const h = fakePi();
+  const emitted: any[] = [];
+  h.pi.events = { emit: (name: string, payload: any) => emitted.push({ name, payload }) };
+  registerTask(h.pi);
+  const root = await tempProject({ "src/money.ts": "export const m = 1;\n" });
+  await updateManifest(root, (m) => void ((m.setup = "done"), (m.models = { review: "openai/gpt-6-astra" }), (m.review = { plan: false })));
+  await h.commands.get("task").handler("Add fee", fakeCtx(root, []).ctx);
+  await h.tools.get("task_plan").execute("1", plan(), undefined, undefined, fakeCtx(root, []).ctx);
+  assert.deepEqual(emitted.map((e) => e.payload.status), ["plan-skipped"]);
+  assert.equal(emitted[0].payload.cost, undefined);
+});

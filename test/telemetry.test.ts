@@ -143,6 +143,14 @@ test("/metrics leaves plan checks out of the review column, not out of the cost"
   assert.match(await metricsReport(root), /^A\s+\$  0\.500 .*review: approved$/m);
 });
 
+test("/metrics says how the plan checks ended, with skipped for one that did not run", async () => {
+  const mk = (id: string, reviews: object[]) => JSON.stringify({ id, metrics: { phases: {}, verifyFailures: 0, reviews } });
+  const root = await tempProject({ ".pi/memory/tasks.jsonl": [mk("A", [{ status: "plan-skipped", model: "m", seconds: 0 }]), mk("B", [{ status: "plan-fix", model: "m", seconds: 1, cost: 0.1 }, { status: "plan-ok", model: "m", seconds: 1, cost: 0.1 }]), mk("C", [])].join("\n") });
+  const report = await metricsReport(root);
+  assert.match(report, /^Plan checks \(2 tasks\): ok 1, fix 0, skipped 1$/m);
+  assert.match(report, /^A\s+\$  0\.000 .*review: -$/m);
+});
+
 test("a review and the understanding outcome recorded at once, after a restart, both reach the task's metrics", async () => {
   const snapshot = JSON.stringify({ phases: {}, verifyRuns: 1, verifyFailures: 0, premises: 0, progress: { runs: 0, failures: 0 }, reviews: [], escalations: 0 });
   const root = await tempProject({ ".pi/task.json": taskJson("COLD-1", "implementing"), ".pi/metrics/COLD-1.json": snapshot });
