@@ -145,7 +145,7 @@ test("/models and /skills keep values from the global file out of the repo", asy
 
 test("limits: defaults are today's numbers, valid values are taken, bad ones fall back and are reported", () => {
   assert.deepEqual(resolveLimits(undefined), { limits: DEFAULT_LIMITS, problems: [] });
-  assert.deepEqual(DEFAULT_LIMITS, { interviewQuestions: 12, agentlintRules: 3, verifyRetries: 2, failuresBeforeEscalation: 3, planChecks: 1, retroEvery: 5, verifyEvery: 0, changeCap: 500, fastPath: { files: 8, interface: 6, decisions: 2 } });
+  assert.deepEqual(DEFAULT_LIMITS, { interviewQuestions: 12, agentlintRules: 3, verifyRetries: 3, failuresBeforeEscalation: 3, planChecks: 1, retroEvery: 5, verifyEvery: 0, changeCap: 500, fastPath: { files: 8, interface: 6, decisions: 2 } });
   assert.deepEqual(resolveLimits({ planChecks: 0, retroEvery: 0, verifyRetries: 0, verifyEvery: 0, fastPath: { files: 0 } }), {
     limits: { ...DEFAULT_LIMITS, planChecks: 0, retroEvery: 0, verifyRetries: 0, verifyEvery: 0, fastPath: { ...DEFAULT_LIMITS.fastPath, files: 0 } },
     problems: [],
@@ -285,6 +285,10 @@ test("verifyRetries and failuresBeforeEscalation drive the gate", async () => {
   const more = await run({ verifyRetries: 3, failuresBeforeEscalation: 3 }, 3);
   assert.deepEqual(more.results.map((r: any) => r.entries[0].customType), ["verify-gate", "verify-gate", "verify-diagnose"], "the third failure diagnoses");
   assert.equal(more.asked.length, 0);
+  // The defaults: the third failure still reaches the escalation, it does not stop at the retry limit first.
+  const defaults = await run({}, 3);
+  assert.equal(defaults.asked.length, 0, "no 'keep trying?' before the escalation");
+  assert.equal(defaults.results[2]?.entries[0].customType, "verify-diagnose");
 });
 
 test("planChecks sets the paid plan checks per task; 0 turns them off", async () => {

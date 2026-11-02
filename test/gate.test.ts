@@ -104,7 +104,7 @@ test("failure continues with the report; a write tool alone counts as change", a
 test("retry cap asks the user, then stops", async () => {
   const t = await setup({ answers: ["Keep trying", "Leave it as is"] });
   await t.run();
-  for (let i = 0; i < 2; i++) assert.equal((await t.settle()).continue, true);
+  for (let i = 0; i < 3; i++) assert.equal((await t.settle()).continue, true);
   assert.equal(t.ui.asked.length, 0);
   assert.equal((await t.settle()).continue, true);
   assert.equal(await t.settle(), undefined);
