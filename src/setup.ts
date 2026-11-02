@@ -10,7 +10,7 @@ import type { Exec } from "./git.ts";
 import { isNixFailure } from "./nix.ts";
 import { agentDir } from "./subagent-ext.ts";
 import { restoreModel, usePhaseModel } from "./models.ts";
-import { readManifest, updateManifest, type EnabledConnector } from "./manifest.ts";
+import { declineSetup, readManifest, setupDeclined, updateManifest, type EnabledConnector } from "./manifest.ts";
 import { phaseSkills, skillsBlock } from "./skills.ts";
 import { AGENTS_MAX_LINES, SETUP_NUDGE, setupPrompt } from "./setup-prompt.ts";
 import { LOCAL_STATE } from "./task-state.ts";
@@ -23,6 +23,8 @@ const START_TIMEOUT = 30_000;
 const MAX_VERIFY_FAILURES = 3;
 const NONE = "No more";
 const DECLINE = "Don't ask again";
+/** Files listed in the approval dialog; the rest is counted. */
+const MAX_LISTED = 40;
 export const REPEAT_WARNING = "Repeating it reruns the interview and the docs on the strong setup model, which costs far more than a normal task. Do it only if the project changed a lot. Update it?";
 
 /** Returns what is missing from the setup output; empty means complete. */
@@ -48,26 +50,33 @@ export async function checkOutputs(root: string, verify: string[], exec: Exec): 
   return problems;
 }
 
-async function chooseConnectors(ctx: ExtensionContext, signals: ConnectorSignal[], current: EnabledConnector[]) {
+/** The connectors to enable and the ones the user said no to; undefined when the user pressed Esc, which stops setup. */
+async function chooseConnectors(ctx: ExtensionContext, signals: ConnectorSignal[], current: EnabledConnector[], declinedBefore: string[]) {
   const enabled = new Map(current.map((c) => [c.id, c]));
   const enable = (id: string) => enabled.set(id, { id, mcp: connectorById(id)?.mcp });
+  const declined = new Set(declinedBefore);
 
   for (const signal of signals) {
     const c = connectorById(signal.id);
-    if (!c || enabled.has(c.id)) continue;
-    if (await ctx.ui.confirm(`Connect ${c.name}?`, `Detected because ${signal.evidence}.\nWould be used read-only for ${c.purpose}.`)) enable(c.id);
+    if (!c || enabled.has(c.id) || declined.has(c.id)) continue;
+    // A select, not a confirm: a confirm reads Esc as "No", and Esc here must stop setup.
+    const answer = await ctx.ui.select(`Connect ${c.name}?\nDetected because ${signal.evidence}. Used read-only for ${c.purpose}.`, ["Yes", "No"]);
+    if (!answer) return undefined;
+    if (answer === "Yes") enable(c.id);
+    else declined.add(c.id);
   }
   for (;;) {
-    const rest = CATALOG.filter((c) => !enabled.has(c.id));
+    const rest = CATALOG.filter((c) => !enabled.has(c.id) && !declined.has(c.id));
     if (!rest.length) break;
     const pick = await ctx.ui.select("Does the project use any other service?", [NONE, ...rest.map((c) => c.name)]);
-    if (!pick || pick === NONE) break;
+    if (!pick) return undefined;
+    if (pick === NONE) break;
     enable(rest.find((c) => c.name === pick)!.id);
   }
   for (const c of enabled.values()) {
     if (!c.mcp) ctx.ui.notify(`${connectorById(c.id)?.name ?? c.id}: configure it in ${path.join(agentDir(), "mcp.json")} under the name "${c.id}" and it will be used.`, "warning");
   }
-  return [...enabled.values()];
+  return { connectors: [...enabled.values()], declined: [...declined] };
 }
 
 /** Local state kept out of git: the one list /pr also leaves out of its commit (task-state.ts). `.pi/evidence/` has no code owner: the verify-app skill (setup-prompt.ts) writes there. */
@@ -81,16 +90,18 @@ async function ensureIgnored(root: string, entries: string[]) {
   if (missing.length) await fs.appendFile(gitignore, `${current && !current.endsWith("\n") ? "\n" : ""}${missing.join("\n")}\n`);
 }
 
-/** Returns the agentlint command when the project will enforce agentlint rules. */
-async function chooseAgentlint(ctx: ExtensionContext, found: Discovery, always: boolean) {
+/** The agentlint command when the project will enforce agentlint rules, "no" when the user said no, "esc" when they pressed Esc (setup stops). */
+async function chooseAgentlint(ctx: ExtensionContext, found: Discovery, always: boolean, declinedBefore: boolean): Promise<string | "no" | "esc" | undefined> {
   if (found.agentlint) return agentlintCmd(found.packageManager);
   if (!found.stacks.includes("node")) return undefined;
   if (always) return agentlintCmd(found.packageManager);
+  if (declinedBefore) return "no";
   const pick = await ctx.ui.select(
     "Turn the most important AGENTS.md rules into agentlint rules?\nThey block the end of every task until met or someone accepts the exception with a reason. You choose which.",
     ["Yes (recommended)", "No"],
   );
-  return pick === "Yes (recommended)" ? agentlintCmd(found.packageManager) : undefined;
+  if (!pick) return "esc";
+  return pick === "Yes (recommended)" ? agentlintCmd(found.packageManager) : "no";
 }
 
 function registerConnectors(pi: ExtensionAPI, connectors: EnabledConnector[]) {
@@ -118,26 +129,39 @@ export function registerSetup(pi: ExtensionAPI) {
     handler: async (_args, ctx) => {
       if (!ctx.hasUI) return ctx.ui.notify("/setup needs the interactive UI.", "error");
       const root = ctx.cwd;
+      const stop = () => ctx.ui.setStatus("setup", undefined);
+      // Set before the probe: on a fresh machine the probe is the first Nix build of git, which takes minutes.
+      ctx.ui.setStatus("setup", "setup: scanning the repo…");
       // Discovery and verify run git and bash through Nix: without it the scan comes back empty and says nothing.
       const probe = await pi.exec("git", ["--version"], { timeout: 15_000 }).catch(() => undefined);
-      if (probe && isNixFailure(probe)) return ctx.ui.notify(`/setup cannot scan or verify the project. ${probe.stderr}`, "error");
+      if (probe && isNixFailure(probe)) {
+        stop();
+        return ctx.ui.notify(`/setup cannot scan or verify the project. ${probe.stderr}`, "error");
+      }
       let manifest = await readManifest(root);
-      if (manifest.setup === "done" && !(await ctx.ui.confirm("This project already has setup", REPEAT_WARNING))) return;
+      if (manifest.setup === "done" && !(await ctx.ui.confirm("This project already has setup", REPEAT_WARNING))) return stop();
+      if (!manifest.models?.setup) ctx.ui.notify(`Setup runs on ${ctx.model ? `${ctx.model.provider}/${ctx.model.id}` : "the session model"}. For a stronger one, press Esc, run /models, then /setup again.`, "info");
 
       const resuming = manifest.setup !== "done" && Boolean(manifest.startedAt);
-      ctx.ui.setStatus("setup", "setup: scanning the repo…");
       const found = await discover(root, run);
       const language = manifest.language ?? (await ctx.ui.select("Which language for questions and docs?", ["Español", "English"]));
-      if (!language) return ctx.ui.setStatus("setup", undefined);
-      const connectors = await chooseConnectors(ctx, found.connectors, manifest.connectors);
+      if (!language) return stop();
+      const chosen = await chooseConnectors(ctx, found.connectors, manifest.connectors, manifest.declinedConnectors ?? []);
+      if (!chosen) return stop();
+      const { connectors, declined } = chosen;
       const use = manifest.useAgentlint;
-      const agentlint = use === "never" ? undefined : (manifest.agentlint ?? (await chooseAgentlint(ctx, found, use === "always")));
+      const pick = use === "never" ? undefined : (manifest.agentlint ?? (await chooseAgentlint(ctx, found, use === "always", manifest.agentlintDeclined === true)));
+      if (pick === "esc") return stop();
+      const agentlint = pick === "no" ? undefined : pick;
 
       manifest = await updateManifest(root, (m) => {
         m.setup = "running";
         m.language = language;
         m.startedAt ??= new Date().toISOString();
         m.connectors = connectors;
+        if (declined.length) m.declinedConnectors = declined;
+        else delete m.declinedConnectors;
+        if (pick === "no") m.agentlintDeclined = true;
         m.agentlint = agentlint;
         if (!m.verify.length) {
           m.verify = found.verify;
@@ -152,8 +176,6 @@ export function registerSetup(pi: ExtensionAPI) {
           m.verify = m.verify.filter((step) => step !== added);
           delete m.agentlintStep;
         }
-        // The merged view decides: a mode from the global file must keep applying.
-        if (manifest.mode === undefined) m.mode = "direct";
       });
       manifest = await readManifest(root);
       // Only a hint, so a mention is enough: nothing is classified by it.
@@ -253,7 +275,10 @@ export function registerSetup(pi: ExtensionAPI) {
       }
       if (!steps.length) verifyNote = "\n\n⚠️  No verify steps: nothing checks the agent's work until one is added to .pi/workflow.json.";
 
-      const changed = (await run("git", ["-C", root, "status", "--porcelain", "--untracked-files=all"])).trim() || "(no changes detected by git)";
+      // Before listing the files: once node_modules/ and the state paths are ignored, the list holds only what setup wrote.
+      await ensureIgnored(root, [...IGNORED_STATE, ...((await exists(path.join(root, "package.json"))) ? ["node_modules/"] : [])]);
+      const lines = (await run("git", ["-C", root, "status", "--porcelain", "--untracked-files=all"])).split("\n").filter((l) => l.trim());
+      const changed = lines.length ? [...lines.slice(0, MAX_LISTED), ...(lines.length > MAX_LISTED ? [`… and ${lines.length - MAX_LISTED} more`] : [])].join("\n") : "(no changes detected by git)";
       // Nobody can approve without a UI: the files stay uncommitted, for the person to review with git diff.
       const approved = !ctx.hasUI || (await ctx.ui.confirm("Approve the setup?", `${summary}${verifyNote}\n\nFiles:\n${changed}\n\nReview it with git diff before answering.`));
       if (!approved) {
@@ -261,18 +286,16 @@ export function registerSetup(pi: ExtensionAPI) {
         throw new Error(`The user did not approve. Feedback: ${feedback || "(none)"}. Apply it and call setup_finish again.`);
       }
 
-      await ensureIgnored(root, [...IGNORED_STATE, ...((await exists(path.join(root, "package.json"))) ? ["node_modules/"] : [])]);
-
       await updateManifest(root, (m) => {
         m.setup = "done";
         m.verify = verify;
         if (addedStep) m.agentlintStep = addedStep;
-        // As at the start: a mode from the global file must keep applying.
-        if (manifest.mode === undefined) m.mode = "direct";
         m.completedAt = new Date().toISOString();
       });
+      // The model says it, not a notice: /setup reloads pi when setup is done, and the reload clears the notices.
+      const next = manifest.models?.review ? "Next: /task <what to do>." : "Next: /models to pick a Review model (without one, no review runs), then /task <what to do>.";
       // Headless, nobody approved: say so, with the verify result, so the summary reports it.
-      const text = ctx.hasUI ? "Setup complete and approved. Stop here." : `Setup complete, not approved: no UI to ask; the files are uncommitted for review with git diff.${verifyNote} Report this, then stop.`;
+      const text = ctx.hasUI ? `Setup complete and approved. End with this line for the user: "${next}" Then stop.` : `Setup complete, not approved: no UI to ask; the files are uncommitted for review with git diff.${verifyNote} Report this, then stop.`;
       return { content: [{ type: "text", text }], details: { verify }, terminate: true };
     },
   });
@@ -326,14 +349,21 @@ export function registerSetup(pi: ExtensionAPI) {
     const manifest = await readManifest(ctx.cwd).catch(() => undefined);
     if (!manifest) return;
     registerConnectors(pi, manifest.connectors);
+    // "declined" in the project file is from older versions, which stored the answer there.
     if (event.reason !== "startup" || ctx.mode !== "tui" || manifest.setup === "done" || manifest.setup === "declined") return;
-    if (!(await isProject(ctx.cwd))) return;
+    // Only at startup, so Later or Esc asks again on the next launch and not before.
+    if (setupDeclined(ctx.cwd) || !(await isProject(ctx.cwd))) return;
 
-    const question = manifest.startedAt
-      ? "A setup is half done. Continue it?"
-      : "This project has no agent setup. Do it now? (default mode: direct, work from AGENTS.md; /task is optional and recommended for risky changes)";
+    const question = manifest.startedAt ? "A setup is half done. Continue it?" : "This project has no agent setup. Set it up now?";
     const choice = await ctx.ui.select(question, ["Yes", "Later", DECLINE]);
     if (choice === "Yes") pi.sendUserMessage("/setup", { expandPromptTemplates: true });
-    else if (choice === DECLINE) await updateManifest(ctx.cwd, (m) => void (m.setup = "declined"));
+    // Per user, outside the repo: a personal "leave me alone" must not create or change a file the team shares.
+    else if (choice === DECLINE) {
+      try {
+        declineSetup(ctx.cwd);
+      } catch (error: any) {
+        ctx.ui.notify(`Could not save "Don't ask again": ${error.message}. The offer comes back next launch.`, "warning");
+      }
+    }
   });
 }

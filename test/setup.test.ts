@@ -3,7 +3,9 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { test } from "node:test";
 import { registerAskUser } from "../src/ask.ts";
-import { readManifest, updateManifest } from "../src/manifest.ts";
+import { readManifest, readProjectManifest, setupDeclined, updateManifest } from "../src/manifest.ts";
+import { exists } from "../src/config.ts";
+import { readFileSync } from "node:fs";
 import { installMessage } from "../src/nix.ts";
 import { APPROVE, FIX } from "../src/policy.ts";
 import { checkOutputs, registerSetup } from "../src/setup.ts";
@@ -57,7 +59,7 @@ test("/setup runs discovery, asks only about connectors, and hands one prompt to
     args.includes("remote") ? { code: 0, stdout: "origin git@github.com:acme/app.git (fetch)" } : { code: 0 },
   );
   registerSetup(pi);
-  const { ctx, ui } = ctxFor(root, ["Español", true, "No more", "No"]);
+  const { ctx, ui } = ctxFor(root, ["Español", "Yes", "No more", "No"]);
 
   await commands.get("setup").handler("", ctx);
 
@@ -218,7 +220,7 @@ test("setup_finish sends verify failures back to the model, then completes after
   assert.equal(result.terminate, true);
   const manifest = await readManifest(root);
   assert.equal(manifest.setup, "done");
-  assert.equal(manifest.mode, "direct");
+  assert.equal(manifest.mode, undefined, "mode is a dead key: setup no longer writes it");
   assert.deepEqual(manifest.verify, ["npm test"]);
 });
 
@@ -260,18 +262,36 @@ test("setup_finish accepts an empty verify list when no check can run here, runs
   assert.deepEqual([manifest.setup, manifest.verify], ["done", []]);
 });
 
-test("setup_finish leaves mode unset in the project when the global file sets it", async () => {
+test("setup_finish ends with the next step: /models when no Review model is set, else /task", async () => {
+  for (const [models, next] of [[undefined, /Next: \/models to pick a Review model \(without one, no review runs\), then \/task/], [{ review: "p/strong" }, /Next: \/task <what to do>\./]] as const) {
+    const root = await tempProject(documented);
+    await updateManifest(root, (m) => {
+      m.setup = "running";
+      m.models = models;
+    });
+    const { pi, tools } = fakePi();
+    registerSetup(pi);
+    const result = await tools.get("setup_finish").execute("1", { verify: ["true"], summary: "s" }, undefined, undefined, ctxFor(root, [true]).ctx);
+    assert.match(result.content[0].text, next);
+    if (models) assert.doesNotMatch(result.content[0].text, /\/models/);
+  }
+});
+
+test("the approval lists the files after .gitignore is fixed, capped at 40 with a count of the rest", async () => {
   const root = await tempProject(documented);
   await updateManifest(root, (m) => void (m.setup = "running"));
-  const agent = await tempDir();
-  await fs.writeFile(path.join(agent, "pi-improved.json"), JSON.stringify({ mode: "flow" }));
-  const { pi, tools } = fakePi(() => ({ code: 0 }));
-  registerSetup(pi);
-  await withEnv({ PI_CODING_AGENT_DIR: agent }, async () => {
-    await tools.get("setup_finish").execute("1", { verify: ["true"], summary: "s" }, undefined, undefined, ctxFor(root, [true]).ctx);
-    assert.equal((await readManifest(root)).mode, "flow");
+  let ignoredFirst = false;
+  const { pi, tools } = fakePi((cmd, args) => {
+    if (!args.includes("status")) return { code: 0 };
+    ignoredFirst = readFileSync(path.join(root, ".gitignore"), "utf8").includes("node_modules/");
+    return { code: 0, stdout: Array.from({ length: 45 }, (_, i) => `?? doc${i}.md`).join("\n") };
   });
-  assert.equal(JSON.parse(await fs.readFile(path.join(root, ".pi/workflow.json"), "utf8")).mode, undefined);
+  registerSetup(pi);
+  const { ctx, ui } = ctxFor(root, [true]);
+  await tools.get("setup_finish").execute("1", { verify: ["true"], summary: "s" }, undefined, undefined, ctx);
+  assert.ok(ignoredFirst, "node_modules/ is ignored before git lists the files");
+  assert.match(ui.messages[0], /doc39\.md\n… and 5 more/);
+  assert.doesNotMatch(ui.messages[0], /doc40\.md/);
 });
 
 test("rejecting the setup returns the user's feedback to the model", async () => {
@@ -326,14 +346,96 @@ test("ask_user batches questions and supports a free-text answer", async () => {
   assert.deepEqual(result.details.answers.map((a: any) => a.answer), ["Postgres", "Equipo de pagos"]);
 });
 
-test("the startup offer: \"Don't ask again\" declines setup for good, \"Later\" does not, \"Yes\" runs /setup", async () => {
-  for (const [choice, declined, sent] of [["Don't ask again", true, 0], ["Later", false, 0], ["Yes", false, 1]] as const) {
-    const root = await tempProject({ ".git/HEAD": "ref: refs/heads/main\n" });
-    const { pi, emit, sent: messages } = fakePi();
+test("the startup offer: \"Don't ask again\" is stored per user and never in the repo, \"Later\" and Esc ask again next launch, \"Yes\" runs /setup", async () => {
+  for (const [choice, declined, sent] of [["Don't ask again", true, 0], ["Later", false, 0], [undefined, false, 0], ["Yes", false, 1]] as const) {
+    const agent = await tempDir();
+    await withEnv({ PI_CODING_AGENT_DIR: agent }, async () => {
+      const root = await tempProject({ ".git/HEAD": "ref: refs/heads/main\n" });
+      const { pi, emit, sent: messages } = fakePi();
+      registerSetup(pi);
+      const first = ctxFor(root, [choice]);
+      await emit("session_start", { reason: "startup" }, first.ctx);
+      assert.deepEqual(first.ui.asked, ["This project has no agent setup. Set it up now?"]);
+      assert.equal(messages.length, sent, String(choice));
+      assert.equal(await exists(path.join(root, ".pi")), false, "the offer never writes into the repo");
+      assert.equal(setupDeclined(root), declined, String(choice));
+      // The next launch: a declined project is not asked, any other one is.
+      const { pi: next, emit: emitNext } = fakePi();
+      registerSetup(next);
+      const again = ctxFor(root, declined ? [] : ["Later"]);
+      await emitNext("session_start", { reason: "startup" }, again.ctx);
+      assert.equal(again.ui.asked.length, declined ? 0 : 1, String(choice));
+    });
+  }
+  // Older versions stored the decline in the project file: still honoured.
+  const old = await tempProject({ ".git/HEAD": "ref: refs/heads/main\n", ".pi/workflow.json": JSON.stringify({ setup: "declined" }) });
+  const { pi, emit } = fakePi();
+  registerSetup(pi);
+  const quiet = ctxFor(old, []);
+  await emit("session_start", { reason: "startup" }, quiet.ctx);
+  assert.equal(quiet.ui.asked.length, 0);
+});
+
+test("/setup shows the scanning status before the first git call, and says which model it runs on when models.setup is unset", async () => {
+  for (const models of [undefined, { setup: "p/strong" }]) {
+    const root = await tempProject({ "package.json": "{}", ".pi/workflow.json": JSON.stringify({ language: "English", ...(models ? { models } : {}) }) });
+    const events: string[] = [];
+    const { pi, commands } = fakePi((cmd) => (events.push(`exec ${cmd}`), { code: 0 }));
     registerSetup(pi);
-    await emit("session_start", { reason: "startup" }, ctxFor(root, [choice]).ctx);
-    assert.equal((await readManifest(root)).setup === "declined", declined, choice);
-    assert.equal(messages.length, sent, choice);
+    const { ctx, ui } = ctxFor(root, ["No more", "No"]);
+    (ui as any).setStatus = (_key: string, text?: string) => void events.push(`status ${text}`);
+    (ui as any).notify = (m: string) => void events.push(`notify ${m}`);
+    ctx.model = { provider: "p", id: "cheap" };
+    await commands.get("setup").handler("", ctx);
+    assert.match(events[0], /^status setup: scanning the repo/);
+    assert.equal(events[1], "exec git");
+    const notice = events.find((e) => /Setup runs on/.test(e));
+    if (models) assert.equal(notice, undefined);
+    else assert.equal(notice, "notify Setup runs on p/cheap. For a stronger one, press Esc, run /models, then /setup again.");
+  }
+});
+
+test("a language in the global file is the default: /setup does not ask it and stores it in the project", async () => {
+  const agent = await tempDir();
+  await fs.writeFile(path.join(agent, "pi-improved.json"), JSON.stringify({ language: "English" }));
+  await withEnv({ PI_CODING_AGENT_DIR: agent }, async () => {
+    const root = await tempProject({ "package.json": "{}" });
+    const { pi, commands } = fakePi();
+    registerSetup(pi);
+    const { ctx, ui } = ctxFor(root, ["No more", "No"]);
+    await commands.get("setup").handler("", ctx);
+    assert.ok(!ui.asked.some((q) => /language/i.test(q)));
+    assert.equal((await readProjectManifest(root)).language, "English");
+  });
+});
+
+test("/setup stores declined connectors and the agentlint no, and does not ask them again on resume", async () => {
+  const root = await tempProject({ "package.json": "{}", "pnpm-lock.yaml": "" });
+  const remote = (_cmd: string, args: string[]) => (args.includes("remote") ? { code: 0, stdout: "origin git@github.com:acme/app.git (fetch)" } : { code: 0 });
+  const { pi, commands } = fakePi(remote);
+  registerSetup(pi);
+  await commands.get("setup").handler("", ctxFor(root, ["English", "No", "No more", "No"]).ctx);
+  const saved = await readProjectManifest(root);
+  assert.deepEqual([saved.declinedConnectors, saved.agentlintDeclined, saved.agentlint], [["github"], true, undefined]);
+  const resume = ctxFor(root, ["No more"]);
+  await commands.get("setup").handler("", resume.ctx);
+  assert.deepEqual(resume.ui.asked, ["Does the project use any other service?"]);
+  assert.deepEqual((await readProjectManifest(root)).declinedConnectors, ["github"]);
+});
+
+test("Esc in the connector or agentlint question stops /setup before the model run, like Esc at the language", async () => {
+  const remote = (_cmd: string, args: string[]) => (args.includes("remote") ? { code: 0, stdout: "origin git@github.com:acme/app.git (fetch)" } : { code: 0 });
+  for (const answers of [["English", undefined], ["English", "No", undefined], ["English", "No", "No more", undefined]]) {
+    const root = await tempProject({ "package.json": "{}", "pnpm-lock.yaml": "" });
+    const { pi, commands, sent } = fakePi(remote);
+    registerSetup(pi);
+    const statuses: (string | undefined)[] = [];
+    const { ctx, ui } = ctxFor(root, answers);
+    (ui as any).setStatus = (_key: string, text?: string) => void statuses.push(text);
+    await commands.get("setup").handler("", ctx);
+    assert.equal(sent.length, 0, String(answers.length));
+    assert.equal(await exists(path.join(root, ".pi/workflow.json")), false);
+    assert.equal(statuses.at(-1), undefined, "the status is cleared");
   }
 });
 test("setup prompt asks for the before-finishing and /task sections with the verify commands", () => {
