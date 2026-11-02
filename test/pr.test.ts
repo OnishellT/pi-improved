@@ -50,6 +50,19 @@ test("body: summary, closes, verify, risk, ADRs, tests", () => {
   assert.doesNotMatch(body, /Evidence/);
 });
 
+test("body: settled decisions are listed one per line; none, no heading", () => {
+  const decisions = [
+    { id: "a", question: "Rounding mode?", options: [], status: "decided", answer: "half-even" },
+    { id: "b", question: "Name the export?", options: [], status: "decided", answer: "applyFee (chosen without the user: no UI, so pi took the recommended option)" },
+    { id: "c", question: "Covered by the spec", options: [], status: "documented", source: "docs/spec.md" },
+    { id: "d", question: "Open one", options: [], status: "decided" },
+  ];
+  const body = buildBody({ task: { ...task, plan: { ...task.plan, decisions } } as any, facts, verify: "none" });
+  assert.match(body, /## Decisions\n- Rounding mode\? → half-even\n- Name the export\? → applyFee \(chosen without the user: no UI, so pi took the recommended option\)\n/);
+  assert.doesNotMatch(body, /Covered by the spec|Open one/);
+  assert.doesNotMatch(buildBody({ task, facts, verify: "none" }), /## Decisions/);
+});
+
 test("body: the intent leads the summary; a predates list left in an old task.json is not shown", () => {
   const withIntent: any = { ...task, predates: ["FAIL old", "expected 1 got 2"], plan: { ...task.plan, intent: "Let people add the thing" } };
   const failed = buildBody({ task: withIntent, facts, verify: { ok: false, text: "verify FAILED" } });
