@@ -25,6 +25,15 @@ const START_TIMEOUT = 30_000; // how long /task waits for the planner run to sta
 // A request that is only a ticket key (`PAY-142`); `PAY-142 add fees` or `UTF-8 handling` is free text.
 const TICKET = /^[A-Z][A-Z0-9]+-\d+$/;
 const TRACKERS = ["jira", "linear"];
+/**
+ * A /task outcome. Headless (print mode drops notices) it also goes to stderr in one line, and an error, a command that did nothing, exits 1.
+ */
+const tell = (ctx: any, message: string, level: "info" | "warning" | "error" = "info") => {
+  ctx.ui.notify(message, level);
+  if (ctx.hasUI) return;
+  console.error(`[pi-improved] ${message}`);
+  if (level === "error") process.exitCode = 1;
+};
 /** What the user can do next with a task: only an implementing one can be called done. */
 const nextSteps = (task: Task) =>
   task.status === "planning" ? "/task continue resumes planning, /task cancel drops it." : task.status === "implementing" ? "/task done or /task cancel ends it." : "/task <description or ticket> starts a new one.";
@@ -263,35 +272,35 @@ export function registerTask(pi: ExtensionAPI) {
       try {
         active = await readTask(root);
       } catch (error: any) {
-        if (arg !== "cancel") return ctx.ui.notify(`${error.message}. /task cancel removes it.`, "error");
+        if (arg !== "cancel") return tell(ctx, `${error.message}. /task cancel removes it.`, "error");
         await writeTask(root, undefined);
         paused = false;
         return ctx.ui.notify("Task cancelled.", "info");
       }
-      if (!arg) return ctx.ui.notify(active ? `${oneLine(active.title)} (${active.status}). ${nextSteps(active)}` : "No active task. Use /task <description or ticket>.", "info");
+      if (!arg) return tell(ctx, active ? `${oneLine(active.title)} (${active.status}). ${nextSteps(active)}` : "No active task. Use /task <description or ticket>.");
       if (arg === "cancel") {
-        if (!active) return ctx.ui.notify("No active task to cancel.", "info");
+        if (!active) return tell(ctx, "No active task to cancel.");
         await writeTask(root, undefined);
         paused = false;
         await restoreModel(pi, ctx, active.model);
         return ctx.ui.notify("Task cancelled.", "info");
       }
       if (arg === "done") {
-        if (active?.status !== "implementing") return ctx.ui.notify(active ? `The task is ${active.status}, so it cannot be marked done yet. ${nextSteps(active)}` : "No active task.", "info");
+        if (active?.status !== "implementing") return tell(ctx, active ? `The task is ${active.status}, so it cannot be marked done yet. ${nextSteps(active)}` : "No active task.", "error");
         // Closing the task during the understanding check skips it.
         if (active.understanding) await recordUnderstanding(root, "skipped", 0);
         await completeTask(pi, ctx);
         return ctx.ui.notify(`Task done: ${oneLine(active.title)}.`, "info");
       }
       const manifest = await readManifest(root);
-      if (manifest.setup !== "done") return ctx.ui.notify("Run /setup first.", "error");
+      if (manifest.setup !== "done") return tell(ctx, "Run /setup first.", "error");
       if (arg === "continue") {
         if (active?.status === "planning") return start(ctx, manifest, active);
-        return ctx.ui.notify(active?.status === "implementing" ? `The task is implementing: keep working in the session. ${nextSteps(active)}` : "No task to continue. Use /task <description or ticket>.", "info");
+        return tell(ctx, active?.status === "implementing" ? `The task is implementing: keep working in the session. ${nextSteps(active)}` : "No task to continue. Use /task <description or ticket>.", "error");
       }
 
       if (active && active.status !== "done") {
-        if (!ctx.hasUI) return ctx.ui.notify(`A task is already ${active.status}: ${oneLine(active.title, 80)}. ${nextSteps(active)}`, "error");
+        if (!ctx.hasUI) return tell(ctx, `A task is already ${active.status}: ${oneLine(active.title, 80)}. ${nextSteps(active)}`, "error");
         // Only a planning task has something to continue; an implementing one goes on in the session.
         const options = active.status === "planning" ? ["Continue it", "Replace it", "Keep it"] : ["Replace it", "Keep it"];
         const choice = await ctx.ui.select(`A task is already ${active.status}: ${oneLine(active.title, 80)}`, options);
@@ -309,7 +318,7 @@ export function registerTask(pi: ExtensionAPI) {
       const task: Task = { id: `t${Date.now()}`, title, ...(!onlyFile && title !== arg && { body: arg }), ticket, status: "planning", allowedExtra: [], startedAt: new Date().toISOString(), ...(spec.length && { spec }), ...(model && { model }) };
       await writeTask(root, task);
       if (ticket && !tracker(manifest))
-        ctx.ui.notify(`No tracker is enabled, so the agent sees only "${ticket}". To plan from the ticket: /task cancel, then /task ${ticket} <pasted ticket text>. /setup adds Jira or Linear.`, "warning");
+        tell(ctx, `No tracker is enabled, so the agent sees only "${ticket}". To plan from the ticket: /task cancel, then /task ${ticket} <pasted ticket text>. /setup adds Jira or Linear.`, "warning");
       await start(ctx, manifest, task);
     },
   });
