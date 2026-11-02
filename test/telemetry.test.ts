@@ -114,15 +114,25 @@ test("/metrics without data", async () => {
   assert.match(notes[0], /No metrics/);
 });
 
-test("/metrics shows skipped reviews as · and the savings line", async () => {
+test("/metrics names skipped and not-requested reviews, and the estimated saving", async () => {
   const mk = (id: string, reviews: object[]) => JSON.stringify({ id, metrics: { phases: {}, verifyFailures: 0, reviews } });
   const root = await tempProject({
     ".pi/memory/tasks.jsonl": [mk("A", [{ status: "approved", model: "m", seconds: 1, cost: 0.4 }]), mk("B", [{ status: "skipped-low-risk", model: "m", seconds: 0 }]), mk("C", [{ status: "skipped-low-risk", model: "m", seconds: 0 }]), mk("D", [{ status: "not-requested", model: "m", seconds: 0 }])].join("\n"),
   });
   const report = await metricsReport(root);
-  assert.match(report, /^D\s.*review: ·$/m);
-  assert.match(report, /^B\s.*review: ·$/m);
-  assert.match(report, /Reviews avoided: 2 \(≈ \$0\.80 saved\)/);
+  assert.match(report, /^D\s.*review: n\/a$/m);
+  assert.match(report, /^B\s.*review: skipped$/m);
+  assert.match(report, /^Reviews skipped as low risk: 2 \(estimated \$0\.80 saved\)$/m);
+});
+
+test("/metrics prints no saving without a paid review, nor a skipped line without a skipped review, and marks discarded verdicts", async () => {
+  const mk = (id: string, reviews: object[]) => JSON.stringify({ id, metrics: { phases: {}, verifyFailures: 0, reviews } });
+  const skippedOnly = await metricsReport(await tempProject({ ".pi/memory/tasks.jsonl": mk("B", [{ status: "skipped-low-risk", model: "m", seconds: 0 }]) }));
+  assert.match(skippedOnly, /^Reviews skipped as low risk: 1$/m);
+  assert.doesNotMatch(skippedOnly, /saved/);
+  const discarded = await metricsReport(await tempProject({ ".pi/memory/tasks.jsonl": mk("A", [{ status: "approved", model: "m", seconds: 1, cost: 0.4, discarded: true }]) }));
+  assert.match(discarded, /review: approved \(discarded\)$/m);
+  assert.doesNotMatch(discarded, /skipped|saved/);
 });
 
 test("/metrics leaves plan checks out of the review column, not out of the cost", async () => {
