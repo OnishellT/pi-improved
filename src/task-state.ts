@@ -115,17 +115,19 @@ export async function updateTask(root: string, change: (task: Task) => void): Pr
   return task;
 }
 
-/** Each task's saved verify list as this process last wrote or first read it. Bash can rewrite `.pi/task.json`, not this: the gate trusts it first. */
+/**
+ * The active task's saved verify list per project, as this process last wrote or first read it. Bash can rewrite `.pi/task.json`, not this,
+ * so the gate trusts it first. It is keyed by the project alone: a task id is in the file too. Only /task (a new task) replaces it.
+ */
 const savedHere = new Map<string, string[]>();
-const savedKey = (root: string, task: Task) => `${path.resolve(root)}\0${task.id}`;
 /** Sets the task's saved verify list, in the task and in this process. The caller writes the task. */
 export function saveVerify(root: string, task: Task, steps: string[]) {
   task.savedVerify = steps;
-  savedHere.set(savedKey(root, task), steps);
+  savedHere.set(path.resolve(root), steps);
 }
 /** The saved verify list to compare against: the one this process holds, else the task file's (then held from here on). */
 export function savedVerifyOf(root: string, task: Task) {
-  const key = savedKey(root, task);
+  const key = path.resolve(root);
   if (!savedHere.has(key) && task.savedVerify) savedHere.set(key, task.savedVerify);
   return savedHere.get(key);
 }

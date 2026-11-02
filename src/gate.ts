@@ -57,7 +57,7 @@ export const diagnoseAt = (failuresBeforeEscalation: number) => Math.min(2, fail
 const STEPS_CHANGED = "The verify steps changed during the task. Use the new ones?";
 /** A failed run, without running anything: the verify steps changed and nobody can approve it. Its signature makes a repeat count as the same failure. */
 const stepsChanged = (saved: string[]) => {
-  const lines = ["verify FAILED: the verify steps changed during the task, and nobody can approve that here.", `Put back the steps the task started with in ${MANIFEST_PATH}:`, ...saved.map((s) => `- ${s}`)];
+  const lines = ["verify FAILED: the verify steps changed during the task, and nobody can approve that here.", ...(saved.length ? [`Put back the steps the task started with in ${MANIFEST_PATH}:`, ...saved.map((s) => `- ${s}`)] : [`The task started with no verify steps: remove the ones added to ${MANIFEST_PATH}.`])];
   return { ok: false, report: lines.join("\n"), policy: false, infra: undefined, signature: { step: "verify steps changed", lines } as Signature | undefined, seconds: 0 };
 };
 /** Where a gate that stops leaves the task, and what closes it. */
@@ -270,7 +270,9 @@ export function registerGate(pi: ExtensionAPI) {
         if (use) await updateTask(ctx.cwd, (t) => saveVerify(ctx.cwd, t, steps));
         else if (ctx.hasUI) {
           steps = saved;
-          restore = `The user kept the verify steps the task started with (${saved.map((v) => `\`${v}\``).join(", ")}): put them back in ${MANIFEST_PATH}.`;
+          restore = saved.length
+            ? `The user kept the verify steps the task started with (${saved.map((v) => `\`${v}\``).join(", ")}): put them back in ${MANIFEST_PATH}.`
+            : `The user kept the verify steps the task started with, none: remove the ones added to ${MANIFEST_PATH}.`;
         } else refused = saved;
       }
     }
