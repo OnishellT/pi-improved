@@ -58,12 +58,6 @@ export const diagnoseAt = (failuresBeforeEscalation: number) => Math.min(2, fail
 const STAYS_OPEN = "The task stays open: /task done closes it.";
 const REPORT_TAIL = 600;
 const tail = (report: string) => (report.length > REPORT_TAIL ? `…${report.slice(-REPORT_TAIL)}` : report);
-/** Headless, a notice reaches nobody (print mode drops it): the run's red end goes to stderr in one line, and the exit code says it too. */
-function endRed(ctx: any, line: string) {
-  if (ctx.hasUI) return;
-  console.error(`[pi-improved] ${line}`);
-  process.exitCode = 1;
-}
 const idOf = (model: any) => (model ? `${model.provider}/${model.id}` : undefined);
 type Risk = { level: string; reasons: string[] };
 /** One line on the risk and what happened to the review; undefined when there is nothing to say (no risk, no review). */
@@ -107,6 +101,19 @@ export function registerGate(pi: ExtensionAPI) {
   // The working copy each task was last reviewed at: `reviews` resets every turn, and the same diff is never paid for twice.
   const reviewed = new Map<string, string>();
   let failures = 0;
+  // Every failed verify since the last pass or user turn, agentlint ones included: the count the person sees.
+  let failedRuns = 0;
+  // The failure the last gate message showed: the question does not show it again.
+  let shownSignature: Signature | undefined;
+  // The exit code before this gate set 1, so a later prompt of the same headless run that passes verify gives it back.
+  let exitBefore: typeof process.exitCode | null = null;
+  /** Headless, a notice reaches nobody (print mode drops it): the run's red end goes to stderr in one line, and the exit code says it too. */
+  const endRed = (ctx: any, line: string) => {
+    if (ctx.hasUI) return;
+    console.error(`[pi-improved] ${line}`);
+    if (exitBefore === null) exitBefore = process.exitCode;
+    process.exitCode = 1;
+  };
   let escalatedFrom: string | undefined;
   let escalatedTo: string | undefined;
   let verified: string | undefined;
@@ -171,8 +178,8 @@ export function registerGate(pi: ExtensionAPI) {
   const deescalate = async (ctx: any) => {
     const [from, to] = [escalatedFrom, escalatedTo];
     escalatedFrom = escalatedTo = undefined;
-    failures = 0;
-    lastSignature = undefined;
+    failures = failedRuns = 0;
+    lastSignature = shownSignature = undefined;
     repeats = 0;
     // A model picked since (by /task cancel, /task done or the user) stays.
     if (from && (!ctx.model || `${ctx.model.provider}/${ctx.model.id}` === to)) await restoreModel(pi, ctx, from);
@@ -287,6 +294,7 @@ export function registerGate(pi: ExtensionAPI) {
         abort.abort();
         clearStatus();
       }
+      failedRuns++;
       if (!policy) {
         failures++;
         repeats = sameFailure(signature, lastSignature) ? repeats + 1 : 1;
@@ -315,7 +323,7 @@ export function registerGate(pi: ExtensionAPI) {
       else if (!escalating) {
         // The count and the model that tried last: with the escalation past the retries, more ran than verifyRetries says.
         const last = idOf(ctx.model);
-        const failed = failures ? `Verify failed ${failures} time${failures === 1 ? "" : "s"}${last ? `, last with ${last}` : ""}.` : "Verify still fails.";
+        const failed = `Verify failed ${failedRuns} time${failedRuns === 1 ? "" : "s"}${last ? `, last with ${last}` : ""}.`;
         if (!ctx.hasUI) {
           // Headless, nobody can answer: say why the run ended red, with the end of the last report.
           ctx.ui.notify(`${failed}${open}\n\n${tail(report)}`, "error");
@@ -323,7 +331,7 @@ export function registerGate(pi: ExtensionAPI) {
           return deescalate(ctx).then(() => undefined);
         }
         // The last report goes to nobody else: show it before asking, unless the same failure is already on screen in the last gate message.
-        if (policy || repeats < 2) ctx.ui.notify(tail(report), "error");
+        if (!sameFailure(signature, shownSignature)) ctx.ui.notify(tail(report), "error");
         const choice = await ctx.ui.select(`${failed} What now?`, ["Keep trying", "Leave it as is"]);
         if (choice !== "Keep trying") {
           ctx.ui.notify(task?.status === "implementing" ? "The task stays open: after your fix, /verify checks it and /task done closes it." : "Stopped: verify still fails.", "info");
@@ -335,7 +343,7 @@ export function registerGate(pi: ExtensionAPI) {
         escalatedTo = escalating.model;
         const more = verifyRetries - retries;
         const then = ctx.hasUI ? "then you decide" : "then the run stops";
-        ctx.ui.notify(`Verify failed ${failures} times: ${escalating.model} takes this attempt${more > 0 ? ` and ${more} more` : ""}, ${then}.`, "warning");
+        ctx.ui.notify(`Verify failed ${failures} time${failures === 1 ? "" : "s"}: ${escalating.model} takes this attempt${more > 0 ? ` and ${more} more` : ""}, ${then}.`, "warning");
         pi.events.emit(ESCALATE_EVENT, { root: ctx.cwd, model: escalating.model } satisfies EscalatePayload);
       }
       const diagnose = !policy && failures === diagnoseFrom;
@@ -343,9 +351,15 @@ export function registerGate(pi: ExtensionAPI) {
       const step = retried && !policy && !escalating ? `Verify failed (${retries} of ${verifyRetries}): ${diagnose ? "diagnosing, then retrying" : "retrying"}.\n\n` : "";
       const content = step + (await advice(ctx.cwd, report, policy ? "policy" : diagnose ? "diagnose" : "fix", premise, manifest.agentlint));
       const customType = diagnose ? "verify-diagnose" : "verify-gate";
+      shownSignature = signature;
       return { entries: [{ type: "custom_message", customType, content, display: true }], continue: true };
     }
     emit();
+    // A later prompt of the same headless run passed: the red end this gate reported no longer holds.
+    if (exitBefore !== null) {
+      process.exitCode = exitBefore;
+      exitBefore = null;
+    }
 
     verified = remembered;
     await deescalate(ctx);
