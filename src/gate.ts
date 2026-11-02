@@ -270,7 +270,7 @@ export function registerGate(pi: ExtensionAPI) {
         if (use) await updateTask(ctx.cwd, (t) => void (t.savedVerify = steps));
         else if (ctx.hasUI) {
           steps = saved;
-          restore = `The user kept the verify steps the task started with: put them back in ${MANIFEST_PATH}.`;
+          restore = `The user kept the verify steps the task started with (${saved.map((v) => `\`${v}\``).join(", ")}): put them back in ${MANIFEST_PATH}.`;
         } else refused = saved;
       }
     }
