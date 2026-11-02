@@ -47,7 +47,7 @@ To try it from a clone: `npm install`, then `pi -e <clone>`. Run `npm install` a
 | `/pr [base]` | Prepares the branch and the PR: summary, verify report, risk, ADRs, decisions. Commits, pushes and opens only after you confirm. | When the task is done. |
 | `/retro [n]` | Reviews the last finished tasks and proposes edits to `AGENTS.md`, ADRs or skills. Writes nothing without your yes. | After the reminder, or whenever you want. |
 | `/cost` | Cost, tokens and risk of the active task. With no active task, the latest finished tasks. | During a task. |
-| `/metrics` | Cost, tokens, time and review of the last 10 finished tasks, and how their plan checks ended (ok, fix, skipped: it did not run). | To compare tasks. |
+| `/metrics` | Cost, tokens, time and review of the last 10 finished tasks, and how their plan checks ended (ok, fix, skipped: not run or no verdict). | To compare tasks. |
 | `/skills` | Picks the skills of one phase at a time. Esc leaves without saving. | To tune what each phase reads. |
 | `/computer` | Picks the browser and desktop the agent can drive. Off until you choose ([docs/COMPUTER.md](docs/COMPUTER.md)). | When the agent must use a browser or desktop. |
 | `/subagent` | Shows a subagent of this session: focuses or opens its pane in tmux or Tern. | To watch or steer a review or plan check. |
