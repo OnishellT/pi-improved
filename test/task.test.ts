@@ -801,7 +801,7 @@ test("while paused, task_plan is refused; a cancelled ask_user round pauses plan
   assert.deepEqual(failed.notes, []);
 });
 
-test("continuing after an approach question was cancelled, even one of two, asks for the approach again", async () => {
+test("continuing after an approach question was cancelled asks again, and a partial round asks only its open questions", async () => {
   const { commands, ctxFor, emit, sent } = await setup();
   await commands.get("task").handler("Add fee", ctxFor([]).ctx);
   const input = { questions: [{ question: "How would you store the fee?" }] };
@@ -812,5 +812,12 @@ test("continuing after an approach question was cancelled, even one of two, asks
   const two = { questions: [{ question: "How would you store the fee?" }, { question: "How would you round it?" }] };
   await emit("tool_result", { toolName: "ask_user", input: two, details: { answers: [{ question: "How would you store the fee?", answer: "cents" }] }, content: [] }, ctxFor([]).ctx);
   await commands.get("task").handler("continue", ctxFor([]).ctx);
-  assert.ok(sent[2].includes(APPROACH_FIRST));
+  assert.ok(!sent[2].includes(APPROACH_FIRST));
+  assert.ok(sent[2].includes("- How would you store the fee? → cents"));
+  assert.match(sent[2], /Ask only what is still open[^]*- How would you round it\?/);
+  // answering the rest closes the round
+  const rest = { questions: [{ question: "How would you round it?" }] };
+  await emit("tool_result", { toolName: "ask_user", input: rest, details: { answers: [{ question: "How would you round it?", answer: "half-up" }] }, content: [] }, ctxFor([]).ctx);
+  await commands.get("task").handler("continue", ctxFor([]).ctx);
+  assert.ok(!sent[3].includes(APPROACH_FIRST) && !sent[3].includes("Ask only what is still open"));
 });

@@ -17,7 +17,7 @@ import { phaseSkills, skillsBlock } from "./skills.ts";
 import { readManifest, understandingOf, type Manifest } from "./manifest.ts";
 import { inFiles, oneLine, readTask, resolveInside, updateTask, writeTask, type Decision, type Plan, type Task } from "./task-state.ts";
 import { recordUnderstanding } from "./telemetry.ts";
-import { QUESTION_NUDGE, TASK_NUDGE, assistantText, endsOnQuestion, taskPrompt } from "./task-prompt.ts";
+import { QUESTION_NUDGE, TASK_NUDGE, approachResume, assistantText, endsOnQuestion, taskPrompt } from "./task-prompt.ts";
 
 const MAX_NUDGES = 2; // "call task_plan" / "use ask_user" reminders per user message
 const MAX_TICKET_TEXT = 300_000; // characters of tracker output kept as evidence
@@ -81,6 +81,8 @@ export function registerTask(pi: ExtensionAPI) {
   let planning: string | undefined;
   /** The user answered the approach question (open ask_user questions) for that task: continuing it does not ask again. */
   let approached = false;
+  /** A partly answered approach round: what the user answered and the open questions still pending. */
+  let approach: { answered: { question: string; answer: string }[]; open: string[] } | undefined;
   /** What the planner read from the tracker (MCP) while planning: the ticket, as evidence for interface names. */
   const ticketText = new Map<string, string>();
   /** Answers already given for a question text, so a task_plan retry does not ask it again. Reset per task. */
@@ -104,11 +106,12 @@ export function registerTask(pi: ExtensionAPI) {
       asked.clear();
       ticketText.delete(ctx.cwd);
       approached = false;
+      approach = undefined;
       planning = task.id;
     }
     const previous = await usePhaseModel(pi, ctx, "implement");
     if (previous && !task.model) await updateTask(ctx.cwd, (t) => void (t.model = previous));
-    pi.sendUserMessage(taskPrompt(task.title, task.ticket, tracker(manifest), await relatedTasks(ctx.cwd, task.body ?? task.title), await skillsBlock(ctx.cwd, "plan"), task.spec, task.body, !approached && understandingOf(manifest) === "plan+end" && ctx.hasUI));
+    pi.sendUserMessage(taskPrompt(task.title, task.ticket, tracker(manifest), await relatedTasks(ctx.cwd, task.body ?? task.title), await skillsBlock(ctx.cwd, "plan"), task.spec, task.body, !approached && understandingOf(manifest) === "plan+end" && ctx.hasUI && (approach ? approachResume(approach.answered, approach.open) : true)));
     return ctx.waitForIdle();
   };
 
@@ -381,8 +384,17 @@ export function registerTask(pi: ExtensionAPI) {
     // Answers come back in question order; a cancel drops the rest and pauses the plan.
     if (!(event as any).isError && given.length < questions.length) pause(ctx, questions[given.length].question);
     // The approach round is done only when every open question in it got an answer.
+    // A partial round keeps its answers, so continuing asks only the open questions still pending.
     const open = questions.flatMap((q, i) => (q.options ? [] : [i]));
-    if (open.length && open.every((i) => i < given.length)) approached = true;
+    if (open.length && open.every((i) => i < given.length)) {
+      approached = true;
+      approach = undefined;
+    } else if (open.length) {
+      const answered = open.filter((i) => i < given.length).map((i) => ({ question: questions[i].question, answer: given[i].answer }));
+      const all = [...(approach?.answered ?? []), ...answered];
+      // With nothing answered yet, continuing asks the round from scratch.
+      approach = all.length ? { answered: all, open: open.filter((i) => i >= given.length).map((i) => questions[i].question) } : undefined;
+    }
     let recorded = 0;
     for (const [i, a] of given.entries()) {
       // An open question asks for the user's reasoning (their approach), not a choice: the plan builds on it, no ADR records it.
