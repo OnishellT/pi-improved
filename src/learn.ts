@@ -1,6 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { TASK_DONE_EVENT, type TaskDonePayload } from "./events.ts";
 import { limitsOf } from "./config.ts";
 import { changedFiles, diffBase, untrackedFiles, type Exec } from "./git.ts";
@@ -96,29 +96,55 @@ async function verifyAppNote(exec: Exec, root: string) {
   return `\nCode the verification skill covers changed since it was synced at ${changed.sync}:\n${lines.join("\n")}\nAsk the user through ask_user whether to update the verification skill now, ${refresh}.`;
 }
 
-async function retroPrompt(root: string, every: number, exec: Exec) {
+async function retroPrompt(root: string, count: number, exec: Exec) {
   return `${await skillsBlock(root, "learn")}
 
-Retro: ${every} tasks have been completed. Read the last ${every} records of ${MEMORY_PATH} (and ${METRICS_DIR}) and summarise: decisions that were missing from the plans, rules that repeated, verify failures by cause, and review findings.
+Retro: review the last ${count} completed tasks. Read the last ${count} records of ${MEMORY_PATH} (and ${METRICS_DIR}) and summarise: decisions that were missing from the plans, rules that repeated, verify failures by cause, and review findings.
 Then PROPOSE edits to AGENTS.md, docs/adr or .pi/skills through ask_user options. Never write them without the user's approval.
 Only messages from the user are corrections. Entries of type custom_message (contract-gate, verify-gate, verify-diagnose, diff-review, task-nudge, setup-nudge) are this extension's automated checks, not the operator; report them as gate findings.${await verifyAppNote(exec, root)}`;
 }
 
+/** How many tasks a retro covers: `limits.retroEvery`, or 5 when the reminder is off. */
+const retroSize = async (root: string) => limitsOf(await readManifest(root).catch(() => undefined)).retroEvery || 5;
+
 export function registerLearn(pi: ExtensionAPI) {
+  // The task-done event carries no UI: keep the session's, for the retro reminder and a failed save.
+  let ui: ExtensionContext["ui"] | undefined;
+  pi.on("session_start", (_event, ctx) => {
+    ui = ctx.hasUI ? ctx.ui : undefined;
+  });
+
   pi.events?.on(TASK_DONE_EVENT, async (data) => {
+    const { root, task, hasUI } = data as TaskDonePayload;
+    let count: number;
     try {
-      const { root, task, hasUI } = data as TaskDonePayload;
       const record = await buildRecord(pi, root, task);
       const metrics = await loadMetrics(root, task.id);
       if (metrics) record.metrics = metrics;
       const file = path.join(root, MEMORY_PATH);
       await fs.mkdir(path.dirname(file), { recursive: true });
       await fs.appendFile(file, `${JSON.stringify(record)}\n`);
-      const count = (await readMemory(root)).length;
-      const every = limitsOf(await readManifest(root).catch(() => undefined)).retroEvery; // 0 turns the retro off
-      if (hasUI && every > 0 && count % every === 0) pi.sendUserMessage(await retroPrompt(root, every, pi.exec.bind(pi)));
+      count = (await readMemory(root)).length;
     } catch (error) {
       console.error("[memo] could not save the task:", error);
+      const why = error instanceof Error ? error.message : String(error);
+      if (hasUI) ui?.notify(`The task was not saved to ${MEMORY_PATH} (${oneLine(why, 120)}), so future plans will not see it.`, "warning");
+      return;
     }
+    // A reminder, not a turn: the retro costs a paid run and asks questions, so it starts only when the user runs /retro.
+    const every = limitsOf(await readManifest(root).catch(() => undefined)).retroEvery; // 0 turns the reminder off
+    if (hasUI && every > 0 && count % every === 0) ui?.notify(`${count} tasks finished. Run /retro to review the last ${every}.`, "info");
+  });
+
+  pi.registerCommand("retro", {
+    description: "Review the last finished tasks and propose edits to AGENTS.md, ADRs or skills (asks before writing)",
+    handler: async (args, ctx) => {
+      const root = ctx.cwd;
+      const records = await readMemory(root).catch(() => []);
+      if (!records.length) return ctx.ui.notify(`No finished tasks in ${MEMORY_PATH} yet. Finish one with /task, then run /retro.`, "info");
+      const wanted = Number.parseInt(args?.trim() ?? "", 10);
+      const count = Math.min(records.length, wanted > 0 ? wanted : await retroSize(root));
+      pi.sendUserMessage(await retroPrompt(root, count, pi.exec.bind(pi)));
+    },
   });
 }

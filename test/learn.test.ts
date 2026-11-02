@@ -50,23 +50,57 @@ test("empty store returns []", async () => {
   assert.deepEqual(await relatedTasks(await tempProject({}), "anything"), []);
 });
 
-test("sends the retro prompt on every 5th record, only with UI", async () => {
-  const root = await tempProject({});
-  const f = fakePi(() => ({ code: 0 }));
+/** registerLearn with a UI session started: `emit` finishes a task, `retro` runs /retro, `notes` holds the notices. */
+async function withUI(root: string, exec?: Parameters<typeof fakePi>[0]) {
+  const f = fakePi(exec);
   const listeners = new Map<string, (d: unknown) => unknown>();
   f.pi.events = { on: (name: string, fn: any) => listeners.set(name, fn) };
   registerLearn(f.pi);
+  const notes: [string, string?][] = [];
+  const ctx = { cwd: root, hasUI: true, ui: { notify: (m: string, t?: string) => notes.push([m, t]) } };
+  await f.emit("session_start", {}, ctx);
   const emit = (i: number, hasUI = true) => listeners.get(TASK_DONE_EVENT)!({ root, hasUI, task: task(`T-${i}`, "T", "S", ["a.ts"]) });
-  for (let i = 1; i <= 4; i++) await emit(i);
+  const retro = (args = "") => f.commands.get("retro").handler(args, ctx);
+  return { ...f, notes, emit, retro };
+}
+
+test("every 5th record shows a /retro reminder, only with UI, and never starts a turn by itself", async () => {
+  const f = await withUI(await tempProject({}), () => ({ code: 0 }));
+  for (let i = 1; i <= 4; i++) await f.emit(i);
+  assert.equal(f.notes.length, 0);
+  await f.emit(5);
+  assert.deepEqual(f.notes, [["5 tasks finished. Run /retro to review the last 5.", "info"]]);
+  await f.emit(6);
+  for (let i = 7; i <= 10; i++) await f.emit(i, false);
+  assert.equal(f.notes.length, 1);
   assert.equal(f.sent.length, 0);
-  await emit(5);
-  assert.equal(f.sent.length, 1);
-  assert.match(f.sent[0], /Retro: 5 tasks[\s\S]*ask_user[\s\S]*Never write them without/);
+});
+
+test("/retro sends the retro prompt over the last retroEvery tasks, or the count asked for", async () => {
+  const f = await withUI(await tempProject({}), () => ({ code: 0 }));
+  await f.retro();
+  assert.match(f.notes[0][0], /No finished tasks .* yet\. Finish one with \/task, then run \/retro\./);
+  assert.equal(f.sent.length, 0);
+  for (let i = 1; i <= 7; i++) await f.emit(i);
+  await f.retro();
+  assert.match(f.sent[0], /Retro: review the last 5 completed tasks[\s\S]*ask_user[\s\S]*Never write them without/);
   assert.doesNotMatch(f.sent[0].slice(f.sent[0].indexOf("Retro:")), /verification skill/);
-  await emit(6);
-  assert.equal(f.sent.length, 1);
-  for (let i = 7; i <= 10; i++) await emit(i, false);
-  assert.equal(f.sent.length, 1);
+  await f.retro("3");
+  assert.match(f.sent[1], /Retro: review the last 3 completed tasks/);
+  await f.retro("50");
+  assert.match(f.sent[2], /Retro: review the last 7 completed tasks/);
+});
+
+test("a task that cannot be saved tells the user, with UI", async () => {
+  const root = await tempProject({ ".pi/memory": "a file, not a folder" });
+  const f = await withUI(root, () => ({ code: 0 }));
+  const quiet = console.error;
+  console.error = () => {};
+  await f.emit(1);
+  console.error = quiet;
+  assert.equal(f.notes.length, 1);
+  assert.match(f.notes[0][0], /^The task was not saved to \.pi\/memory\/tasks\.jsonl \(.+\), so future plans will not see it\.$/);
+  assert.equal(f.notes[0][1], "warning");
 });
 
 const SYNC = "a".repeat(40);
@@ -75,11 +109,9 @@ const covered = (extra: object = {}) => ({ ".pi/skills/verify-app/features/cover
 async function retroWith(files: Record<string, string>, log: string, known = true, head = "") {
   const root = await tempProject(files);
   const logs: string[][] = [];
-  const f = fakePi((_cmd, args) => (args[0] === "log" && logs.push(args), { code: args[0] === "cat-file" && !known ? 128 : 0, stdout: args[0] === "log" ? log : args[0] === "rev-parse" ? head : "" }));
-  const listeners = new Map<string, (d: unknown) => unknown>();
-  f.pi.events = { on: (name: string, fn: any) => listeners.set(name, fn) };
-  registerLearn(f.pi);
-  for (let i = 1; i <= 5; i++) await listeners.get(TASK_DONE_EVENT)!({ root, hasUI: true, task: task(`T-${i}`, "T", "S", ["a.ts"]) });
+  const f = await withUI(root, (_cmd, args) => (args[0] === "log" && logs.push(args), { code: args[0] === "cat-file" && !known ? 128 : 0, stdout: args[0] === "log" ? log : args[0] === "rev-parse" ? head : "" }));
+  for (let i = 1; i <= 5; i++) await f.emit(i);
+  await f.retro();
   return { sent: f.sent, logs };
 }
 
@@ -130,12 +162,9 @@ test("changed files are measured against the task's base commit, not HEAD", asyn
 });
 
 test("retro lists covered code that is changed but not committed yet, and says only user messages are corrections", async () => {
-  const root = await tempProject(covered());
-  const f = fakePi((_cmd, args) => ({ code: 0, stdout: args[0] === "diff" ? "src/a.ts\0" : args[0] === "ls-files" ? "src/new.ts\0" : "" }));
-  const listeners = new Map<string, (d: unknown) => unknown>();
-  f.pi.events = { on: (name: string, fn: any) => listeners.set(name, fn) };
-  registerLearn(f.pi);
-  for (let i = 1; i <= 5; i++) await listeners.get(TASK_DONE_EVENT)!({ root, hasUI: true, task: task(`T-${i}`, "T", "S", ["a.ts"]) });
+  const f = await withUI(await tempProject(covered()), (_cmd, args) => ({ code: 0, stdout: args[0] === "diff" ? "src/a.ts\0" : args[0] === "ls-files" ? "src/new.ts\0" : "" }));
+  for (let i = 1; i <= 5; i++) await f.emit(i);
+  await f.retro();
   const retro = f.sent[0].slice(f.sent[0].indexOf("Retro:"));
   assert.match(retro, /verification skill covers changed[\s\S]*Not committed yet:\n- src\/a\.ts\n- src\/new\.ts[\s\S]*ask_user/);
   assert.match(retro, /Only messages from the user are corrections[\s\S]*contract-gate, verify-gate/);
