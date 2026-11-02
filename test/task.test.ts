@@ -874,16 +874,20 @@ test("continuing after an approach question was cancelled asks again, and a part
 
 test("/task waits for the planner run to start before it waits for idle, so pi -p does not end before planning", async () => {
   const { commands, ctxFor, emit, pi } = await setup();
-  pi.sendUserMessage = () => {}; // as in pi: the run starts later
+  let sentPrompt!: () => void;
+  const prompted = new Promise<void>((r) => (sentPrompt = r));
+  pi.sendUserMessage = () => sentPrompt(); // as in pi: the run starts later
   const order: string[] = [];
   const { ctx } = ctxFor([]);
   ctx.waitForIdle = async () => void order.push("idle");
   const done = commands.get("task").handler("Add fee", ctx);
+  await prompted;
   await new Promise((r) => setTimeout(r, 20));
   assert.equal(order.length, 0);
   order.push("start");
   await emit("agent_start", {}, ctx);
-  await done;
+  // A missed agent_start would end only at the 30 s fallback: fail fast instead.
+  await Promise.race([done, new Promise((_, reject) => setTimeout(() => reject(new Error("start() did not resume on agent_start")), 1000))]);
   assert.deepEqual(order, ["start", "idle"]);
 });
 
@@ -902,6 +906,18 @@ test("without a UI, a failed ask_user round while planning takes the first optio
   assert.match(await fs.readFile(path.join(root, unit.source!), "utf8"), /cents \(chosen without the user/);
 });
 
+test("a question taken through ask_user keeps that answer when task_plan lists it again with other options", async () => {
+  const { commands, tools, emit, root } = await setup();
+  const c = fakeCtx(root, [], { hasUI: false });
+  await commands.get("task").handler("Add fee", c.ctx);
+  const input = { questions: [{ question: "Fee unit?", options: ["cents", "percent"] }] };
+  await emit("tool_result", { toolName: "ask_user", input, isError: true, content: [] }, c.ctx);
+  const decisions = [{ question: "Rounding?", options: ["up", "down"] }, { question: "Fee unit?", options: ["percent", "cents"] }];
+  await tools.get("task_plan").execute("1", plan(decisions), undefined, undefined, c.ctx);
+  const recorded = (await readTask(root))!.plan!.decisions;
+  assert.deepEqual(recorded.map((d) => [d.id, d.question, d.answer?.split(" (")[0]]), [["d1", "Rounding?", "up"], ["d2", "Fee unit?", "cents"]]);
+});
+
 test("plan check: one that is not wanted is reported as plan-skipped with no cost", async () => {
   const h = fakePi();
   const emitted: any[] = [];
@@ -913,4 +929,12 @@ test("plan check: one that is not wanted is reported as plan-skipped with no cos
   await h.tools.get("task_plan").execute("1", plan(), undefined, undefined, fakeCtx(root, []).ctx);
   assert.deepEqual(emitted.map((e) => e.payload.status), ["plan-skipped"]);
   assert.equal(emitted[0].payload.cost, undefined);
+});
+
+test("plan check: limits.planChecks 0 is reported as plan-skipped", async () => {
+  const { tools, root, emitted, spawns, ctxFor, userNames } = await planCheckSetup();
+  await updateManifest(root, (m) => void (m.limits = { planChecks: 0 }));
+  await tools.get("task_plan").execute("1", userNames, undefined, undefined, ctxFor(["Use them"]).ctx);
+  assert.equal(spawns.length, 0);
+  assert.deepEqual(emitted.map((e) => e.payload.status), ["plan-skipped"]);
 });

@@ -201,9 +201,11 @@ export function registerTask(pi: ExtensionAPI) {
   /** A decision is settled when its source is a project file that is about the question; otherwise the user answers. */
   const askDecisions = async (ctx: any, root: string, task: Task, params: PlanParams, pending: PendingAdr[]): Promise<Decision[]> => {
     const out: Decision[] = [];
-    for (const [i, d] of params.decisions.entries()) {
+    for (const d of params.decisions) {
+      // A question put through ask_user keeps that answer, even listed again with other options: the loop below records it.
+      if (asked.has(d.question)) continue;
       const file = d.source?.split("#")[0];
-      const base = { id: `d${i + 1}`, question: d.question, options: d.options };
+      const base = { id: `d${out.length + 1}`, question: d.question, options: d.options };
       if (file && relatesTo(d.question, await readInside(root, file))) {
         out.push({ ...base, status: "documented", source: d.source });
         continue;
@@ -214,9 +216,7 @@ export function registerTask(pi: ExtensionAPI) {
       out.push(decision);
     }
     // Questions the planner already put to the user through ask_user are decisions too.
-    const listed = new Set(params.decisions.map((d) => d.question));
     for (const a of asked.values()) {
-      if (listed.has(a.question)) continue;
       const decision: Decision = { id: `d${out.length + 1}`, question: a.question, options: a.options, status: "decided", answer: a.answer };
       pending.push({ decision, adr: { title: a.question, context: `${task.title}\n\n${params.summary}`, decision: a.answer } });
       out.push(decision);
@@ -229,7 +229,10 @@ export function registerTask(pi: ExtensionAPI) {
     const checker = manifest.models?.review ?? manifest.models?.setup;
     // Not wanted (or no model to run it): /metrics shows it as plan-skipped, with no cost.
     if (!checker || !planCheckWanted(manifest, plan.files)) return void pi.events?.emit(REVIEW_EVENT, { root, status: PLAN_STATUS.skipped, model: checker ?? "none", seconds: 0 } satisfies ReviewPayload);
-    if ((task.planChecks ?? 0) >= limitsOf(manifest).planChecks) return;
+    const budget = limitsOf(manifest).planChecks;
+    // planChecks 0 turns the check off; a used-up budget keeps the earlier verdict.
+    if (!budget) return void pi.events?.emit(REVIEW_EVENT, { root, status: PLAN_STATUS.skipped, model: checker, seconds: 0 } satisfies ReviewPayload);
+    if ((task.planChecks ?? 0) >= budget) return;
     ctx.ui.setStatus("plan-check", `checking the plan with ${checker}…`);
     const t0 = Date.now();
     const check = await checkPlan(pi.exec.bind(pi), root, task, plan, evidence, checker, signal).finally(() => ctx.ui.setStatus("plan-check", undefined));
