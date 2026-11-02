@@ -110,7 +110,6 @@ const KEY_CHECKS: Record<string, Rule> = {
   useAgentlint: scalar(oneOf(choice)),
   useBend: scalar(oneOf(choice)),
   maxReport: scalar(atLeast(200)),
-  contextWarn: scalar(atLeast(0)),
   understanding: scalar(oneOf(UNDERSTANDING)),
   subagentPanes: scalar(oneOf(["tern"])),
   computer: scalar(object),
