@@ -293,7 +293,7 @@ test("verifyRetries and failuresBeforeEscalation drive the gate", async () => {
   // The defaults: the third failure still reaches the escalation, it does not stop at the retry limit first.
   const defaults = await run({}, 3);
   assert.equal(defaults.asked.length, 0, "no 'keep trying?' before the escalation");
-  assert.equal(defaults.results[2]?.entries[0].customType, "verify-diagnose");
+  assert.deepEqual(defaults.results.map((r: any) => r.entries[0].customType), ["verify-gate", "verify-diagnose", "verify-gate"], "the second failure diagnoses");
   assert.deepEqual([defaults.switched, defaults.switchedAt], [["p/strong"], [3]], "the escalate model takes the third failure");
 });
 
