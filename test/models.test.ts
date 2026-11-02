@@ -157,3 +157,9 @@ test("/models asks provider first when the list is long", async () => {
   assert.equal(t.global.models?.setup, "b/m12");
   assert.match(t.ui.asked[1], /provider/);
 });
+
+test("the /models description says a phase the project file sets is saved there", () => {
+  const f = fakePi();
+  registerModels(f.pi);
+  assert.match(f.commands.get("models").description, /saved for all projects unless the project file sets that phase/);
+});
