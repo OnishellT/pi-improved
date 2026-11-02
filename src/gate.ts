@@ -221,8 +221,9 @@ export function registerGate(pi: ExtensionAPI) {
         // Out of retries (none at all with verifyRetries 0): only the user lets a task with a missing interface go on.
         if (contractRetries >= verifyRetries) {
           const missing = "The plan's interface is still missing after the automatic retries.";
-          // Headless, nobody can answer: say why the run ended red, with what is missing.
+          // Headless, nobody can answer: say why the run ended red, with what is missing. With a UI, show it before asking.
           if (!ctx.hasUI) ctx.ui.notify(`${missing}${open}\n\n${tail(formatContract(problems))}`, "warning");
+          else ctx.ui.notify(tail(formatContract(problems)), "warning");
           const choice = ctx.hasUI ? await ctx.ui.select(`${missing} What now?`, ["Keep trying", "Leave it as is"]) : undefined;
           if (choice !== "Keep trying") {
             if (ctx.hasUI) ctx.ui.notify(STAYS_OPEN, "info");
@@ -350,9 +351,11 @@ export function registerGate(pi: ExtensionAPI) {
         return { entries: [{ type: "custom_message", customType: "diff-review", content, display: true }], continue: true };
       }
     } else if (risk) {
-      if (!risk.review) reviewNote = off ? "Review: off (review.minLevel)." : risk.level === "none" ? undefined : "Review: not needed at this risk.";
+      // Name the key that turned it off: `never` wins over `minLevel`.
+      if (!risk.review) reviewNote = off ? `Review: off (${manifest.review?.never ? "review.never" : "review.minLevel"}).` : risk.level === "none" ? undefined : "Review: not needed at this risk.";
       else if (!reviewModel) [reviewNote, warn] = ["Review: not run, no review model is set.", true];
-      else reviewNote = "Review: done earlier on this diff.";
+      // Only a review of this very tree counts; after the one round per turn, the fixes were checked by verify only.
+      else reviewNote = task && now !== UNREADABLE && reviewed.get(task.id) === now ? "Review: already ran on this diff." : "Review: not run on this diff (one review round per turn).";
     }
     const line = riskLine(risk, reviewNote);
     const checking = task?.understanding;
