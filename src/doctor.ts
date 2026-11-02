@@ -179,7 +179,7 @@ export async function runDoctor(pi: ExtensionAPI, ctx: ExtensionContext, version
   }
   const project = await readProjectManifest(ctx.cwd).catch(() => undefined);
   const notes: string[] = [];
-  if (globalError) notes.push(`${globalError}: the global file is ignored until it is fixed`);
+  if (globalError) notes.push(`${globalError.replaceAll(files.global.file, short(files.global.file))}: the global file is ignored until it is fixed`);
   const notRead = Object.keys(globalConfig).filter((key) => !PREFERENCE_KEYS.includes(key));
   if (notRead.length) notes.push(`Not read from the global file (state or unknown keys): ${notRead.join(", ")}. Rename or remove them in ${short(files.global.file)}`);
   const unknown = Object.keys(project ?? {}).filter((key) => !PREFERENCE_KEYS.includes(key) && !STATE_KEYS.includes(key));
