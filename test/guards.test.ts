@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { dirname } from "node:path";
 import { test } from "node:test";
-import { describeAcceptance, registerGuards } from "../src/guards.ts";
+import { describeAcceptance, lastCheck, registerGuards } from "../src/guards.ts";
 import { fakePi, fakeUI, tempDir, tempProject } from "./helpers.ts";
 
 test("agentlint commands that open the review UI are blocked", async () => {
@@ -95,14 +95,25 @@ test("an agentlint exception the user approves stays, and they see the new recor
   await write('{"id":"old"}\n');
   assert.equal(await bash("npm exec agentlint -- accept 1 --reason 'ok'", () => write(`{"id":"old"}\n${added}\n{"id":"raw"}\n`)), undefined);
   assert.deepEqual(titles, ["Keep these agentlint exceptions? (No: they are removed)"]);
-  assert.deepEqual(shown, ['- money-review: "rounding is checked upstream" (by agent:pi)\n{"id":"raw"}'], "only the new lines, a record in plain words and anything else as is");
+  assert.deepEqual(shown, ['- money-review (d): "rounding is checked upstream" (by agent:pi)\n{"id":"raw"}'], "only the new lines, a record in plain words and anything else as is");
   assert.equal(await content(), `{"id":"old"}\n${added}\n{"id":"raw"}\n`);
   // A command that adds nothing (or only removes stale records) asks nothing.
   assert.equal(await bash("npm test", () => write("")), undefined);
 });
 
-test("an acceptance record that names a file shows where it applies", () => {
-  assert.equal(describeAcceptance(JSON.stringify({ ruleId: "no-any", file: "src/a.ts", line: 4, reason: "x", actor: "human:jo" })), '- no-any at src/a.ts:4: "x" (by human:jo)');
+test("two exceptions under one rule are told apart: by the place agentlint's last check gives, else by detector and fingerprint", async () => {
+  const fs = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  const source = (detectorId: string) => ({ standardId: "money", standardRevision: 1, detectorId, detectorVersion: 1, bindingId: "b", bindingDigest: "x" });
+  const rec = (detectorId: string, digest: string) => JSON.stringify({ schemaVersion: 1, source: source(detectorId), fingerprint: { scheme: "s", version: 1, digest }, reason: "ok", authority: "agent", actor: "agent:pi" });
+  const dir = await tempDir("pi-check-");
+  const hash = JSON.stringify({ source: source("round"), fingerprint: { scheme: "s", version: 1, digest: "aaaa1111bbbb" } });
+  await fs.mkdir(join(dir, ".agentlint", ".cache"), { recursive: true });
+  await fs.writeFile(join(dir, ".agentlint", ".cache", "last-check.json"), JSON.stringify({ version: 1, findings: [{ selector: "1", hash, ruleId: "money-review", file: "src/pay.ts", line: 12, column: 1 }] }));
+  const checked = await lastCheck(dir);
+  assert.equal(describeAcceptance(rec("round", "aaaa1111bbbb"), checked), '- money-review at src/pay.ts:12: "ok" (by agent:pi)');
+  assert.equal(describeAcceptance(rec("fee", "cccc2222dddd"), checked), '- money (fee #cccc2222): "ok" (by agent:pi)');
+  assert.deepEqual(await lastCheck(await tempDir("pi-none-")), []);
   assert.equal(describeAcceptance("not json"), "not json");
 });
 
