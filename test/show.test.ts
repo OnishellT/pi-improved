@@ -27,8 +27,9 @@ function fakeBrowser(size = "300x120") {
   return { calls, pages, exec };
 }
 
-async function setup(exec: Run, browser: () => string | undefined = () => "chromium") {
+async function setup(exec: Run, browser: () => string | undefined = () => "chromium", settings: object = {}) {
   const h = fakePi();
+  h.pi.getSettings = () => settings;
   registerShow(h.pi, exec, browser);
   const tool = h.tools.get("show");
   const root = await tempDir();
@@ -50,7 +51,8 @@ test("pageFor wraps a fragment, keeps a document, and points a file's page at it
 });
 
 test("show tells the model when the user could not see the picture", async () => {
-  const { root, call } = await setup(fakeBrowser().exec);
+  const settings: { terminal?: { showImages: boolean } } = {};
+  const { root, call } = await setup(fakeBrowser().exec, undefined, settings);
   const file = path.join(root, "plot.png");
   await fs.writeFile(file, "png");
   assert.equal((await call({ file: "plot.png" }, { hasUI: false })).content[0].text, `No picture was shown: there is no UI. Saved at ${file}.`);
@@ -59,6 +61,8 @@ test("show tells the model when the user could not see the picture", async () =>
     assert.equal((await call({ file: "plot.png" }, { mode: "tui" })).content[0].text, `Saved at ${file}. This terminal cannot draw pictures, so the user sees only the path.`);
     setCapabilities({ images: "kitty", trueColor: true, hyperlinks: false });
     assert.equal((await call({ file: "plot.png" }, { mode: "tui" })).content[0].text, `Shown to the user: ${file}`);
+    settings.terminal = { showImages: false };
+    assert.equal((await call({ file: "plot.png" }, { mode: "tui" })).content[0].text, `Saved at ${file}. Pi's image display is off (terminal.showImages), so the user sees only the path.`);
   } finally {
     resetCapabilitiesCache();
   }

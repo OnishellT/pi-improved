@@ -98,8 +98,9 @@ export function pageFor(source: { html?: string; file?: string }): string {
  * What the model is told about a picture: that the user saw it only where it can be drawn. Without a UI (`pi -p`) or
  * in a terminal with no image protocol (tmux, Windows Terminal, most SSH sessions) the user sees the path only.
  */
-function shownText(ctx: { hasUI?: boolean; mode?: string }, file: string, size = "", kept = ""): string {
+function shownText(ctx: { hasUI?: boolean; mode?: string }, file: string, showImages: boolean, size = "", kept = ""): string {
   if (!ctx.hasUI) return `No picture was shown: there is no UI. Saved at ${file}${kept}.`;
+  if (ctx.mode === "tui" && !showImages) return `Saved at ${file}${kept}. Pi's image display is off (terminal.showImages), so the user sees only the path.`;
   if (ctx.mode === "tui" && !getCapabilities().images) return `Saved at ${file}${kept}. This terminal cannot draw pictures, so the user sees only the path.`;
   return `Shown to the user${size}: ${file}${kept}`;
 }
@@ -107,6 +108,8 @@ function shownText(ctx: { hasUI?: boolean; mode?: string }, file: string, size =
 // Pictures in the chat (Kitty or iTerm2 image protocol: Tern, Kitty, Ghostty, WezTerm, iTerm2). The model gets the
 // path only, so a picture costs no image tokens. pi already draws ```mermaid blocks as text, so diagrams go there.
 export function registerShow(pi: ExtensionAPI, exec: Run = run, browser: () => Promise<string | undefined> | string | undefined = () => chromeHeadless()) {
+  // pi's own setting, which renderResult gets as context.showImages: off, it draws only the text.
+  const showImages = () => pi.getSettings?.()?.terminal?.showImages !== false;
   pi.registerTool({
     name: "show",
     label: "Show",
@@ -125,7 +128,7 @@ export function registerShow(pi: ExtensionAPI, exec: Run = run, browser: () => P
       if (abs && !fs.existsSync(abs)) throw new Error(`${file} does not exist.`);
       if (abs && IMAGES[ext]) {
         if (fs.statSync(abs).size > MAX_BYTES) throw new Error(`${file} is over 10 MB: resize it first.`);
-        return { content: [{ type: "text", text: shownText(ctx, abs) }], details: { file: abs, mimeType: IMAGES[ext] } };
+        return { content: [{ type: "text", text: shownText(ctx, abs, showImages()) }], details: { file: abs, mimeType: IMAGES[ext] } };
       }
       if (ext !== ".html" && ext !== ".htm" && ext !== ".svg") throw new Error(`Cannot show ${ext} files: use PNG, JPEG, GIF, WebP, SVG or HTML.`);
       // Throws with the install command when Nix is missing, or the build error: no 30 s timeout hides it.
@@ -147,7 +150,7 @@ export function registerShow(pi: ExtensionAPI, exec: Run = run, browser: () => P
       // Markup has no file of its own: keep the page so the user can open it in a browser.
       if (abs) fs.rmSync(page, { force: true });
       const kept = abs ? "" : ` (page: ${page})`;
-      return { content: [{ type: "text", text: shownText(ctx, out, ` (${w}x${h})`, kept) }], details: { file: out, mimeType: "image/png" } };
+      return { content: [{ type: "text", text: shownText(ctx, out, showImages(), ` (${w}x${h})`, kept) }], details: { file: out, mimeType: "image/png" } };
     },
     // The picture goes below the call's colored box, where pi puts its own pictures: inside the box, the padding fills
     // the rows the picture covers, and pi-tui then leaves out a picture whose top has scrolled off the screen.

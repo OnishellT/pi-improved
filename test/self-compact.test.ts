@@ -88,7 +88,9 @@ test("the context state is a status entry, shown only from the notice threshold 
   await s.at(50_000);
   assert.equal(s.status(), undefined, "below the notice threshold pi's own footer is enough");
   await s.at(77_000);
-  assert.equal(s.status(), "context 77% · compacts at 90%");
+  assert.equal(s.status(), "context 77% (notice) · compacts at 90%");
+  await s.at(86_000);
+  assert.equal(s.status(), "context 86% (warning) · compacts at 90%", "the tier whose message the chat no longer shows");
   await s.h.emit("session_compact", {}, s.ctx);
   await s.at(30_000);
   assert.equal(s.status(), undefined);
